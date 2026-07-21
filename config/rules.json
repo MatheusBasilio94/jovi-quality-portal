@@ -1,0 +1,30 @@
+{
+  "defect_sheet": "QueryData",
+  "date_column": "TestTime",
+  "model_column": "model",
+  "line_column": "TestLine",
+  "phenomenon_column": "Fault Phenomenon",
+  "rejudge_column": "Maintenance",
+  "additional_rejudge_columns": [
+    "Fault reason",
+    "RepaireRemark"
+  ],
+  "rejudge_ok_keywords": [
+    "Re-Judge Ok",
+    "Rejudge OK",
+    "Re-Judge OK",
+    "rejudge ok",
+    "Good machine rejudge ok"
+  ],
+  "mando_column": "DutyType",
+  "mando_keywords": [
+    "ManDo",
+    "Mando",
+    "Man Do",
+    "Man-do",
+    "Man_Do"
+  ],
+  "minimum_model_input_for_priority": 100,
+  "date_start": "2026-01-01",
+  "date_end": "2026-12-31"
+}
