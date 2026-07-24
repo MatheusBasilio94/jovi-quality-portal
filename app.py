@@ -1,5 +1,7 @@
 import base64
+import hmac
 import json
+import os
 import re
 import hashlib
 import sqlite3
@@ -9,11 +11,18 @@ from html import escape
 from io import BytesIO
 from numbers import Number
 from pathlib import Path
-from urllib.parse import quote
 
-APP_VERSION = "v0.1.41"
+from tools.trend_rules import analysis_period_days, requested_trend_grain, trend_grain_labels
+
+
+APP_VERSION = "v0.2.7"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
+LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
+LOGIN_PASSWORD_SHA256 = os.environ.get(
+    "JOVI_LOGIN_PASSWORD_SHA256",
+    "e8b9691c6aeb52ca6182e60467d9b8df33a22b58ebf2c3a73144a6f6e58da68e",
+).strip().lower()
 MANAGER = "曹毅"
 BASE_DIR = Path(__file__).resolve().parent
 RULES_PATH = BASE_DIR / "config" / "rules.json"
@@ -22,6 +31,21 @@ DATA_STORE_DIR = BASE_DIR / "data_store"
 QUALITY_DB_PATH = DATA_STORE_DIR / "jovi_quality.db"
 ASSEMBLY_FILE_STORE_DIR = DATA_STORE_DIR / "assembly"
 ASSEMBLY_MONITORED_DIR = BASE_DIR / "auto_import" / "assembly"
+ASSEMBLY_SMT_DUTY_TYPES = ("SMT", "SMT equipment", "SMT Mando", "SMT Process", "SMT Test")
+ASSEMBLY_FUNCTIONAL_OPERATIONS = (
+    "Aging-Software-Testing", "Antenna_Non_Signaling_2", "Audio-Testing", "Audio_Testing_4",
+    "Auto-MMI-Testing1", "Auto-MMI-Testing2", "Auto-MMI-Testing3", "CCT_sensor_Calibration",
+    "Camera", "Camera-12", "Camera-auxiliary-tester", "Camera-function-QC-appearance", "Camera17",
+    "Camera_4", "Camera_5", "Camera_6", "Current", "Function-test-station1", "Functional-QC-Appearance",
+    "GPS-WiFi-Testing-2", "MMI_auxiliary_test_bit", "Motor_CalTest_Station", "OIS_static_test1",
+    "Order-Linking", "Photosensor_test_Dark", "Pressure-Software-Testing", "Pressure-Testing", "RSE_Station",
+    "Ring_light_Test", "SARFunctionTest2", "SIMCard_Auto_Test", "UltrasonicTest1", "Wired_Charging_Automatic",
+)
+ASSEMBLY_APPEARANCE_OPERATIONS = (
+    "ANATEL_sticker_detection_station_1", "Appearance-QC",
+    "Assembly semi-finished appearance defective traceability position",
+    "Assembly_semi-finished_product_appearance_testing", "BatteryCover_Character_Recognize",
+)
 HOME_ASSET_DIR = BASE_DIR / "assets" / "home"
 HOME_MODULE_IMAGES = {
     "Learning Area": "learning_area.png",
@@ -31,7 +55,7 @@ HOME_MODULE_IMAGES = {
 }
 
 st.set_page_config(
-    page_title="Jovi Quality Portal",
+    page_title="Jovi Quality Center",
     page_icon="JOVI",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -40,13 +64,47 @@ st.set_page_config(
 MODULES = {
     "Home": {"color": "#1D5FBF", "tabs": []},
     "Learning Area": {"color": "#1D5FBF", "tabs": ["Overview", "Procedures", "Process Map", "KPI's"]},
-    "SMT": {"color": "#0D7A45", "tabs": ["Overview", "KPI Track", "Quality Dashboard", "BOM Comparison Tool - SMT"]},
-    "Assembly": {"color": "#6532C8", "tabs": ["Overview", "KPI Track", "Quality Dashboard", "BOM Comparison Tool - Assy"]},
+    "SMT": {"color": "#0D7A45", "tabs": ["KPI Track", "Quality Dashboard", "BOM Comparison Tool - SMT"]},
+    "Assembly": {"color": "#6532C8", "tabs": ["KPI Track", "Quality Dashboard", "BOM Comparison Tool - Assembly"]},
     "IQC": {"color": "#B45309", "tabs": ["Overview"]},
     "About": {"color": "#1D5FBF", "tabs": []},
 }
 
 VERSION_HISTORY = [
+    ("v0.2.7", "Centered Home module titles and descriptions and added clear vertical spacing between the hero panel and the Learning Area, SMT, Assembly and IQC cards."),
+    ("v0.2.6", "Replaced full-page navigation links with session-preserving Streamlit navigation buttons in the sidebar and Home module cards, preventing authentication loss when switching modules or tabs."),
+    ("v0.2.5", "Restored full chart height after the control-bar adjustment, kept chart actions inside the upper-right border, raised bottom legends, and expanded right margins for Pareto, model/input and heatmap charts to prevent axis-title clipping."),
+    ("v0.2.4", "Centered KPI formula table content, added vertical separation before KPI trend charts, and moved chart copy/fullscreen controls into a reserved upper-right control band so they no longer overlap chart titles."),
+    ("v0.2.3", "Reduced visual noise across SMT and Assembly KPI and Quality Dashboard pages by removing redundant rule captions, period notes and non-blocking audit messages; redesigned KPI formula tables with compact calculation bases, controlled column widths and clean text wrapping."),
+    ("v0.2.2", "Added a branded login screen with authenticated session control, hashed-password validation, environment-configurable credentials and a functional sign-out action."),
+    ("v0.2.1", "Audited SMT production and defect reconciliation; preserved accumulated defects through period-level model coverage, enabled proportional partial-period input selection, removed Failure Mix double counting with an exclusive Both-types category, corrected Pareto cumulative percentages, and added visible source-consistency warnings."),
+    ("v0.2.0", "Redesigned SMT and Assembly Quality Dashboards as action-oriented analytical pages with global filters, executive KPIs, labeled trends, failure mix, Pareto, model/input rankings, process responsibility, SMT-origin analysis, priority tables and data-quality controls; removed redundant area Overview navigation."),
+    ("v0.1.68", "Added SMT KPI daily data-consistency exceptions: Function Pass Rate remains independently available, while invalid Process NG PPM periods show a red marker, explanation and audit table; valid monthly or larger aggregates still include all defects."),
+    ("v0.1.67", "Fixed SMT KPI defect-source consolidation: cumulative YTD defects and incremental daily files are combined with duplicate records resolved by the most recent source."),
+    ("v0.1.66", "Centered manual OQC/FQC history tables and made the Assembly inspection history responsive without a horizontal scrollbar."),
+    ("v0.1.65", "Added controlled deletion of manually entered SMT OQC and Assembly OQC/FQC inspection records from their KPI Track histories."),
+    ("v0.1.64", "Fixed SMT KPI trend label refresh to use the SMT dashboard PeriodStart field, preventing the PeriodDate error."),
+    ("v0.1.63", "Forced every chart to rebuild period labels at render time, ensuring dd/mm for daily and weekly trends and mm/yy for monthly trends even when cached calculations exist."),
+    ("v0.1.62", "Made KPI target-label placement adaptive so it uses the opposite vertical side of the final data label, preventing overlap."),
+    ("v0.1.61", "Changed all KPI target lines and their value labels to red."),
+    ("v0.1.60", "Standardized trend dates as dd/mm for daily and weekly periods and mm/yy for monthly periods, and simplified target labels to an unboxed value in the target-line color."),
+    ("v0.1.59", "Integrated all KPI target labels inside their charts, showing only the target value and preserving the chart plotting area."),
+    ("v0.1.58", "Added visible target lines to all Assembly KPI trends: Function Pass Rate 99.05%, Appearance Total Pass Rate 99.04%, Function Mando 3,600 PPM and Assembly OQC × FQC Pass Rate 98.70%."),
+    ("v0.1.57", "Standardized date labels across all date-based charts to dd/mm."),
+    ("v0.1.56", "Completed Assembly KPI Track with Function Pass Rate, Appearance Total Pass Rate, Function Mando (PPM), persistent combined Assembly OQC × FQC Pass Rate input, and a reference-data station rule for Functional and Appearance failures."),
+    ("v0.1.54", "Added visible target lines to every SMT KPI trend: Function Pass Rate 99.56%, SMT Process NG Rate 5,000 PPM, Assembly SMT Process Duty NG Rate 700 PPM and SMT OQC Pass Rate 98.50%."),
+    ("v0.1.53", "Established the shared trend rule for current and future charts: analysis periods shorter than 30 calendar days use daily data, including Assembly SMT Process Duty NG Rate, with summarized totals distributed across calendar days while preserving the exact source-period total."),
+    ("v0.1.52", "Capped percentage chart axes at 100%, aligned the SMT OQC Pass Rate trend with the shared daily, weekly and monthly period-granularity rules, and documented zero matching Assembly SMT-origin defects as 0 PPM."),
+    ("v0.1.51", "Rebuilt SMT KPI Track with Function Pass Rate, SMT Process NG Rate, Assembly SMT Process Duty NG Rate and persistent manual SMT OQC Pass Rate input, including audited formulas and labeled trends."),
+    ("v0.1.50", "Fixed the SMT FailureType cache migration so existing sessions rebuild the station classification instead of reusing legacy cached defect data."),
+    ("v0.1.49", "Added SMT-only Functional Failure and Appearance Failure classification by station, with dedicated KPIs, PPM trend, Pareto views, model breakdown, detail filters and unclassified-station audit."),
+    ("v0.1.48", "Standardized visible data labels across SMT and Assembly charts, with adaptive spacing, margins and axis headroom to prevent overlap and clipping."),
+    ("v0.1.47", "Removed vertical scrolling inside dashboard tables, allowing normal page scrolling and adding pagination to the SMT detail view."),
+    ("v0.1.46", "Added the June 2026 SMT production input, closing the monthly input coverage gap and recalculating the SMT Quality Dashboard indicators."),
+    ("v0.1.45", "Added the real SMT Quality Dashboard v1.0.0 with stored summarized production input, cumulative defects, covered-period PPM, model analysis, Pareto, process views, Re-Judge/repeat audit, and data-quality controls."),
+    ("v0.1.44", "Updated the project tagline to 'All Quality. One Center.' to align it with the Jovi Quality Center identity."),
+    ("v0.1.43", "Renamed the project and all user-facing portal branding to Jovi Quality Center."),
+    ("v0.1.42", "Validated and consolidated the Assembly BOM Comparison Tool v2.0.8 as a mandatory portal module, using the official Jovi BOM as reference, comparing Microsiga by code and quantity, applying Missing/Extra semantics and the HQHQ/G701/G999 exclusion rules, with auditable Excel export."),
     ("v0.1.41", "Changed SMT input deduplication to period scope: filter Operate Time first, then count each PCB No. once inside the selected date/time interval."),
     ("v0.1.40", "Added real SMT daily input analysis using Operate Time as the input timestamp and counting each PCB No. only once at its earliest valid occurrence."),
     ("v0.1.39", "Prevented summarized Assembly inputs from being used at a finer time scale: weekly input is never treated as daily input, and monthly input is never split into weekly or daily estimates."),
@@ -254,11 +312,54 @@ def apply_global_css() -> None:
         .sidebar-spacer { height: 1rem; }
         .sidebar-bottom {
             margin-top: 0.95rem;
-            padding: 0.85rem 0.2rem 0.1rem 0.2rem;
+            padding: 0.85rem 0.2rem 0.35rem 0.2rem;
             border-top: 1px solid rgba(255,255,255,0.16);
             font-size: 0.75rem;
             font-weight: 800;
             color: #EAF3FF !important;
+        }
+        .sidebar-user {
+            margin-top: 0.35rem;
+            color: #BFD5F1 !important;
+            font-size: 0.7rem;
+            font-weight: 700;
+        }
+        section[data-testid="stSidebar"] div[data-testid="stButton"] button {
+            min-height: 34px;
+            border: 1px solid rgba(255,255,255,0.24) !important;
+            border-radius: 0.45rem !important;
+            color: #FFFFFF !important;
+            background: rgba(255,255,255,0.08) !important;
+            font-size: 0.76rem !important;
+            font-weight: 800 !important;
+        }
+        section[data-testid="stSidebar"] div[data-testid="stButton"] button:hover {
+            border-color: rgba(255,255,255,0.46) !important;
+            background: rgba(255,255,255,0.15) !important;
+        }
+        section[data-testid="stSidebar"] div[data-testid="stButton"] button[kind="primary"],
+        section[data-testid="stSidebar"] div[data-testid="stButton"] button[data-testid="stBaseButton-primary"] {
+            border-color: rgba(147,197,253,0.70) !important;
+            background: linear-gradient(135deg, var(--blue), var(--blue-2)) !important;
+            box-shadow: 0 8px 18px rgba(29,95,191,0.28) !important;
+        }
+        section[data-testid="stSidebar"] [class*="st-key-nav_module_"] button {
+            min-height: 42px;
+            justify-content: flex-start;
+            padding: 0.45rem 0.85rem;
+            font-size: 0.86rem !important;
+        }
+        section[data-testid="stSidebar"] [class*="st-key-nav_tab_"] {
+            margin-left: 0.72rem;
+            padding-left: 0.55rem;
+            border-left: 1px solid rgba(255,255,255,0.16);
+        }
+        section[data-testid="stSidebar"] [class*="st-key-nav_tab_"] button {
+            min-height: 34px;
+            justify-content: flex-start;
+            padding: 0.34rem 0.62rem;
+            color: #DDEBFF !important;
+            font-size: 0.76rem !important;
         }
 
         .topbar {
@@ -388,6 +489,13 @@ def apply_global_css() -> None:
             line-height: 1.32;
             min-height: 58px;
             margin: 0.35rem 0 0 0;
+            text-align: center;
+        }
+        .module-title {
+            text-align: center;
+        }
+        .home-module-gap {
+            height: 1.15rem;
         }
         .fake-btn {
             color: #FFFFFF !important;
@@ -420,6 +528,30 @@ def apply_global_css() -> None:
         .fake-btn:hover {
             color: #FFFFFF !important;
             filter: brightness(1.06);
+        }
+        [class*="st-key-home_card_"] [data-testid="stVerticalBlockBorderWrapper"] {
+            min-height: 246px;
+            border: 1px solid var(--border) !important;
+            border-radius: 0.75rem !important;
+            background: #FFFFFF !important;
+            box-shadow: 0 4px 18px rgba(16, 24, 40, 0.06);
+        }
+        [class*="st-key-home_card_"] [data-testid="stVerticalBlock"] {
+            gap: 0.35rem;
+            text-align: center;
+        }
+        [class*="st-key-home_card_"] div[data-testid="stButton"] {
+            margin-top: auto;
+        }
+        [class*="st-key-home_card_"] div[data-testid="stButton"] button {
+            min-height: 36px;
+            border: 0 !important;
+            border-radius: 0.45rem !important;
+            color: #FFFFFF !important;
+            background: linear-gradient(135deg, #1D5FBF, #071F41) !important;
+            box-shadow: 0 8px 16px rgba(16, 24, 40, 0.12);
+            font-size: 0.84rem !important;
+            font-weight: 800 !important;
         }
         @media (max-width: 1200px) {
             .module-card {
@@ -534,6 +666,8 @@ def apply_global_css() -> None:
             border-radius: 0.75rem;
             padding: 1rem;
             box-shadow: 0 8px 22px rgba(15, 35, 65, 0.08);
+            min-height: 7.9rem;
+            box-sizing: border-box;
         }
         .metric-label { color: #0B1F3A; font-size: 0.78rem; font-weight: 900; text-transform: uppercase; }
         .metric-value { color: #061B36; font-size: 1.65rem; font-weight: 900; margin-top: 0.15rem; }
@@ -555,17 +689,52 @@ def apply_global_css() -> None:
             overflow: hidden !important;
             box-sizing: border-box !important;
         }
+        div[data-testid="stPlotlyChart"] .js-plotly-plot,
+        div[data-testid="stPlotlyChart"] .plot-container {
+            overflow: visible !important;
+        }
         div[data-testid="stPlotlyChart"] .modebar-container {
-            top: 0.45rem !important;
-            right: 0.45rem !important;
+            top: 0.18rem !important;
+            right: 0.18rem !important;
             max-width: calc(100% - 1rem) !important;
             overflow: visible !important;
-            z-index: 5 !important;
+            z-index: 15 !important;
         }
         div[data-testid="stPlotlyChart"] .modebar {
-            display: block !important;
+            align-items: center !important;
+            background: rgba(255,255,255,0.96) !important;
+            border: 1px solid #D6DFEB !important;
+            border-radius: 0.48rem !important;
+            box-shadow: 0 5px 14px rgba(15,35,65,0.10) !important;
+            display: flex !important;
+            gap: 0.08rem !important;
             max-width: 100% !important;
             overflow: visible !important;
+            padding: 0.08rem 0.18rem !important;
+        }
+        div[data-testid="stElementContainer"]:has(div[data-testid="stPlotlyChart"])
+        div[data-testid="stElementToolbar"] {
+            right: 0.35rem !important;
+            top: 0.35rem !important;
+            z-index: 20 !important;
+        }
+        div[data-testid="stPlotlyChart"] .modebar-btn[data-title*="Download plot as" i] {
+            display: none !important;
+        }
+        div[data-testid="stPlotlyChart"] .modebar-btn.jovi-copy-chart-button {
+            align-items: center !important;
+            color: #52647A !important;
+            cursor: pointer !important;
+            display: inline-flex !important;
+            font-size: 1rem !important;
+            font-weight: 900 !important;
+            height: 1.65rem !important;
+            justify-content: center !important;
+            line-height: 1 !important;
+            width: 1.65rem !important;
+        }
+        div[data-testid="stPlotlyChart"] .modebar-btn.jovi-copy-chart-button:hover {
+            color: #0B1F3A !important;
         }
         div[data-testid="stHorizontalBlock"] > div {
             min-width: 0 !important;
@@ -576,7 +745,7 @@ def apply_global_css() -> None:
             border-radius: 0.75rem;
             padding: 0.25rem;
             box-shadow: 0 8px 22px rgba(15, 35, 65, 0.08);
-            overflow: auto;
+            overflow: hidden;
         }
         div[data-testid="stDataFrame"] div[role="columnheader"] {
             background: #EAF0F8 !important;
@@ -596,8 +765,8 @@ def apply_global_css() -> None:
             border-radius: 0.75rem;
             box-shadow: 0 8px 22px rgba(15, 35, 65, 0.08);
             margin-top: 0.8rem;
-            max-height: 520px;
-            overflow: auto;
+            overflow-x: auto;
+            overflow-y: visible;
         }
         .data-table {
             border-collapse: collapse;
@@ -628,6 +797,190 @@ def apply_global_css() -> None:
         .data-table td.numeric {
             font-variant-numeric: tabular-nums;
             text-align: right;
+        }
+        .data-table.inspection-history-table th,
+        .data-table.inspection-history-table td {
+            text-align: center;
+            vertical-align: middle;
+        }
+        .data-table-wrap.assembly-inspection-history-table {
+            overflow-x: visible;
+        }
+        .data-table.assembly-inspection-history-table {
+            min-width: 0;
+            table-layout: fixed;
+            font-size: 0.68rem;
+        }
+        .data-table.assembly-inspection-history-table th,
+        .data-table.assembly-inspection-history-table td {
+            padding: 0.45rem 0.24rem;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+        }
+        .data-table.assembly-inspection-history-table th:nth-child(1) { width: 3%; }
+        .data-table.assembly-inspection-history-table th:nth-child(2) { width: 7%; }
+        .data-table.assembly-inspection-history-table th:nth-child(3) { width: 7%; }
+        .data-table.assembly-inspection-history-table th:nth-child(4),
+        .data-table.assembly-inspection-history-table th:nth-child(5),
+        .data-table.assembly-inspection-history-table th:nth-child(6),
+        .data-table.assembly-inspection-history-table th:nth-child(8),
+        .data-table.assembly-inspection-history-table th:nth-child(9),
+        .data-table.assembly-inspection-history-table th:nth-child(10) { width: 6%; }
+        .data-table.assembly-inspection-history-table th:nth-child(7),
+        .data-table.assembly-inspection-history-table th:nth-child(11),
+        .data-table.assembly-inspection-history-table th:nth-child(12) { width: 7%; }
+        .data-table.assembly-inspection-history-table th:nth-child(13) { width: 10%; }
+        .data-table.assembly-inspection-history-table th:nth-child(14) { width: 8%; }
+        .data-table-wrap.compact-dashboard-table {
+            overflow-x: visible;
+        }
+        .data-table.compact-dashboard-table {
+            min-width: 0;
+            table-layout: fixed;
+            font-size: 0.70rem;
+        }
+        .data-table.compact-dashboard-table th,
+        .data-table.compact-dashboard-table td {
+            padding: 0.46rem 0.36rem;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+            line-height: 1.25;
+        }
+        .data-table-wrap.kpi-formula-table {
+            margin-bottom: 2rem;
+            overflow-x: visible;
+        }
+        .data-table.kpi-formula-table {
+            min-width: 0;
+            table-layout: fixed;
+            font-size: 0.78rem;
+        }
+        .data-table.kpi-formula-table th,
+        .data-table.kpi-formula-table td {
+            padding: 0.62rem 0.58rem;
+            text-align: center;
+            vertical-align: middle;
+            overflow-wrap: normal;
+            word-break: normal;
+            line-height: 1.35;
+        }
+        .data-table.kpi-formula-table th:nth-child(1) { width: 23%; }
+        .data-table.kpi-formula-table th:nth-child(2) { width: 31%; }
+        .data-table.kpi-formula-table th:nth-child(3) { width: 29%; }
+        .data-table.kpi-formula-table th:nth-child(4) { width: 17%; }
+        .data-table.kpi-formula-table td:nth-child(1) {
+            font-weight: 800;
+        }
+        .data-table.kpi-formula-table td:nth-child(3) {
+            color: #29415F;
+        }
+        .data-table.kpi-formula-table td:nth-child(4) {
+            white-space: nowrap;
+            font-weight: 900;
+            color: #0D7A45;
+        }
+        .action-priority-list {
+            display: grid;
+            gap: 0.4rem;
+            margin-top: 0.4rem;
+        }
+        .action-priority-card {
+            background: #FFFFFF;
+            border: 1px solid #D6DFEB;
+            border-left: 4px solid var(--priority-color, #64748B);
+            border-radius: 0.75rem;
+            box-shadow: 0 5px 16px rgba(15, 35, 65, 0.07);
+            padding: 0.55rem 0.65rem;
+        }
+        .action-priority-card.critical { --priority-color: #DC2626; }
+        .action-priority-card.high { --priority-color: #EA580C; }
+        .action-priority-card.medium { --priority-color: #D97706; }
+        .action-priority-card.monitor { --priority-color: #2563EB; }
+        .action-priority-header {
+            align-items: flex-start;
+            display: grid;
+            gap: 0.45rem;
+            grid-template-columns: auto minmax(0, 1fr) auto;
+        }
+        .action-priority-rank {
+            align-items: center;
+            background: var(--priority-color, #64748B);
+            border-radius: 999px;
+            color: #FFFFFF;
+            display: inline-flex;
+            font-size: 0.64rem;
+            font-weight: 900;
+            height: 1.55rem;
+            justify-content: center;
+            width: 1.55rem;
+        }
+        .action-priority-name {
+            color: #0B1F3A;
+            font-size: 0.76rem;
+            font-weight: 900;
+            line-height: 1.25;
+            overflow-wrap: anywhere;
+        }
+        .action-priority-badge {
+            background: color-mix(in srgb, var(--priority-color, #64748B) 10%, white);
+            border: 1px solid color-mix(in srgb, var(--priority-color, #64748B) 28%, white);
+            border-radius: 999px;
+            color: var(--priority-color, #64748B);
+            font-size: 0.63rem;
+            font-weight: 900;
+            padding: 0.18rem 0.45rem;
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+        .action-priority-body {
+            align-items: end;
+            display: grid;
+            gap: 0.5rem;
+            grid-template-columns: minmax(0, 1fr) auto;
+            margin-left: 2rem;
+            margin-top: 0.25rem;
+        }
+        .action-priority-context {
+            color: #52647A;
+            font-size: 0.62rem;
+            line-height: 1.35;
+            min-width: 0;
+            overflow-wrap: anywhere;
+        }
+        .action-priority-context b {
+            color: #0B1F3A;
+            font-weight: 850;
+        }
+        .action-priority-metrics {
+            display: flex;
+            gap: 0.55rem;
+            text-align: right;
+        }
+        .action-priority-metric strong {
+            color: #0B1F3A;
+            display: block;
+            font-size: 0.72rem;
+            font-variant-numeric: tabular-nums;
+            font-weight: 900;
+            line-height: 1.1;
+        }
+        .action-priority-metric small {
+            color: #6B7C90;
+            display: block;
+            font-size: 0.58rem;
+            font-weight: 800;
+            margin-top: 0.15rem;
+            text-transform: uppercase;
+        }
+        @media (max-width: 900px) {
+            .action-priority-body {
+                align-items: start;
+                grid-template-columns: 1fr;
+            }
+            .action-priority-metrics {
+                justify-content: flex-start;
+                text-align: left;
+            }
         }
         .stTabs [data-baseweb="tab-list"] {
             background: #FFFFFF;
@@ -749,7 +1102,321 @@ def apply_global_css() -> None:
     )
 
 
+def apply_login_css() -> None:
+    st.markdown(
+        """
+        <style>
+        section[data-testid="stSidebar"],
+        [data-testid="collapsedControl"],
+        [data-testid="stHeader"] {
+            display: none !important;
+        }
+
+        html, body, [class*="css"] {
+            font-family: "Segoe UI", Arial, sans-serif !important;
+        }
+
+        .stApp {
+            color: #0B1F3A !important;
+            background:
+                radial-gradient(circle at 12% 18%, rgba(29, 95, 191, 0.16), transparent 30rem),
+                radial-gradient(circle at 88% 84%, rgba(13, 122, 69, 0.12), transparent 28rem),
+                #F4F7FB !important;
+        }
+
+        [data-testid="stMain"] {
+            min-height: 100vh;
+        }
+
+        [data-testid="stMainBlockContainer"] {
+            max-width: 1180px !important;
+            min-height: 100vh;
+            padding: 8vh 2rem 4rem !important;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        [data-testid="stHorizontalBlock"] {
+            align-items: center;
+            gap: 4rem;
+        }
+
+        .login-brand {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.65rem;
+            color: #0B1F3A;
+            font-size: 0.78rem;
+            font-weight: 900;
+            letter-spacing: 0.13em;
+            text-transform: uppercase;
+        }
+
+        .login-brand-mark {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 3.4rem;
+            height: 3.4rem;
+            border-radius: 1rem;
+            color: #FFFFFF;
+            background: linear-gradient(145deg, #0B1F3A 0%, #1D5FBF 100%);
+            box-shadow: 0 14px 32px rgba(11, 31, 58, 0.20);
+            font-size: 0.82rem;
+            letter-spacing: 0.05em;
+        }
+
+        .login-eyebrow {
+            margin-top: 4rem;
+            color: #0D7A45;
+            font-size: 0.78rem;
+            font-weight: 900;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+        }
+
+        .login-hero h1 {
+            max-width: 610px;
+            margin: 0.85rem 0 1.1rem;
+            color: #071B33;
+            font-size: clamp(2.7rem, 5vw, 4.8rem);
+            line-height: 0.98;
+            letter-spacing: -0.045em;
+        }
+
+        .login-hero p {
+            max-width: 560px;
+            margin: 0;
+            color: #536174;
+            font-size: 1.02rem;
+            line-height: 1.65;
+        }
+
+        .login-pill-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.65rem;
+            margin-top: 2rem;
+        }
+
+        .login-pill {
+            padding: 0.55rem 0.8rem;
+            border: 1px solid #D5DFEC;
+            border-radius: 999px;
+            color: #29415F;
+            background: rgba(255,255,255,0.68);
+            font-size: 0.78rem;
+            font-weight: 800;
+        }
+
+        [data-testid="stVerticalBlockBorderWrapper"] {
+            border: 1px solid rgba(191, 203, 219, 0.86) !important;
+            border-radius: 1.3rem !important;
+            background: rgba(255,255,255,0.94) !important;
+            box-shadow: 0 26px 70px rgba(11, 31, 58, 0.14);
+        }
+
+        [data-testid="stVerticalBlockBorderWrapper"] > div {
+            padding: 0.65rem 0.7rem !important;
+        }
+
+        .login-card-kicker {
+            color: #1D5FBF;
+            font-size: 0.76rem;
+            font-weight: 900;
+            letter-spacing: 0.10em;
+            text-transform: uppercase;
+        }
+
+        .login-card-title {
+            margin: 0.45rem 0 0.25rem;
+            color: #071B33;
+            font-size: 2rem;
+            font-weight: 900;
+            letter-spacing: -0.03em;
+        }
+
+        .login-card-copy {
+            margin: 0 0 1rem;
+            color: #657286;
+            font-size: 0.92rem;
+        }
+
+        div[data-testid="stForm"] {
+            border: 0 !important;
+            padding: 0 !important;
+        }
+
+        div[data-testid="stTextInput"] label {
+            color: #243B5A !important;
+            font-size: 0.83rem !important;
+            font-weight: 800 !important;
+        }
+
+        div[data-testid="stTextInput"] input {
+            min-height: 3rem;
+            border-color: #CBD7E6;
+            border-radius: 0.72rem;
+            color: #071B33;
+            background: #F9FBFD;
+        }
+
+        div[data-testid="stTextInput"] input:focus {
+            border-color: #1D5FBF;
+            box-shadow: 0 0 0 3px rgba(29, 95, 191, 0.13);
+        }
+
+        div[data-testid="stFormSubmitButton"] button {
+            min-height: 3.05rem;
+            margin-top: 0.35rem;
+            border: 0 !important;
+            border-radius: 0.72rem !important;
+            color: #FFFFFF !important;
+            background: linear-gradient(135deg, #0B4F9C, #1D6FD1) !important;
+            box-shadow: 0 10px 24px rgba(29, 95, 191, 0.24);
+            font-weight: 900 !important;
+        }
+
+        .login-security-note {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-top: 0.8rem;
+            color: #68778B;
+            font-size: 0.76rem;
+            font-weight: 700;
+        }
+
+        .login-security-dot {
+            width: 0.52rem;
+            height: 0.52rem;
+            border-radius: 50%;
+            background: #0D7A45;
+            box-shadow: 0 0 0 4px rgba(13,122,69,0.12);
+        }
+
+        @media (max-width: 820px) {
+            [data-testid="stMainBlockContainer"] {
+                padding: 2.5rem 1.1rem 3rem !important;
+            }
+
+            [data-testid="stHorizontalBlock"] {
+                gap: 1.6rem;
+            }
+
+            .login-eyebrow {
+                margin-top: 2.4rem;
+            }
+
+            .login-hero h1 {
+                font-size: 2.65rem;
+            }
+
+            .login-pill-row {
+                margin-bottom: 1rem;
+            }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def credentials_are_valid(username: str, password: str) -> bool:
+    password_digest = hashlib.sha256(password.encode("utf-8")).hexdigest()
+    username_matches = hmac.compare_digest(
+        username.strip().casefold(),
+        LOGIN_USERNAME.strip().casefold(),
+    )
+    password_matches = hmac.compare_digest(password_digest, LOGIN_PASSWORD_SHA256)
+    return username_matches and password_matches
+
+
+def login_page() -> None:
+    apply_login_css()
+    hero_column, form_column = st.columns([1.15, 0.85], gap="large")
+
+    with hero_column:
+        st.markdown(
+            """
+            <div class="login-hero">
+                <div class="login-brand">
+                    <span class="login-brand-mark">JOVI</span>
+                    <span>Quality Center</span>
+                </div>
+                <div class="login-eyebrow">Quality intelligence portal</div>
+                <h1>All Quality.<br>One Center.</h1>
+                <p>
+                    Process performance, critical failures and quality priorities
+                    brought together in one reliable workspace.
+                </p>
+                <div class="login-pill-row">
+                    <span class="login-pill">SMT performance</span>
+                    <span class="login-pill">Assembly quality</span>
+                    <span class="login-pill">Action-oriented analysis</span>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with form_column:
+        with st.container(border=True):
+            st.markdown(
+                """
+                <div class="login-card-kicker">Restricted access</div>
+                <div class="login-card-title">Welcome back</div>
+                <div class="login-card-copy">Enter your credentials to access the portal.</div>
+                """,
+                unsafe_allow_html=True,
+            )
+            with st.form("portal_login", clear_on_submit=False):
+                username = st.text_input(
+                    "Username",
+                    placeholder="Enter your username",
+                    autocomplete="username",
+                )
+                password = st.text_input(
+                    "Password",
+                    type="password",
+                    placeholder="Enter your password",
+                    autocomplete="current-password",
+                )
+                submitted = st.form_submit_button("Sign in", use_container_width=True)
+
+            if submitted:
+                if credentials_are_valid(username, password):
+                    st.session_state["authenticated"] = True
+                    st.session_state["authenticated_user"] = LOGIN_USERNAME
+                    st.session_state.pop("login_error", None)
+                    st.rerun()
+                else:
+                    st.session_state["login_error"] = "Incorrect username or password."
+
+            if st.session_state.get("login_error"):
+                st.error(st.session_state["login_error"])
+
+            st.markdown(
+                """
+                <div class="login-security-note">
+                    <span class="login-security-dot"></span>
+                    <span>Internal access &middot; authenticated session</span>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+
+def logout() -> None:
+    st.session_state.clear()
+    st.query_params.clear()
+    st.rerun()
+
+
 def init_state() -> None:
+    if "authenticated" not in st.session_state:
+        st.session_state.authenticated = False
     if "module" not in st.session_state:
         st.session_state.module = "Home"
     if "tab" not in st.session_state:
@@ -779,66 +1446,80 @@ def sync_navigation_from_query() -> None:
     st.session_state.tab = tab
 
 
-def nav_href(module: str, tab: str = "") -> str:
-    href = f"?module={quote(module)}"
+def navigation_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", value.casefold()).strip("_")
+
+
+def set_navigation(module: str, tab: str = "") -> None:
+    if module not in MODULES:
+        module = "Home"
+    available_tabs = MODULES[module]["tabs"]
+    if available_tabs:
+        tab = tab if tab in available_tabs else available_tabs[0]
+    else:
+        tab = ""
+
+    st.session_state.module = module
+    st.session_state.tab = tab
+    query_values = {"module": module}
     if tab:
-        href += f"&tab={quote(tab)}"
-    return href
-
-
-def nav_link(label: str, href: str, classes: str) -> str:
-    return f'<a href="{href}" target="_self"><div class="{classes}">{escape(label)}</div></a>'
+        query_values["tab"] = tab
+    st.query_params.from_dict(query_values)
 
 
 def sidebar() -> None:
     with st.sidebar:
-        menu_html = [
+        st.markdown(
             """
             <div class="sidebar-logo">
                 <div class="jovi">JOVI</div>
-                <div class="subtitle">QUALITY PORTAL</div>
+                <div class="subtitle">QUALITY CENTER</div>
             </div>
-            <nav class="sidebar-nav">
             """,
-        ]
+            unsafe_allow_html=True,
+        )
 
         for module, cfg in MODULES.items():
             is_active_module = st.session_state.module == module
             first_tab = cfg["tabs"][0] if cfg["tabs"] else ""
-            item_class = "nav-item active" if is_active_module else "nav-item"
-
-            if cfg["tabs"]:
-                open_attr = " open" if is_active_module else ""
-                summary_class = f"{item_class} nav-summary"
-                menu_html.append(f'<details class="nav-group"{open_attr}>')
-                menu_html.append(f'<summary class="{summary_class}">{escape(module)}</summary>')
-                menu_html.append("<div class='sub-nav'>")
+            st.button(
+                module,
+                key=f"nav_module_{navigation_key(module)}",
+                type="primary" if is_active_module else "secondary",
+                use_container_width=True,
+                on_click=set_navigation,
+                args=(module, first_tab),
+            )
+            if is_active_module and cfg["tabs"]:
                 for tab in cfg["tabs"]:
                     is_active_tab = is_active_module and st.session_state.tab == tab
-                    sub_class = "sub-item active" if is_active_tab else "sub-item"
-                    menu_html.append(nav_link(tab, nav_href(module, tab), sub_class))
-                menu_html.append("</div>")
-                menu_html.append("</details>")
-            else:
-                menu_html.append(nav_link(module, nav_href(module, first_tab), item_class))
+                    st.button(
+                        tab,
+                        key=f"nav_tab_{navigation_key(module)}_{navigation_key(tab)}",
+                        type="primary" if is_active_tab else "secondary",
+                        use_container_width=True,
+                        on_click=set_navigation,
+                        args=(module, tab),
+                    )
 
-        menu_html.append(
+        st.markdown(
             f"""
-            </nav>
             <div class="sidebar-bottom">
                 <div>{APP_VERSION}</div>
-                <div style="margin-top:0.8rem;">⌾&nbsp;&nbsp;Logout</div>
+                <div class="sidebar-user">Signed in as {escape(str(st.session_state.get("authenticated_user", LOGIN_USERNAME)))}</div>
             </div>
-            """
+            """,
+            unsafe_allow_html=True,
         )
-        st.markdown("".join(menu_html), unsafe_allow_html=True)
+        if st.button("Sign out", key="sidebar_logout", use_container_width=True):
+            logout()
 
 
 def topbar() -> None:
     st.markdown(
         f"""
         <div class="topbar">
-            <div class="title"><span class="brand">JOVI</span>&nbsp;&nbsp;QUALITY PORTAL</div>
+            <div class="title"><span class="brand">JOVI</span>&nbsp;&nbsp;QUALITY CENTER</div>
             <div class="meta">{APP_VERSION}</div>
         </div>
         """,
@@ -851,24 +1532,8 @@ def footer() -> None:
     st.markdown(
         f"""
         <div class="{footer_class}">
-            <b>Jovi Quality Portal {APP_VERSION}</b><br>
+            <b>Jovi Quality Center {APP_VERSION}</b><br>
             Developed by: {DEVELOPER} &nbsp; | &nbsp; Role: {ROLE} &nbsp; | &nbsp; Manager: {MANAGER}
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def module_card(title: str, desc: str, color: str, icon: str, href: str) -> None:
-    st.markdown(
-        f"""
-        <div class="card module-card">
-            <div>
-                <div class="module-icon" style="background:{color}18;color:{color};">{icon}</div>
-                <h3>{title}</h3>
-                <p>{desc}</p>
-            </div>
-            <a class="fake-btn" href="{href}" target="_self" style="--btn-color:{color};">Enter</a>
         </div>
         """,
         unsafe_allow_html=True,
@@ -882,7 +1547,7 @@ def asset_data_uri(path_text: str) -> str:
     return f"data:image/png;base64,{encoded}"
 
 
-def module_card_html(title: str, desc: str, color: str, icon: str, href: str) -> str:
+def module_card_html(title: str, desc: str, color: str, icon: str) -> str:
     image_name = HOME_MODULE_IMAGES.get(title, "")
     image_path = HOME_ASSET_DIR / image_name if image_name else None
     if image_path and image_path.exists():
@@ -895,14 +1560,9 @@ def module_card_html(title: str, desc: str, color: str, icon: str, href: str) ->
         media = f'<div class="module-icon" style="background:{color}18;color:{color};">{escape(icon)}</div>'
 
     return (
-        f'<div class="card module-card">'
-        f'<div>'
         f'{media}'
         f'<div class="module-title">{escape(title)}</div>'
         f'<div class="module-desc">{escape(desc)}</div>'
-        f'</div>'
-        f'<a class="fake-btn" href="{escape(href)}" target="_self" style="--btn-color:{color};">Enter</a>'
-        f'</div>'
     )
 
 
@@ -972,6 +1632,8 @@ DEFAULT_RULES = {
     "rejudge_ok_keywords": ["Re-Judge Ok", "Rejudge OK", "Re-Judge OK", "rejudge ok", "Good machine rejudge ok"],
     "mando_column": "DutyType",
     "mando_keywords": ["ManDo", "Mando", "Man Do", "Man-do", "Man_Do"],
+    "assembly_functional_operations": list(ASSEMBLY_FUNCTIONAL_OPERATIONS),
+    "assembly_appearance_operations": list(ASSEMBLY_APPEARANCE_OPERATIONS),
     "defect_merge_key_columns": ["PCB", "Barcode", "TestTime", "TestOperation", "Fault Phenomenon"],
     "minimum_model_input_for_priority": 100,
     "date_start": "2026-01-01",
@@ -1123,33 +1785,57 @@ def production_input_granularity(production) -> dict:
 
 
 def trend_granularity(start, end, production=None) -> dict:
-    days = max(int((end.normalize() - start.normalize()).days) + 1, 1)
-    if days <= 31:
-        requested_grain = "day"
-    elif days <= 180:
-        requested_grain = "week"
-    else:
-        requested_grain = "month"
+    days = analysis_period_days(start, end)
+    requested_grain = requested_trend_grain(start, end)
 
     input_resolution = production_input_granularity(production)
     grain_order = {"day": 0, "week": 1, "month": 2}
-    grain = max((requested_grain, input_resolution["grain"]), key=grain_order.get)
-    labels = {
-        "day": ("Daily", "by day"),
-        "week": ("Weekly", "by week"),
-        "month": ("Monthly", "by month"),
-    }
-    label, title = labels[grain]
+    grain = requested_grain
+    input_distributed = grain_order[input_resolution["grain"]] > grain_order[requested_grain]
+    label, title = trend_grain_labels(grain)
     return {
         "grain": grain,
         "label": label,
         "title": title,
+        "period_days": days,
         "requested_grain": requested_grain,
         "input_grain": input_resolution["grain"],
         "input_max_span_days": input_resolution["max_span_days"],
         "summarized_input_rows": input_resolution["summarized_rows"],
-        "input_resolution_limited": grain_order[grain] > grain_order[requested_grain],
+        "input_distributed": input_distributed,
+        "input_resolution_limited": False,
     }
+
+
+def distribute_production_to_days(production):
+    import pandas as pd
+
+    if production is None or production.empty:
+        return production.copy()
+
+    daily_rows = []
+    for _, row in production.iterrows():
+        start = pd.Timestamp(row["ProductionStart"]).normalize()
+        end = pd.Timestamp(row["ProductionEnd"]).normalize()
+        dates = pd.date_range(start, end, freq="D")
+        if dates.empty:
+            dates = pd.DatetimeIndex([start])
+
+        def allocate(total_value):
+            total = max(int(round(float(total_value))), 0)
+            base, remainder = divmod(total, len(dates))
+            return [base + (1 if index < remainder else 0) for index in range(len(dates))]
+
+        produced_by_day = allocate(row.get("Produced", 0))
+        bad_machine_by_day = allocate(row.get("BadMachine", 0))
+        for index, production_date in enumerate(dates):
+            daily_row = row.to_dict()
+            daily_row["ProductionStart"] = production_date
+            daily_row["ProductionEnd"] = production_date
+            daily_row["Produced"] = produced_by_day[index]
+            daily_row["BadMachine"] = bad_machine_by_day[index]
+            daily_rows.append(daily_row)
+    return pd.DataFrame(daily_rows)
 
 
 def add_trend_period(df, date_column: str, settings: dict):
@@ -1167,11 +1853,7 @@ def add_trend_period(df, date_column: str, settings: dict):
 
 def format_trend_period(value, grain: str) -> str:
     ts = value if hasattr(value, "strftime") else coerce_timestamp(value, "2026-01-01")
-    if grain == "day":
-        return ts.strftime("%d/%m")
-    if grain == "week":
-        return f"Week {ts.strftime('%d/%m')}"
-    return MONTH_LABELS.get(ts.month, ts.strftime("%b/%Y"))
+    return ts.strftime("%m/%y") if grain == "month" else ts.strftime("%d/%m")
 
 
 def build_skd_trend(production, filtered, start, end) -> tuple:
@@ -1179,7 +1861,12 @@ def build_skd_trend(production, filtered, start, end) -> tuple:
 
     settings = trend_granularity(start, end, production)
     grain = settings["grain"]
-    production_period = add_trend_period(production, "ProductionStart", settings)
+    production_for_trend = (
+        distribute_production_to_days(production)
+        if settings.get("input_distributed")
+        else production
+    )
+    production_period = add_trend_period(production_for_trend, "ProductionStart", settings)
     production_trend = production_period.groupby("PeriodDate", as_index=False).agg(
         Produced=("Produced", "sum"),
         BadMachine=("BadMachine", "sum"),
@@ -1666,6 +2353,210 @@ def init_quality_store() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS smt_oqc_inspections (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                inspection_date TEXT NOT NULL,
+                model TEXT,
+                inspected_qty INTEGER NOT NULL CHECK (inspected_qty > 0),
+                ok_qty INTEGER NOT NULL CHECK (ok_qty >= 0),
+                ng_qty INTEGER NOT NULL CHECK (ng_qty >= 0),
+                notes TEXT,
+                created_at TEXT NOT NULL,
+                CHECK (ok_qty + ng_qty = inspected_qty)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS assembly_oqc_fqc_inspections (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                inspection_date TEXT NOT NULL,
+                model TEXT,
+                oqc_inspected_qty INTEGER NOT NULL CHECK (oqc_inspected_qty > 0),
+                oqc_ok_qty INTEGER NOT NULL CHECK (oqc_ok_qty >= 0),
+                oqc_ng_qty INTEGER NOT NULL CHECK (oqc_ng_qty >= 0),
+                fqc_inspected_qty INTEGER NOT NULL CHECK (fqc_inspected_qty > 0),
+                fqc_ok_qty INTEGER NOT NULL CHECK (fqc_ok_qty >= 0),
+                fqc_ng_qty INTEGER NOT NULL CHECK (fqc_ng_qty >= 0),
+                notes TEXT,
+                created_at TEXT NOT NULL,
+                CHECK (oqc_ok_qty + oqc_ng_qty = oqc_inspected_qty),
+                CHECK (fqc_ok_qty + fqc_ng_qty = fqc_inspected_qty)
+            )
+            """
+        )
+
+
+def save_smt_oqc_inspection(
+    inspection_date: date,
+    model: str,
+    inspected_qty: int,
+    ok_qty: int,
+    ng_qty: int,
+    notes: str,
+) -> None:
+    init_quality_store()
+    if inspected_qty <= 0:
+        raise ValueError("Inspected quantity must be greater than zero.")
+    if ok_qty < 0 or ng_qty < 0:
+        raise ValueError("OK and NG quantities cannot be negative.")
+    if ok_qty + ng_qty != inspected_qty:
+        raise ValueError("OK quantity plus NG quantity must equal inspected quantity.")
+    with sqlite3.connect(QUALITY_DB_PATH) as conn:
+        conn.execute(
+            """
+            INSERT INTO smt_oqc_inspections (
+                inspection_date, model, inspected_qty, ok_qty, ng_qty, notes, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                inspection_date.isoformat(),
+                model.strip(),
+                int(inspected_qty),
+                int(ok_qty),
+                int(ng_qty),
+                notes.strip(),
+                datetime.now().isoformat(timespec="seconds"),
+            ),
+        )
+
+
+def load_smt_oqc_inspections(start_date: date, end_date: date):
+    import pandas as pd
+
+    init_quality_store()
+    with sqlite3.connect(QUALITY_DB_PATH) as conn:
+        frame = pd.read_sql_query(
+            """
+            SELECT
+                id AS ID,
+                inspection_date AS InspectionDate,
+                model AS Model,
+                inspected_qty AS Inspected,
+                ok_qty AS OK,
+                ng_qty AS NG,
+                notes AS Notes,
+                created_at AS CreatedAt
+            FROM smt_oqc_inspections
+            WHERE inspection_date BETWEEN ? AND ?
+            ORDER BY inspection_date, id
+            """,
+            conn,
+            params=(start_date.isoformat(), end_date.isoformat()),
+        )
+    if not frame.empty:
+        frame["InspectionDate"] = pd.to_datetime(frame["InspectionDate"], errors="coerce")
+        frame["PassRate"] = frame["OK"] / frame["Inspected"].replace(0, pd.NA)
+    else:
+        frame["InspectionDate"] = pd.to_datetime(frame.get("InspectionDate"))
+        frame["PassRate"] = pd.Series(dtype="float64")
+    return frame
+
+
+def delete_smt_oqc_inspection(record_id: int) -> None:
+    init_quality_store()
+    with sqlite3.connect(QUALITY_DB_PATH) as conn:
+        cursor = conn.execute("DELETE FROM smt_oqc_inspections WHERE id = ?", (int(record_id),))
+    if cursor.rowcount != 1:
+        raise ValueError("The selected SMT OQC inspection record was not found.")
+
+
+def save_assembly_oqc_fqc_inspection(
+    inspection_date: date,
+    model: str,
+    oqc_inspected_qty: int,
+    oqc_ok_qty: int,
+    oqc_ng_qty: int,
+    fqc_inspected_qty: int,
+    fqc_ok_qty: int,
+    fqc_ng_qty: int,
+    notes: str,
+) -> None:
+    init_quality_store()
+    checks = [
+        ("OQC", oqc_inspected_qty, oqc_ok_qty, oqc_ng_qty),
+        ("FQC", fqc_inspected_qty, fqc_ok_qty, fqc_ng_qty),
+    ]
+    for stage, inspected_qty, ok_qty, ng_qty in checks:
+        if inspected_qty <= 0:
+            raise ValueError(f"{stage} inspected quantity must be greater than zero.")
+        if ok_qty < 0 or ng_qty < 0:
+            raise ValueError(f"{stage} OK and NG quantities cannot be negative.")
+        if ok_qty + ng_qty != inspected_qty:
+            raise ValueError(f"{stage} OK quantity plus NG quantity must equal the inspected quantity.")
+    with sqlite3.connect(QUALITY_DB_PATH) as conn:
+        conn.execute(
+            """
+            INSERT INTO assembly_oqc_fqc_inspections (
+                inspection_date, model,
+                oqc_inspected_qty, oqc_ok_qty, oqc_ng_qty,
+                fqc_inspected_qty, fqc_ok_qty, fqc_ng_qty,
+                notes, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                inspection_date.isoformat(),
+                model.strip(),
+                int(oqc_inspected_qty),
+                int(oqc_ok_qty),
+                int(oqc_ng_qty),
+                int(fqc_inspected_qty),
+                int(fqc_ok_qty),
+                int(fqc_ng_qty),
+                notes.strip(),
+                datetime.now().isoformat(timespec="seconds"),
+            ),
+        )
+
+
+def load_assembly_oqc_fqc_inspections(start_date: date, end_date: date):
+    import pandas as pd
+
+    init_quality_store()
+    with sqlite3.connect(QUALITY_DB_PATH) as conn:
+        frame = pd.read_sql_query(
+            """
+            SELECT
+                id AS ID,
+                inspection_date AS InspectionDate,
+                model AS Model,
+                oqc_inspected_qty AS OQCInspected,
+                oqc_ok_qty AS OQCOK,
+                oqc_ng_qty AS OQCNG,
+                fqc_inspected_qty AS FQCInspected,
+                fqc_ok_qty AS FQCOK,
+                fqc_ng_qty AS FQCNG,
+                notes AS Notes,
+                created_at AS CreatedAt
+            FROM assembly_oqc_fqc_inspections
+            WHERE inspection_date BETWEEN ? AND ?
+            ORDER BY inspection_date, id
+            """,
+            conn,
+            params=(start_date.isoformat(), end_date.isoformat()),
+        )
+    if not frame.empty:
+        frame["InspectionDate"] = pd.to_datetime(frame["InspectionDate"], errors="coerce")
+        frame["OQCPassRate"] = frame["OQCOK"] / frame["OQCInspected"].replace(0, pd.NA)
+        frame["FQCPassRate"] = frame["FQCOK"] / frame["FQCInspected"].replace(0, pd.NA)
+        frame["CombinedPassRate"] = frame["OQCPassRate"] * frame["FQCPassRate"]
+    else:
+        frame["InspectionDate"] = pd.to_datetime(frame.get("InspectionDate"))
+        for column in ["OQCPassRate", "FQCPassRate", "CombinedPassRate"]:
+            frame[column] = pd.Series(dtype="float64")
+    return frame
+
+
+def delete_assembly_oqc_fqc_inspection(record_id: int) -> None:
+    init_quality_store()
+    with sqlite3.connect(QUALITY_DB_PATH) as conn:
+        cursor = conn.execute("DELETE FROM assembly_oqc_fqc_inspections WHERE id = ?", (int(record_id),))
+    if cursor.rowcount != 1:
+        raise ValueError("The selected Assembly OQC/FQC inspection record was not found.")
 
 
 def read_source_bytes(source) -> bytes:
@@ -2064,6 +2955,7 @@ def analyze_skd_quality(defect_source, input_sources: list, rules: dict, source_
         "trend": trend,
         "trend_settings": trend_settings,
         "production": production,
+        "production_detail": production_detail,
         "model_summary": model_summary,
         "model_month": model_month,
         "line_summary": line_summary,
@@ -2083,6 +2975,9 @@ def path_signature(path: Path) -> tuple[str, int, int]:
     return (str(path), stat.st_size, stat.st_mtime_ns)
 
 
+SKD_ANALYSIS_SCHEMA_VERSION = "production-detail-v1"
+
+
 @st.cache_data(show_spinner=False)
 def analyze_skd_quality_paths_cached(
     defect_paths: tuple[str, ...],
@@ -2090,7 +2985,9 @@ def analyze_skd_quality_paths_cached(
     path_signatures: tuple,
     rules_text: str,
     source_label: str,
+    schema_version: str,
 ) -> dict:
+    _ = schema_version
     rules = json.loads(rules_text)
     return analyze_skd_quality([Path(path) for path in defect_paths], [Path(path) for path in input_paths], rules, source_label)
 
@@ -2102,7 +2999,22 @@ def analyze_skd_quality_cached(defect_source, input_sources: list, rules: dict, 
         input_paths = tuple(str(source) for source in input_sources)
         signatures = tuple(path_signature(source) for source in [*defect_sources, *input_sources])
         rules_text = json.dumps(rules, sort_keys=True, ensure_ascii=False)
-        return analyze_skd_quality_paths_cached(defect_paths, input_paths, signatures, rules_text, source_label)
+        analysis = analyze_skd_quality_paths_cached(
+            defect_paths,
+            input_paths,
+            signatures,
+            rules_text,
+            source_label,
+            SKD_ANALYSIS_SCHEMA_VERSION,
+        )
+        if "production_detail" not in analysis:
+            analysis = analyze_skd_quality(
+                [Path(path) for path in defect_paths],
+                [Path(path) for path in input_paths],
+                rules,
+                source_label,
+            )
+        return analysis
     return analyze_skd_quality(defect_source, input_sources, rules, source_label)
 
 
@@ -2125,7 +3037,7 @@ def fmt_compact(value: float) -> str:
     return f"{value:.0f}"
 
 
-def styled_table(df, max_rows: int | None = None) -> None:
+def styled_table(df, max_rows: int | None = None, table_class: str = "") -> None:
     import pandas as pd
 
     view = df.head(max_rows).copy() if max_rows else df.copy()
@@ -2145,15 +3057,67 @@ def styled_table(df, max_rows: int | None = None) -> None:
             cells.append(f"<td{class_name}>{escape(display)}</td>")
         body_rows.append(f"<tr>{''.join(cells)}</tr>")
 
+    class_names = " ".join(part for part in table_class.split() if part)
+    class_suffix = f" {class_names}" if class_names else ""
     st.markdown(
         f"""
-        <div class="data-table-wrap">
-            <table class="data-table">
+        <div class="data-table-wrap{class_suffix}">
+            <table class="data-table{class_suffix}">
                 <thead><tr>{headers}</tr></thead>
                 <tbody>{''.join(body_rows)}</tbody>
             </table>
         </div>
         """,
+        unsafe_allow_html=True,
+    )
+
+
+def action_priority_cards(
+    frame,
+    defect_column: str,
+    station_column: str,
+    model_column: str,
+    max_items: int = 5,
+) -> None:
+    view = frame.head(max_items).copy()
+    cards = []
+    for rank, (_, row) in enumerate(view.iterrows(), start=1):
+        defect = str(row.get(defect_column, "Unknown") or "Unknown").strip()
+        station = str(row.get(station_column, "Unknown") or "Unknown").strip()
+        model = str(row.get(model_column, "Unknown") or "Unknown").strip()
+        priority = str(row.get("Priority", "Monitor") or "Monitor").strip()
+        priority_text = compact_text(priority)
+        if "critical" in priority_text:
+            priority_class = "critical"
+        elif "high" in priority_text:
+            priority_class = "high"
+        elif "medium" in priority_text:
+            priority_class = "medium"
+        else:
+            priority_class = "monitor"
+        ng_value = fmt_int(row.get("NGPCBs", 0))
+        ppm_value = fmt_ppm(row.get("ImpactPPM", 0))
+        cards.append(
+            f'<div class="action-priority-card {priority_class}">'
+            f'<div class="action-priority-header">'
+            f'<span class="action-priority-rank">{rank:02d}</span>'
+            f'<div class="action-priority-name" title="{escape(defect, quote=True)}">{escape(defect)}</div>'
+            f'<span class="action-priority-badge">{escape(priority)}</span>'
+            f'</div>'
+            f'<div class="action-priority-body">'
+            f'<div class="action-priority-context">'
+            f'<b>Station:</b> {escape(station)}<br>'
+            f'<b>Model:</b> {escape(model)}'
+            f'</div>'
+            f'<div class="action-priority-metrics">'
+            f'<div class="action-priority-metric"><strong>{escape(ng_value)}</strong><small>NG PCBs</small></div>'
+            f'<div class="action-priority-metric"><strong>{escape(ppm_value)}</strong><small>Impact PPM</small></div>'
+            f'</div>'
+            f'</div>'
+            f'</div>'
+        )
+    st.markdown(
+        f'<div class="action-priority-list">{"".join(cards)}</div>',
         unsafe_allow_html=True,
     )
 
@@ -2242,7 +3206,22 @@ PLOTLY_CONFIG = {
     "displayModeBar": True,
     "displaylogo": False,
     "responsive": True,
-    "toImageButtonOptions": {"scale": 2},
+    "modeBarButtonsToRemove": [
+        "zoom2d",
+        "pan2d",
+        "select2d",
+        "lasso2d",
+        "zoomIn2d",
+        "zoomOut2d",
+        "autoScale2d",
+        "resetScale2d",
+        "toggleSpikelines",
+    ],
+    "toImageButtonOptions": {
+        "format": "png",
+        "filename": "jovi-quality-chart",
+        "scale": 3,
+    },
 }
 
 
@@ -2250,7 +3229,130 @@ def show_chart(fig) -> None:
     st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
 
 
+def install_chart_copy_controls() -> None:
+    import streamlit.components.v1 as components
+
+    components.html(
+        """
+        <script>
+        (() => {
+            const parentWindow = window.parent;
+            const parentDocument = parentWindow.document;
+            const buttonClass = "jovi-copy-chart-button";
+            const nativeSelector = '.modebar-btn[data-title*="Download plot as" i]';
+
+            parentDocument.querySelectorAll(`.${buttonClass}`).forEach((button) => button.remove());
+
+            const setButtonState = (button, symbol, title, delay = 1800) => {
+                const originalSymbol = button.dataset.originalSymbol || "⧉";
+                const originalTitle = button.dataset.originalTitle || "Copy chart image";
+                button.textContent = symbol;
+                button.setAttribute("data-title", title);
+                button.setAttribute("aria-label", title);
+                if (delay > 0) {
+                    parentWindow.setTimeout(() => {
+                        button.textContent = originalSymbol;
+                        button.setAttribute("data-title", originalTitle);
+                        button.setAttribute("aria-label", originalTitle);
+                    }, delay);
+                }
+            };
+
+            const copyImage = async (href) => {
+                const response = await parentWindow.fetch(href);
+                const sourceBlob = await response.blob();
+                const pngBlob = sourceBlob.type === "image/png"
+                    ? sourceBlob
+                    : new parentWindow.Blob([await sourceBlob.arrayBuffer()], {type: "image/png"});
+                await parentWindow.navigator.clipboard.write([
+                    new parentWindow.ClipboardItem({"image/png": pngBlob})
+                ]);
+            };
+
+            const addCopyButton = (chartContainer) => {
+                if (chartContainer.querySelector(`.${buttonClass}`)) return;
+                const nativeButton = chartContainer.querySelector(nativeSelector);
+                if (!nativeButton) return;
+
+                const copyButton = parentDocument.createElement("a");
+                copyButton.className = `modebar-btn ${buttonClass}`;
+                copyButton.dataset.originalSymbol = "⧉";
+                copyButton.dataset.originalTitle = "Copy chart image";
+                copyButton.textContent = "⧉";
+                copyButton.setAttribute("data-title", "Copy chart image");
+                copyButton.setAttribute("aria-label", "Copy chart image");
+                copyButton.setAttribute("role", "button");
+                copyButton.setAttribute("tabindex", "0");
+
+                const capture = () => {
+                    if (!parentWindow.navigator?.clipboard || !parentWindow.ClipboardItem) {
+                        nativeButton.click();
+                        setButtonState(copyButton, "↓", "Clipboard unavailable; PNG downloaded");
+                        return;
+                    }
+
+                    let handled = false;
+                    const interceptDownload = async (event) => {
+                        const anchor = event.target?.closest?.("a[download]");
+                        if (!anchor) return;
+                        const href = anchor.href || "";
+                        if (!href.startsWith("data:image/") && !href.startsWith("blob:")) return;
+
+                        handled = true;
+                        event.preventDefault();
+                        event.stopImmediatePropagation();
+                        parentDocument.removeEventListener("click", interceptDownload, true);
+                        try {
+                            await copyImage(href);
+                            setButtonState(copyButton, "✓", "Chart image copied");
+                        } catch (_error) {
+                            parentDocument.removeEventListener("click", interceptDownload, true);
+                            anchor.click();
+                            setButtonState(copyButton, "↓", "Copy failed; PNG downloaded");
+                        }
+                    };
+
+                    parentDocument.addEventListener("click", interceptDownload, true);
+                    nativeButton.click();
+                    parentWindow.setTimeout(() => {
+                        parentDocument.removeEventListener("click", interceptDownload, true);
+                        if (!handled) {
+                            setButtonState(copyButton, "!", "Unable to capture chart");
+                        }
+                    }, 7000);
+                };
+
+                copyButton.addEventListener("click", (event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    capture();
+                });
+                copyButton.addEventListener("keydown", (event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        capture();
+                    }
+                });
+                nativeButton.insertAdjacentElement("afterend", copyButton);
+            };
+
+            const scan = () => {
+                parentDocument.querySelectorAll('[data-testid="stPlotlyChart"]').forEach(addCopyButton);
+            };
+            const observer = new parentWindow.MutationObserver(scan);
+            observer.observe(parentDocument.body, {childList: true, subtree: true});
+            scan();
+            window.addEventListener("unload", () => observer.disconnect(), {once: true});
+        })();
+        </script>
+        """,
+        height=0,
+        scrolling=False,
+    )
+
+
 def skd_line_chart(df, x_col: str, y_cols: list[str], title: str, color: str):
+    import pandas as pd
     import plotly.graph_objects as go
 
     fig = go.Figure()
@@ -2264,29 +3366,56 @@ def skd_line_chart(df, x_col: str, y_cols: list[str], title: str, color: str):
                 name=y_col,
                 line=dict(width=3, color=palette[idx % len(palette)]),
                 text=[fmt_compact(value) for value in df[y_col]],
-                textposition="top center" if idx == 0 else "bottom center",
+                textposition=[
+                    "top center" if idx == 0 or float(value or 0) <= 0 else "bottom center"
+                    for value in df[y_col]
+                ],
                 textfont=dict(size=11, color=palette[idx % len(palette)]),
+                marker=dict(size=8, color=palette[idx % len(palette)]),
+                cliponaxis=False,
+                hovertemplate=f"%{{x}}<br>{y_col}: %{{y:,.0f}}<extra></extra>",
             )
         )
+    numeric_values = [
+        float(value)
+        for y_col in y_cols
+        for value in df[y_col]
+        if value is not None and not pd.isna(value)
+    ]
+    maximum_value = max(numeric_values, default=0)
     fig.update_layout(
         title=dict(text=title, x=0, xanchor="left"),
         template="plotly_white",
-        height=370,
+        height=410,
         autosize=True,
         paper_bgcolor="#FFFFFF",
         plot_bgcolor="#F8FAFD",
         font=dict(color="#0B1F3A"),
-        margin=dict(l=20, r=20, t=55, b=70),
-        legend=dict(orientation="h", yanchor="top", y=-0.16, xanchor="center", x=0.5),
+        margin=dict(l=50, r=35, t=80, b=90),
+        legend=dict(orientation="h", yanchor="top", y=-0.19, xanchor="center", x=0.5),
     )
-    fig.update_xaxes(showgrid=False, linecolor="#C8D3E3", tickfont=dict(color="#17243A"))
-    fig.update_yaxes(gridcolor="#DDE5F0", linecolor="#C8D3E3", tickfont=dict(color="#17243A"))
+    fig.update_xaxes(
+        showgrid=False,
+        linecolor="#C8D3E3",
+        tickfont=dict(color="#17243A"),
+        tickangle=-35 if len(df) > 10 else 0,
+        automargin=True,
+    )
+    fig.update_yaxes(
+        range=[0, maximum_value * 1.2] if maximum_value > 0 else None,
+        gridcolor="#DDE5F0",
+        linecolor="#C8D3E3",
+        tickfont=dict(color="#17243A"),
+        automargin=True,
+    )
     return fig
 
 
 def skd_bar_chart(df, x_col: str, y_col: str, title: str, color: str, orientation: str = "v"):
+    import pandas as pd
     import plotly.express as px
 
+    maximum_value = pd.to_numeric(df[y_col], errors="coerce").max()
     if orientation == "h":
         fig = px.bar(df, x=y_col, y=x_col, orientation="h", title=title, color_discrete_sequence=[color])
         fig.update_layout(yaxis=dict(autorange="reversed"))
@@ -2296,6 +3425,8 @@ def skd_bar_chart(df, x_col: str, y_col: str, title: str, color: str, orientatio
             cliponaxis=False,
             textfont=dict(size=11, color="#0B1F3A"),
         )
+        chart_height = max(390, len(df) * 34 + 120)
+        chart_margin = dict(l=35, r=90, t=75, b=45)
     else:
         fig = px.bar(df, x=x_col, y=y_col, title=title, color_discrete_sequence=[color])
         fig.update_traces(
@@ -2304,20 +3435,44 @@ def skd_bar_chart(df, x_col: str, y_col: str, title: str, color: str, orientatio
             cliponaxis=False,
             textfont=dict(size=11, color="#0B1F3A"),
         )
+        chart_height = 400
+        chart_margin = dict(l=50, r=35, t=80, b=75)
     fig.update_layout(
         template="plotly_white",
-        height=360,
+        height=chart_height,
         autosize=True,
         paper_bgcolor="#FFFFFF",
         plot_bgcolor="#F8FAFD",
         font=dict(color="#0B1F3A"),
-        margin=dict(l=20, r=42, t=55, b=28),
+        margin=chart_margin,
         showlegend=False,
-        uniformtext_minsize=10,
-        uniformtext_mode="hide",
+        uniformtext_minsize=9,
+        uniformtext_mode="show",
     )
-    fig.update_xaxes(gridcolor="#DDE5F0", linecolor="#C8D3E3", tickfont=dict(color="#17243A"), automargin=True)
-    fig.update_yaxes(gridcolor="#DDE5F0", linecolor="#C8D3E3", tickfont=dict(color="#17243A"), automargin=True)
+    if orientation == "h":
+        fig.update_xaxes(
+            range=[0, float(maximum_value) * 1.24] if pd.notna(maximum_value) and maximum_value > 0 else None,
+            gridcolor="#DDE5F0",
+            linecolor="#C8D3E3",
+            tickfont=dict(color="#17243A"),
+            automargin=True,
+        )
+        fig.update_yaxes(gridcolor="#DDE5F0", linecolor="#C8D3E3", tickfont=dict(color="#17243A"), automargin=True)
+    else:
+        fig.update_xaxes(
+            gridcolor="#DDE5F0",
+            linecolor="#C8D3E3",
+            tickfont=dict(color="#17243A"),
+            tickangle=-35 if len(df) > 8 else 0,
+            automargin=True,
+        )
+        fig.update_yaxes(
+            range=[0, float(maximum_value) * 1.2] if pd.notna(maximum_value) and maximum_value > 0 else None,
+            gridcolor="#DDE5F0",
+            linecolor="#C8D3E3",
+            tickfont=dict(color="#17243A"),
+            automargin=True,
+        )
     return fig
 
 
@@ -2335,28 +3490,28 @@ def skd_rejudge_rate_chart(rejudge_ok: int, confirmed_defects: int):
                 y=values,
                 marker=dict(color=["#1D5FBF", "#6532C8"], line=dict(color="#0B1F3A", width=0.5)),
                 text=[f"{value:.1f}% · {fmt_int(count)}" for value, count in zip(values, counts)],
-                textposition="inside",
-                insidetextanchor="middle",
-                textfont=dict(color="#FFFFFF", size=13),
+                textposition="outside",
+                textfont=dict(color="#0B1F3A", size=12),
+                cliponaxis=False,
                 hovertemplate="%{x}<br>%{y:.1f}%<extra></extra>",
             )
         ]
     )
     fig.update_layout(
         template="plotly_white",
-        height=340,
+        height=380,
         autosize=True,
         title="Rejudge OK Rate",
         paper_bgcolor="#FFFFFF",
         plot_bgcolor="#F8FAFD",
         font=dict(color="#0B1F3A"),
-        margin=dict(l=45, r=20, t=55, b=55),
+        margin=dict(l=45, r=25, t=85, b=60),
         showlegend=False,
         xaxis_title="",
         yaxis_title="% of total records",
     )
     fig.update_xaxes(showgrid=False, linecolor="#C8D3E3", tickfont=dict(color="#0B1F3A"))
-    fig.update_yaxes(range=[0, 100], gridcolor="#DDE5F0", linecolor="#C8D3E3", ticksuffix="%", tickfont=dict(color="#17243A"))
+    fig.update_yaxes(range=[0, 115], gridcolor="#DDE5F0", linecolor="#C8D3E3", ticksuffix="%", tickfont=dict(color="#17243A"))
     return fig
 
 
@@ -2548,6 +3703,10 @@ def assembly_quality_dashboard(color: str) -> None:
     monthly = analysis["monthly"].copy()
     trend = analysis["trend"].copy()
     trend_settings = analysis["trend_settings"]
+    if "PeriodDate" in trend.columns:
+        trend["Period"] = trend["PeriodDate"].map(
+            lambda value: format_trend_period(value, trend_settings["grain"])
+        )
     model_summary = analysis["model_summary"].copy()
     merge_stats = analysis.get("defect_merge_stats", {})
     production_input_stats = analysis.get("production_input_stats", {})
@@ -2556,15 +3715,18 @@ def assembly_quality_dashboard(color: str) -> None:
     period_note = f"{period_start} to {period_end}"
 
     if trend_settings.get("summarized_input_rows", 0):
-        resolution_note = (
-            f"Input resolution protection: summarized {trend_settings['input_grain']} input was detected. "
-            f"The software does not divide or estimate this input at a finer time scale. "
-            f"Production, PPM and ManDo PPM trends are displayed {trend_settings['title']}."
-        )
-        if trend_settings.get("input_resolution_limited"):
-            st.warning(resolution_note)
+        if trend_settings.get("input_distributed"):
+            st.info(
+                f"Trend standard: summarized {trend_settings['input_grain']} input was distributed across its "
+                f"calendar days. The exact source-period production total is preserved."
+            )
+        elif trend_settings.get("input_resolution_limited"):
+            st.warning(f"Input resolution limited the trend to {trend_settings['title']}.")
         else:
-            st.caption(resolution_note)
+            st.caption(
+                f"Summarized {trend_settings['input_grain']} input was detected. "
+                f"Production, PPM and ManDo PPM trends are displayed {trend_settings['title']}."
+            )
 
     if active_section == "Overview":
         st.caption(f"Source: {totals['source']}")
@@ -2866,21 +4028,38 @@ def home_page() -> None:
     st.markdown(
         """
         <div class="hero">
-            <h1>JOVI QUALITY PORTAL</h1>
-            <h3>One Portal. All Quality.</h3>
+            <h1>JOVI QUALITY CENTER</h1>
+            <h3>All Quality. One Center.</h3>
             <p>Knowledge, Processes and Performance in one place.</p>
         </div>
         """,
         unsafe_allow_html=True,
     )
+    st.markdown("<div class='home-module-gap'></div>", unsafe_allow_html=True)
     data = [
-        ("Learning Area", "Access knowledge, procedures, process maps and KPIs to empower your quality journey.", MODULES["Learning Area"]["color"], "▣", nav_href("Learning Area", "Overview")),
-        ("SMT", "Surface Mount Technology process overview, KPI tracking, dashboard and BOM comparison.", MODULES["SMT"]["color"], "▦", nav_href("SMT", "Overview")),
-        ("Assembly", "Assembly process overview, KPI tracking and quality dashboard.", MODULES["Assembly"]["color"], "◇", nav_href("Assembly", "Overview")),
-        ("IQC", "Incoming Quality Control overview and inspection insights.", MODULES["IQC"]["color"], "○", nav_href("IQC", "Overview")),
+        ("Learning Area", "Access knowledge, procedures, process maps and KPIs to empower your quality journey.", MODULES["Learning Area"]["color"], "▣", "Overview"),
+        ("SMT", "Surface Mount Technology KPI tracking, quality analysis and BOM comparison.", MODULES["SMT"]["color"], "▦", "KPI Track"),
+        ("Assembly", "Assembly KPI tracking, quality analysis and responsibility dashboard.", MODULES["Assembly"]["color"], "◇", "KPI Track"),
+        ("IQC", "Incoming Quality Control overview and inspection insights.", MODULES["IQC"]["color"], "○", "Overview"),
     ]
-    cards = "".join(module_card_html(*item) for item in data)
-    st.markdown(f"<div class='home-module-grid'>{cards}</div>", unsafe_allow_html=True)
+    columns = st.columns(len(data))
+    for column, (module, description, color, icon, tab) in zip(columns, data):
+        with column:
+            with st.container(
+                border=True,
+                key=f"home_card_{navigation_key(module)}",
+            ):
+                st.markdown(
+                    module_card_html(module, description, color, icon),
+                    unsafe_allow_html=True,
+                )
+                st.button(
+                    "Enter",
+                    key=f"home_enter_{navigation_key(module)}",
+                    use_container_width=True,
+                    on_click=set_navigation,
+                    args=(module, tab),
+                )
 
 
 def overview_page(module: str, color: str) -> None:
@@ -2937,7 +4116,2273 @@ def overview_page(module: str, color: str) -> None:
         st.markdown("<div class='card'><h3>Notices</h3><p class='small-muted'>• Quality meeting<br>• Planned training<br>• New update available</p></div>", unsafe_allow_html=True)
 
 
+def fmt_kpi_pct(value: float | None) -> str:
+    if value is None:
+        return "N/A"
+    try:
+        if value != value:
+            return "N/A"
+    except TypeError:
+        return "N/A"
+    return f"{float(value) * 100:,.2f}%"
+
+
+def smt_kpi_card(label: str, value: str, note: str, color: str) -> None:
+    st.markdown(
+        f"""
+        <div class="metric-card">
+            <div class="metric-label">{escape(label)}</div>
+            <div class="metric-value" style="color:{color};">{escape(value)}</div>
+            <div class="small-muted">{escape(note)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def smt_kpi_line_chart(
+    frame,
+    x_column: str,
+    y_column: str,
+    title: str,
+    color: str,
+    value_type: str,
+    target_value: float | None = None,
+    exception_rows=None,
+):
+    import pandas as pd
+    import plotly.graph_objects as go
+
+    values = pd.to_numeric(frame[y_column], errors="coerce")
+    valid_values = values.dropna()
+    axis_values = valid_values.copy()
+    if target_value is not None:
+        axis_values = pd.concat([axis_values, pd.Series([target_value])], ignore_index=True)
+    dense_labels = len(values) >= 6
+    if value_type == "percent":
+        labels = ["" if pd.isna(value) else f"{float(value) * 100:,.2f}%" for value in values]
+        text_positions = [
+            (
+                "top center"
+                if dense_labels and index % 2 == 0
+                else "bottom center"
+                if dense_labels or pd.notna(value) and float(value) >= 0.97
+                else "top center"
+            )
+            for index, value in enumerate(values)
+        ]
+    else:
+        labels = ["" if pd.isna(value) else f"{float(value):,.0f}" for value in values]
+        low_value_threshold = float(axis_values.max()) * 0.08 if not axis_values.empty else 0.0
+        text_positions = [
+            (
+                "bottom center"
+                if dense_labels
+                and index % 2 == 1
+                and pd.notna(value)
+                and float(value) > low_value_threshold
+                else "top center"
+            )
+            for index, value in enumerate(values)
+        ]
+    chart = go.Figure(
+        data=[
+            go.Scatter(
+                x=frame[x_column],
+                y=values,
+                mode="lines+markers+text",
+                line=dict(color=color, width=3),
+                marker=dict(color=color, size=8),
+                text=labels,
+                textposition=text_positions,
+                textfont=dict(color=color, size=11),
+                cliponaxis=False,
+                hovertemplate=(
+                    "%{x}<br>Rate: %{y:.2%}<extra></extra>"
+                    if value_type == "percent"
+                    else "%{x}<br>PPM: %{y:,.0f}<extra></extra>"
+                ),
+            )
+        ]
+    )
+    if value_type == "percent" and not axis_values.empty:
+        minimum = float(axis_values.min())
+        maximum = float(axis_values.max())
+        span = max(maximum - minimum, 0.005)
+        axis_range = [max(0.0, minimum - span), min(1.0, maximum + span * 1.6)]
+    elif not axis_values.empty and float(axis_values.max()) > 0:
+        axis_range = [0, float(axis_values.max()) * 1.22]
+    else:
+        axis_range = None
+    if exception_rows is not None and not exception_rows.empty and axis_range is not None:
+        exception_y = axis_range[1] - ((axis_range[1] - axis_range[0]) * 0.04)
+        chart.add_trace(
+            go.Scatter(
+                x=exception_rows[x_column],
+                y=[exception_y] * len(exception_rows),
+                mode="markers",
+                marker=dict(color="#DC2626", size=13, symbol="x"),
+                customdata=exception_rows[["Input", "ClassifiedDefectPCBs"]].to_numpy(),
+                hovertemplate=(
+                    "<b>Data consistency exception</b><br>"
+                    "Input: %{customdata[0]:,.0f}<br>"
+                    "Classified NG PCBs: %{customdata[1]:,.0f}<br>"
+                    "PPM not calculated for this period<extra></extra>"
+                ),
+            )
+        )
+    chart.update_layout(
+        title=title,
+        height=420,
+        margin=dict(l=55, r=35, t=80, b=75),
+        paper_bgcolor="white",
+        plot_bgcolor="#F8FAFD",
+        showlegend=False,
+    )
+    chart.update_xaxes(tickangle=-35 if len(frame) > 10 else 0, automargin=True)
+    chart.update_yaxes(
+        range=axis_range,
+        tickformat=".1%" if value_type == "percent" else ",.0f",
+        title_text="Pass rate" if value_type == "percent" else "PPM",
+        automargin=True,
+    )
+    if target_value is not None:
+        valid_indices = [index for index, value in enumerate(values) if pd.notna(value)]
+        final_label_position = text_positions[valid_indices[-1]] if valid_indices else "bottom center"
+        target_label_position = "bottom right" if final_label_position.startswith("top") else "top right"
+        target_text = fmt_kpi_pct(target_value) if value_type == "percent" else f"{fmt_ppm(target_value)} PPM"
+        chart.add_hline(
+            y=target_value,
+            line_color="#DC2626",
+            line_width=2,
+            line_dash="dash",
+            annotation_text=target_text,
+            annotation_position=target_label_position,
+            annotation_font=dict(color="#DC2626", size=11),
+        )
+    return chart
+
+
+def build_smt_oqc_trend(oqc_records, start_date: date, end_date: date):
+    import pandas as pd
+
+    settings = trend_granularity(pd.Timestamp(start_date), pd.Timestamp(end_date))
+    oqc_trend = add_trend_period(oqc_records, "InspectionDate", settings)
+    oqc_trend = oqc_trend.groupby("PeriodDate", as_index=False).agg(
+        Inspected=("Inspected", "sum"),
+        OK=("OK", "sum"),
+        NG=("NG", "sum"),
+    )
+    oqc_trend["Period"] = oqc_trend["PeriodDate"].map(
+        lambda value: format_trend_period(value, settings["grain"])
+    )
+    oqc_trend["PassRate"] = oqc_trend["OK"] / oqc_trend["Inspected"].replace(0, pd.NA)
+    return oqc_trend.sort_values("PeriodDate"), settings
+
+
+def calculate_assembly_smt_duty_kpi(start_date: date, end_date: date) -> dict:
+    import pandas as pd
+
+    stored_defects, stored_inputs = stored_assembly_sources()
+    if not stored_defects or not stored_inputs:
+        raise RuntimeError("Stored Assembly input and defects are required.")
+    selected_defects, defect_source_note = select_defect_sources(stored_defects)
+    rules = load_rules()
+    rules["date_start"] = start_date.isoformat()
+    rules["date_end"] = end_date.isoformat()
+    analysis = analyze_skd_quality_cached(
+        selected_defects,
+        stored_inputs,
+        rules,
+        f"Local stored Assembly data · {defect_source_note}",
+    )
+    raw = analysis["raw"].copy()
+    duty_column = rules["mando_column"]
+    if duty_column not in raw.columns:
+        raise RuntimeError(f"Assembly defects do not contain the {duty_column} column.")
+    allowed_duty_types = {compact_text(value) for value in ASSEMBLY_SMT_DUTY_TYPES}
+    normalized_duty = raw[duty_column].fillna("").astype(str).map(compact_text)
+    duty_mask = raw["ConfirmedDefect"].fillna(False).astype(bool) & normalized_duty.isin(allowed_duty_types)
+    duty_rows = raw[duty_mask].copy()
+    produced = int(analysis["totals"]["produced"])
+    duty_defects = int(len(duty_rows))
+    duty_ppm = duty_defects / produced * 1_000_000 if produced else None
+
+    trend_settings = analysis["trend_settings"]
+    trend = analysis["trend"][["PeriodDate", "Period", "Produced"]].copy()
+    trend["Period"] = trend["PeriodDate"].map(
+        lambda value: format_trend_period(value, trend_settings["grain"])
+    )
+    duty_period_rows = add_trend_period(duty_rows, "_Date", trend_settings)
+    duty_by_period = (
+        duty_period_rows.groupby("PeriodDate", as_index=False)
+        .agg(DutyDefects=("Item", "count"))
+        if not duty_rows.empty
+        else pd.DataFrame(columns=["PeriodDate", "DutyDefects"])
+    )
+    trend = trend.merge(duty_by_period, on="PeriodDate", how="left")
+    trend["DutyDefects"] = trend["DutyDefects"].fillna(0).astype(int)
+    trend["DutyPPM"] = trend["DutyDefects"] / trend["Produced"].replace(0, pd.NA) * 1_000_000
+    trend = trend.sort_values("PeriodDate")
+
+    breakdown = (
+        duty_rows.groupby(duty_column, as_index=False)
+        .agg(DefectRecords=("Item", "count"))
+        .rename(columns={duty_column: "DutyType"})
+        .sort_values("DefectRecords", ascending=False)
+    )
+    return {
+        "produced": produced,
+        "duty_defects": duty_defects,
+        "duty_ppm": duty_ppm,
+        "trend": trend,
+        "trend_settings": trend_settings,
+        "breakdown": breakdown,
+        "source": analysis["totals"]["source"],
+    }
+
+
+def assembly_input_bounds(input_paths: list[Path]) -> tuple[date, date]:
+    import pandas as pd
+
+    starts = []
+    ends = []
+    for input_path in input_paths:
+        frame = read_production_file(input_path, input_path.name)
+        if frame.empty:
+            continue
+        starts.extend(pd.to_datetime(frame["ProductionStart"], errors="coerce").dropna().tolist())
+        ends.extend(pd.to_datetime(frame["ProductionEnd"], errors="coerce").dropna().tolist())
+    if not starts or not ends:
+        raise RuntimeError("Assembly input files do not contain valid production dates.")
+    return min(starts).date(), max(ends).date()
+
+
+def calculate_assembly_kpi_metrics(start_date: date, end_date: date) -> dict:
+    import pandas as pd
+
+    stored_defects, stored_inputs = stored_assembly_sources()
+    if not stored_defects or not stored_inputs:
+        raise RuntimeError("Stored Assembly input and defects are required.")
+    selected_defects, defect_source_note = select_defect_sources(stored_defects)
+    rules = load_rules()
+    rules["date_start"] = start_date.isoformat()
+    rules["date_end"] = end_date.isoformat()
+    analysis = analyze_skd_quality_cached(
+        selected_defects,
+        stored_inputs,
+        rules,
+        f"Local stored Assembly data · {defect_source_note}",
+    )
+    raw = analysis["raw"].copy()
+    operation_column = "TestOperation" if "TestOperation" in raw.columns else None
+    duty_column = rules["mando_column"]
+    if operation_column is None:
+        raise RuntimeError("Assembly defects do not contain the TestOperation column.")
+    if duty_column not in raw.columns:
+        raise RuntimeError(f"Assembly defects do not contain the {duty_column} column.")
+
+    operations = sorted(
+        value
+        for value in raw[operation_column].fillna("").astype(str).str.strip().unique()
+        if value
+    )
+    functional_operations = {str(value).strip() for value in rules.get("assembly_functional_operations", []) if str(value).strip()}
+    appearance_operations = {str(value).strip() for value in rules.get("assembly_appearance_operations", []) if str(value).strip()}
+    raw["FailureType"] = "Unclassified"
+    raw.loc[raw[operation_column].isin(functional_operations), "FailureType"] = "Functional Failure"
+    raw.loc[raw[operation_column].isin(appearance_operations), "FailureType"] = "Appearance Failure"
+
+    confirmed = raw[raw["ConfirmedDefect"].fillna(False).astype(bool)].copy()
+    functional = confirmed[confirmed["FailureType"].eq("Functional Failure")].copy()
+    appearance = confirmed[confirmed["FailureType"].eq("Appearance Failure")].copy()
+    functional_mando = functional[keyword_mask(functional[duty_column], ["Mando", "Man-do", "Man Do", "Man_Do"])].copy()
+    produced = int(analysis["totals"]["produced"])
+
+    def unique_pcb_count(frame) -> int:
+        return int(frame["PCB"].replace("", pd.NA).dropna().nunique()) if not frame.empty else 0
+
+    functional_pcbs = unique_pcb_count(functional)
+    appearance_pcbs = unique_pcb_count(appearance)
+    functional_mando_pcbs = unique_pcb_count(functional_mando)
+
+    trend_settings = analysis["trend_settings"]
+    trend = analysis["trend"][["PeriodDate", "Period", "Produced"]].copy()
+    trend["Period"] = trend["PeriodDate"].map(
+        lambda value: format_trend_period(value, trend_settings["grain"])
+    )
+
+    def period_pcb_counts(frame, column_name: str):
+        period_frame = add_trend_period(frame, "_Date", trend_settings)
+        if period_frame.empty:
+            return pd.DataFrame(columns=["PeriodDate", column_name])
+        return period_frame.groupby("PeriodDate", as_index=False).agg(**{column_name: ("PCB", "nunique")})
+
+    trend = trend.merge(period_pcb_counts(functional, "FunctionalNGPCBs"), on="PeriodDate", how="left")
+    trend = trend.merge(period_pcb_counts(appearance, "AppearanceNGPCBs"), on="PeriodDate", how="left")
+    trend = trend.merge(period_pcb_counts(functional_mando, "FunctionMandoPCBs"), on="PeriodDate", how="left")
+    for column in ["FunctionalNGPCBs", "AppearanceNGPCBs", "FunctionMandoPCBs"]:
+        trend[column] = trend[column].fillna(0).astype(int)
+    trend["FunctionPassRate"] = (trend["Produced"] - trend["FunctionalNGPCBs"]) / trend["Produced"].replace(0, pd.NA)
+    trend["AppearanceTotalPassRate"] = (trend["Produced"] - trend["AppearanceNGPCBs"]) / trend["Produced"].replace(0, pd.NA)
+    trend["FunctionMandoPPM"] = trend["FunctionMandoPCBs"] / trend["Produced"].replace(0, pd.NA) * 1_000_000
+
+    return {
+        "source": analysis["totals"]["source"],
+        "operations": operations,
+        "functional_operations": sorted(functional_operations),
+        "appearance_operations": sorted(appearance_operations),
+        "unclassified_operations": sorted(
+            set(operations) - functional_operations - appearance_operations
+        ),
+        "produced": produced,
+        "functional_pcbs": functional_pcbs,
+        "appearance_pcbs": appearance_pcbs,
+        "functional_mando_pcbs": functional_mando_pcbs,
+        "function_pass_rate": (produced - functional_pcbs) / produced if produced and functional_operations else None,
+        "appearance_pass_rate": (produced - appearance_pcbs) / produced if produced and appearance_operations else None,
+        "function_mando_ppm": functional_mando_pcbs / produced * 1_000_000 if produced and functional_operations else None,
+        "trend": trend.sort_values("PeriodDate"),
+        "trend_settings": trend_settings,
+    }
+
+
+def build_assembly_oqc_fqc_trend(records, start_date: date, end_date: date):
+    import pandas as pd
+
+    settings = trend_granularity(pd.Timestamp(start_date), pd.Timestamp(end_date))
+    trend = add_trend_period(records, "InspectionDate", settings)
+    trend = trend.groupby("PeriodDate", as_index=False).agg(
+        OQCInspected=("OQCInspected", "sum"),
+        OQCOK=("OQCOK", "sum"),
+        FQCInspected=("FQCInspected", "sum"),
+        FQCOK=("FQCOK", "sum"),
+    )
+    trend["Period"] = trend["PeriodDate"].map(lambda value: format_trend_period(value, settings["grain"]))
+    trend["OQCPassRate"] = trend["OQCOK"] / trend["OQCInspected"].replace(0, pd.NA)
+    trend["FQCPassRate"] = trend["FQCOK"] / trend["FQCInspected"].replace(0, pd.NA)
+    trend["CombinedPassRate"] = trend["OQCPassRate"] * trend["FQCPassRate"]
+    return trend.sort_values("PeriodDate"), settings
+
+
+def smt_kpi_track_page(color: str) -> None:
+    import importlib
+    import pandas as pd
+    from tools import smt_quality_dashboard
+
+    importlib.reload(smt_quality_dashboard)
+    st.markdown(f"<h1 class='section-title' style='color:{color};'>SMT KPI Track</h1>", unsafe_allow_html=True)
+
+    input_paths, defect_paths = smt_quality_dashboard.stored_smt_sources()
+    if not input_paths or not defect_paths:
+        st.error("SMT input and defect files are required before KPI calculation.")
+        return
+    input_signatures = tuple(smt_quality_dashboard.path_signature(path) for path in input_paths)
+    minimum_date, maximum_date = smt_quality_dashboard.input_bounds(input_signatures)
+    date_columns = st.columns(2)
+    with date_columns[0]:
+        start_date = st.date_input(
+            "KPI start date",
+            value=minimum_date.date(),
+            min_value=minimum_date.date(),
+            max_value=maximum_date.date(),
+            key="smt_kpi_start_date",
+        )
+    with date_columns[1]:
+        end_date = st.date_input(
+            "KPI end date",
+            value=maximum_date.date(),
+            min_value=minimum_date.date(),
+            max_value=maximum_date.date(),
+            key="smt_kpi_end_date",
+        )
+    if end_date < start_date:
+        st.error("KPI end date must be on or after the start date.")
+        return
+
+    smt_analysis = smt_quality_dashboard.analyze_smt_quality_paths(
+        input_signatures,
+        tuple(smt_quality_dashboard.path_signature(path) for path in defect_paths),
+        start_date.isoformat(),
+        end_date.isoformat(),
+        smt_quality_dashboard.SMT_FAILURE_RULE_VERSION,
+    )
+    smt_totals = smt_analysis["totals"]
+    function_pass_valid = smt_totals.get("FunctionPassStatus") == "Valid"
+    process_ng_valid = smt_totals.get("SMTProcessStatus") == "Valid"
+    try:
+        assembly_kpi = calculate_assembly_smt_duty_kpi(start_date, end_date)
+        assembly_error = ""
+    except Exception as exc:
+        assembly_kpi = None
+        assembly_error = str(exc)
+    oqc_records = load_smt_oqc_inspections(start_date, end_date)
+    oqc_inspected = int(oqc_records["Inspected"].sum()) if not oqc_records.empty else 0
+    oqc_ok = int(oqc_records["OK"].sum()) if not oqc_records.empty else 0
+    oqc_ng = int(oqc_records["NG"].sum()) if not oqc_records.empty else 0
+    oqc_pass_rate = oqc_ok / oqc_inspected if oqc_inspected else None
+
+    period_note = f"{start_date.strftime('%d/%m/%Y')} to {end_date.strftime('%d/%m/%Y')}"
+    cards = st.columns(4)
+    with cards[0]:
+        smt_kpi_card(
+            "Function Pass Rate",
+            fmt_kpi_pct(smt_totals["FunctionPassRate"]) if function_pass_valid else "N/A",
+            f"{fmt_int(smt_totals['FunctionalDefectPCBs'])} functional NG PCBs · {fmt_int(smt_totals['Produced'])} input",
+            color,
+        )
+    with cards[1]:
+        smt_kpi_card(
+            "SMT Process NG Rate",
+            f"{fmt_ppm(smt_totals['SMTProcessNGRatePPM'])} PPM" if process_ng_valid else "N/A",
+            (
+                f"{fmt_kpi_pct(smt_totals['SMTProcessNGRate'])} · functional + appearance"
+                if process_ng_valid
+                else f"Input {fmt_int(smt_totals['Produced'])} < classified NG {fmt_int(smt_totals['ClassifiedDefectPCBs'])}"
+            ),
+            color,
+        )
+    with cards[2]:
+        smt_kpi_card(
+            "Assembly SMT Process Duty NG Rate",
+            f"{fmt_ppm(assembly_kpi['duty_ppm'])} PPM" if assembly_kpi else "N/A",
+            (
+                f"{fmt_int(assembly_kpi['duty_defects'])} defects · {fmt_int(assembly_kpi['produced'])} Assembly input"
+                if assembly_kpi
+                else assembly_error
+            ),
+            color,
+        )
+    with cards[3]:
+        smt_kpi_card(
+            "SMT OQC Pass Rate",
+            fmt_kpi_pct(oqc_pass_rate),
+            f"{fmt_int(oqc_ok)} OK · {fmt_int(oqc_ng)} NG · {fmt_int(oqc_inspected)} inspected" if oqc_inspected else "Awaiting manual OQC input",
+            color,
+        )
+
+    if assembly_error:
+        st.warning(f"Assembly KPI is unavailable: {assembly_error}")
+
+    formula_rows = [
+        {
+            "KPI": "Function Pass Rate",
+            "Calculation basis": (
+                f"{fmt_int(smt_totals['FunctionalDefectPCBs'])} functional NG PCBs | "
+                f"{fmt_int(smt_totals['Produced'])} SMT input"
+            ),
+            "Formula": "(Input − unique functional NG PCB) / Input × 100",
+            "Result": fmt_kpi_pct(smt_totals["FunctionPassRate"]) if function_pass_valid else "N/A",
+        },
+        {
+            "KPI": "SMT Process NG Rate (PPM)",
+            "Calculation basis": (
+                f"{fmt_int(smt_totals['ClassifiedDefectPCBs'])} classified NG PCBs | "
+                f"{fmt_int(smt_totals['Produced'])} SMT input"
+            ),
+            "Formula": "NG PCB / Input × 1,000,000",
+            "Result": (
+                f"{fmt_ppm(smt_totals['SMTProcessNGRatePPM'])} PPM · {fmt_kpi_pct(smt_totals['SMTProcessNGRate'])}"
+                if process_ng_valid
+                else "N/A"
+            ),
+        },
+        {
+            "KPI": "Assembly SMT Process Duty NG Rate (PPM)",
+            "Calculation basis": (
+                f"{fmt_int(assembly_kpi['duty_defects'])} SMT-duty defects | "
+                f"{fmt_int(assembly_kpi['produced'])} Assembly input"
+                if assembly_kpi
+                else "Assembly data unavailable"
+            ),
+            "Formula": "SMT-duty defects / Assembly input × 1,000,000",
+            "Result": f"{fmt_ppm(assembly_kpi['duty_ppm'])} PPM" if assembly_kpi else "N/A",
+        },
+        {
+            "KPI": "SMT OQC Pass Rate",
+            "Calculation basis": f"{fmt_int(oqc_ok)} OQC OK | {fmt_int(oqc_inspected)} inspected",
+            "Formula": "OQC OK / OQC inspected × 100",
+            "Result": fmt_kpi_pct(oqc_pass_rate),
+        },
+    ]
+    st.markdown("### KPI formulas")
+    styled_table(pd.DataFrame(formula_rows), table_class="kpi-formula-table")
+
+    smt_trend = smt_analysis["trend"].copy()
+    smt_period_column = "PeriodDate" if "PeriodDate" in smt_trend.columns else "PeriodStart"
+    if smt_period_column in smt_trend.columns:
+        smt_trend["Period"] = smt_trend[smt_period_column].map(
+            lambda value: format_trend_period(value, requested_trend_grain(start_date, end_date))
+        )
+    selected_trend_label = trend_grain_labels(requested_trend_grain(start_date, end_date))[0]
+    process_exceptions = smt_trend.loc[
+        smt_trend.get("SMTProcessStatus", pd.Series("Valid", index=smt_trend.index)).ne("Valid")
+    ].copy()
+    function_pass_chart = smt_kpi_line_chart(
+        smt_trend,
+        "Period",
+        "FunctionPassRate",
+        f"Function Pass Rate trend · {selected_trend_label}",
+        color,
+        "percent",
+        target_value=0.9956,
+    )
+    process_ng_chart = smt_kpi_line_chart(
+        smt_trend,
+        "Period",
+        "SMTProcessNGRatePPM",
+        f"SMT Process NG Rate trend · {selected_trend_label}",
+        "#C2410C",
+        "ppm",
+        target_value=5_000,
+        exception_rows=process_exceptions,
+    )
+    if len(smt_trend) > 10:
+        show_chart(function_pass_chart)
+        show_chart(process_ng_chart)
+    else:
+        left, right = st.columns(2)
+        with left:
+            show_chart(function_pass_chart)
+        with right:
+            show_chart(process_ng_chart)
+
+    assembly_trend = assembly_kpi["trend"] if assembly_kpi else pd.DataFrame()
+    assembly_chart = (
+        smt_kpi_line_chart(
+            assembly_trend,
+            "Period",
+            "DutyPPM",
+            f"Assembly SMT Process Duty NG Rate trend · {assembly_kpi['trend_settings']['label']}",
+            "#6532C8",
+            "ppm",
+            target_value=700,
+        )
+        if not assembly_trend.empty
+        else None
+    )
+    if not oqc_records.empty:
+        oqc_trend, oqc_trend_settings = build_smt_oqc_trend(oqc_records, start_date, end_date)
+        oqc_chart = smt_kpi_line_chart(
+            oqc_trend,
+            "Period",
+            "PassRate",
+            f"SMT OQC Pass Rate trend · {oqc_trend_settings['label']}",
+            "#1D5FBF",
+            "percent",
+            target_value=0.985,
+        )
+    else:
+        oqc_trend = pd.DataFrame()
+        oqc_chart = None
+
+    lower_trends_are_dense = max(len(assembly_trend), len(oqc_trend)) > 10
+    if lower_trends_are_dense:
+        if assembly_chart is not None:
+            show_chart(assembly_chart)
+        else:
+            st.info("Assembly Duty NG trend will appear when Assembly data is available.")
+        if oqc_chart is not None:
+            show_chart(oqc_chart)
+        else:
+            st.info("SMT OQC Pass Rate trend will appear after the first manual inspection entry.")
+    else:
+        left, right = st.columns(2)
+        with left:
+            if assembly_chart is not None:
+                show_chart(assembly_chart)
+            else:
+                st.info("Assembly Duty NG trend will appear when Assembly data is available.")
+        with right:
+            if oqc_chart is not None:
+                show_chart(oqc_chart)
+            else:
+                st.info("SMT OQC Pass Rate trend will appear after the first manual inspection entry.")
+
+    if not process_exceptions.empty:
+        st.markdown("### Data consistency exceptions")
+        st.warning(
+            "SMT Process NG Rate is not calculated for the periods below because classified NG PCBs exceed the available input. "
+            "The defect records remain included when a larger selected period has a valid aggregate denominator."
+        )
+        exception_view = process_exceptions[["Period", "Input", "ClassifiedDefectPCBs", "SMTProcessStatus"]].copy()
+        exception_view = exception_view.rename(
+            columns={
+                "ClassifiedDefectPCBs": "Classified NG PCBs",
+                "SMTProcessStatus": "Reason",
+            }
+        )
+        styled_table(exception_view)
+
+    st.markdown("### Manual SMT OQC input")
+    with st.form("smt_oqc_input_form", clear_on_submit=True):
+        form_columns = st.columns(5)
+        with form_columns[0]:
+            oqc_date = st.date_input(
+                "Inspection date",
+                value=end_date,
+                min_value=start_date,
+                max_value=end_date,
+                key="smt_oqc_inspection_date",
+            )
+        with form_columns[1]:
+            oqc_model = st.text_input("Model (optional)", key="smt_oqc_model")
+        with form_columns[2]:
+            inspected_qty = st.number_input("Inspected", min_value=0, value=0, step=1, key="smt_oqc_inspected")
+        with form_columns[3]:
+            ok_qty = st.number_input("OK", min_value=0, value=0, step=1, key="smt_oqc_ok")
+        with form_columns[4]:
+            ng_qty = st.number_input("NG", min_value=0, value=0, step=1, key="smt_oqc_ng")
+        oqc_notes = st.text_input("Notes (optional)", key="smt_oqc_notes")
+        oqc_submit = st.form_submit_button("Save OQC inspection", use_container_width=True)
+    if oqc_submit:
+        try:
+            save_smt_oqc_inspection(
+                oqc_date,
+                oqc_model,
+                int(inspected_qty),
+                int(ok_qty),
+                int(ng_qty),
+                oqc_notes,
+            )
+        except ValueError as exc:
+            st.error(str(exc))
+        else:
+            st.success("SMT OQC inspection saved.")
+            st.rerun()
+
+    st.markdown("### OQC inspection history")
+    if oqc_records.empty:
+        st.info(f"No OQC inspection records were entered for {period_note}.")
+    else:
+        oqc_view = oqc_records.copy()
+        oqc_view["InspectionDate"] = oqc_view["InspectionDate"].dt.strftime("%d/%m/%Y")
+        oqc_view["CreatedAt"] = pd.to_datetime(oqc_view["CreatedAt"], errors="coerce").dt.strftime("%d/%m/%y %H:%M")
+        oqc_view["PassRatePct"] = (oqc_view["PassRate"] * 100).round(2)
+        styled_table(
+            oqc_view[["ID", "InspectionDate", "Model", "Inspected", "OK", "NG", "PassRatePct", "Notes", "CreatedAt"]],
+            table_class="inspection-history-table",
+        )
+        st.download_button(
+            "Download OQC history CSV",
+            data=oqc_view.to_csv(index=False).encode("utf-8-sig"),
+            file_name="smt_oqc_inspection_history.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+        with st.expander("Delete an OQC inspection record"):
+            st.caption("Select the incorrect manual record, then confirm its deletion. This action cannot be undone.")
+            oqc_delete_options = {
+                int(row.ID): (
+                    f"ID {int(row.ID)} · {row.InspectionDate} · "
+                    f"{row.Model or 'No model'} · {int(row.Inspected)} inspected"
+                )
+                for row in oqc_view.itertuples(index=False)
+            }
+            oqc_delete_id = st.selectbox(
+                "OQC record to delete",
+                options=list(oqc_delete_options),
+                format_func=lambda record_id: oqc_delete_options[record_id],
+                key="smt_oqc_delete_id",
+            )
+            if st.button("Delete selected OQC record", type="secondary", key="smt_oqc_delete_button"):
+                try:
+                    delete_smt_oqc_inspection(oqc_delete_id)
+                except ValueError as exc:
+                    st.error(str(exc))
+                else:
+                    st.success("SMT OQC inspection record deleted.")
+                    st.rerun()
+
+    if assembly_kpi and not assembly_kpi["breakdown"].empty:
+        st.markdown("### Assembly SMT duty defect breakdown")
+        styled_table(assembly_kpi["breakdown"])
+
+
+def assembly_kpi_track_page(color: str) -> None:
+    import pandas as pd
+
+    st.markdown(f"<h1 class='section-title' style='color:{color};'>Assembly KPI Track</h1>", unsafe_allow_html=True)
+    stored_defects, stored_inputs = stored_assembly_sources()
+    if not stored_defects or not stored_inputs:
+        st.error("Assembly input and defect files are required before KPI calculation.")
+        return
+    try:
+        minimum_date, maximum_date = assembly_input_bounds(stored_inputs)
+    except Exception as exc:
+        st.error(f"Unable to read Assembly input dates: {exc}")
+        return
+
+    date_columns = st.columns(2)
+    with date_columns[0]:
+        start_date = st.date_input(
+            "KPI start date",
+            value=minimum_date,
+            min_value=minimum_date,
+            max_value=maximum_date,
+            key="assembly_kpi_start_date",
+        )
+    with date_columns[1]:
+        end_date = st.date_input(
+            "KPI end date",
+            value=maximum_date,
+            min_value=minimum_date,
+            max_value=maximum_date,
+            key="assembly_kpi_end_date",
+        )
+    if end_date < start_date:
+        st.error("KPI end date must be on or after the start date.")
+        return
+    try:
+        metrics = calculate_assembly_kpi_metrics(start_date, end_date)
+        calculation_error = ""
+    except Exception as exc:
+        metrics = None
+        calculation_error = str(exc)
+
+    if metrics is None:
+        st.error(f"Unable to calculate Assembly KPIs: {calculation_error}")
+        return
+
+    with st.expander("Assembly failure classification", expanded=not metrics["functional_operations"] or not metrics["appearance_operations"]):
+        with st.form("assembly_failure_classification_form"):
+            functional_selection = st.multiselect(
+                "Functional Failure stations",
+                options=metrics["operations"],
+                default=[value for value in metrics["functional_operations"] if value in metrics["operations"]],
+                key="assembly_kpi_functional_operations",
+            )
+            appearance_selection = st.multiselect(
+                "Appearance Failure stations",
+                options=metrics["operations"],
+                default=[value for value in metrics["appearance_operations"] if value in metrics["operations"]],
+                key="assembly_kpi_appearance_operations",
+            )
+            save_classification = st.form_submit_button("Save Assembly classification", use_container_width=True)
+        if save_classification:
+            overlap = sorted(set(functional_selection) & set(appearance_selection))
+            if overlap:
+                st.error("A station cannot be both Functional and Appearance: " + ", ".join(overlap))
+            else:
+                updated_rules = load_rules()
+                updated_rules["assembly_functional_operations"] = functional_selection
+                updated_rules["assembly_appearance_operations"] = appearance_selection
+                save_rules(updated_rules)
+                st.success("Assembly failure classification saved.")
+                st.rerun()
+
+    functional_ready = bool(metrics["functional_operations"])
+    appearance_ready = bool(metrics["appearance_operations"])
+    if not functional_ready or not appearance_ready:
+        missing = []
+        if not functional_ready:
+            missing.append("Functional Failure")
+        if not appearance_ready:
+            missing.append("Appearance Failure")
+        st.warning(
+            "Complete the Assembly station classification to calculate: " + ", ".join(missing) + "."
+        )
+    oqc_fqc_records = load_assembly_oqc_fqc_inspections(start_date, end_date)
+    oqc_inspected = int(oqc_fqc_records["OQCInspected"].sum()) if not oqc_fqc_records.empty else 0
+    oqc_ok = int(oqc_fqc_records["OQCOK"].sum()) if not oqc_fqc_records.empty else 0
+    fqc_inspected = int(oqc_fqc_records["FQCInspected"].sum()) if not oqc_fqc_records.empty else 0
+    fqc_ok = int(oqc_fqc_records["FQCOK"].sum()) if not oqc_fqc_records.empty else 0
+    oqc_pass_rate = oqc_ok / oqc_inspected if oqc_inspected else None
+    fqc_pass_rate = fqc_ok / fqc_inspected if fqc_inspected else None
+    oqc_fqc_pass_rate = oqc_pass_rate * fqc_pass_rate if oqc_pass_rate is not None and fqc_pass_rate is not None else None
+    period_note = f"{start_date.strftime('%d/%m/%Y')} to {end_date.strftime('%d/%m/%Y')}"
+
+    cards = st.columns(4)
+    with cards[0]:
+        smt_kpi_card(
+            "Function Pass Rate",
+            fmt_kpi_pct(metrics["function_pass_rate"]),
+            f"{fmt_int(metrics['functional_pcbs'])} functional NG PCBs · {fmt_int(metrics['produced'])} input" if functional_ready else "Awaiting station classification",
+            color,
+        )
+    with cards[1]:
+        smt_kpi_card(
+            "Appearance Total Pass Rate",
+            fmt_kpi_pct(metrics["appearance_pass_rate"]),
+            f"{fmt_int(metrics['appearance_pcbs'])} appearance NG PCBs · {fmt_int(metrics['produced'])} input" if appearance_ready else "Awaiting station classification",
+            color,
+        )
+    with cards[2]:
+        smt_kpi_card(
+            "Function Mando",
+            f"{fmt_ppm(metrics['function_mando_ppm'])} PPM" if metrics["function_mando_ppm"] is not None else "N/A",
+            f"{fmt_int(metrics['functional_mando_pcbs'])} functional Mando NG PCBs" if functional_ready else "Awaiting Functional Failure stations",
+            color,
+        )
+    with cards[3]:
+        smt_kpi_card(
+            "Assembly OQC × FQC Pass Rate",
+            fmt_kpi_pct(oqc_fqc_pass_rate),
+            f"OQC {fmt_kpi_pct(oqc_pass_rate)} × FQC {fmt_kpi_pct(fqc_pass_rate)}" if oqc_fqc_pass_rate is not None else "Awaiting manual OQC and FQC input",
+            color,
+        )
+
+    formula_rows = [
+        {
+            "KPI": "Function Pass Rate",
+            "Calculation basis": (
+                f"{fmt_int(metrics['functional_pcbs'])} functional NG PCBs | "
+                f"{fmt_int(metrics['produced'])} Assembly input"
+                if functional_ready
+                else "Functional classification pending"
+            ),
+            "Formula": "(Input − unique functional NG PCB) / Input × 100",
+            "Result": fmt_kpi_pct(metrics["function_pass_rate"]),
+        },
+        {
+            "KPI": "Appearance Total Pass Rate",
+            "Calculation basis": (
+                f"{fmt_int(metrics['appearance_pcbs'])} appearance NG PCBs | "
+                f"{fmt_int(metrics['produced'])} Assembly input"
+                if appearance_ready
+                else "Appearance classification pending"
+            ),
+            "Formula": "(Input − unique appearance NG PCB) / Input × 100",
+            "Result": fmt_kpi_pct(metrics["appearance_pass_rate"]),
+        },
+        {
+            "KPI": "Function Mando (PPM)",
+            "Calculation basis": (
+                f"{fmt_int(metrics['functional_mando_pcbs'])} functional Mando NG PCBs | "
+                f"{fmt_int(metrics['produced'])} Assembly input"
+                if functional_ready
+                else "Functional classification pending"
+            ),
+            "Formula": "Functional Mando NG PCB / Input × 1,000,000",
+            "Result": f"{fmt_ppm(metrics['function_mando_ppm'])} PPM" if metrics["function_mando_ppm"] is not None else "N/A",
+        },
+        {
+            "KPI": "Assembly OQC × FQC Pass Rate",
+            "Calculation basis": f"OQC {fmt_kpi_pct(oqc_pass_rate)} | FQC {fmt_kpi_pct(fqc_pass_rate)}",
+            "Formula": "(OQC OK / inspected) × (FQC OK / inspected) × 100",
+            "Result": fmt_kpi_pct(oqc_fqc_pass_rate),
+        },
+    ]
+    st.markdown("### KPI formulas")
+    styled_table(pd.DataFrame(formula_rows), table_class="kpi-formula-table")
+
+    trend = metrics["trend"]
+    trend_label = metrics["trend_settings"]["label"]
+    function_chart = (
+        smt_kpi_line_chart(
+            trend, "Period", "FunctionPassRate", f"Function Pass Rate trend · {trend_label}", color, "percent",
+            target_value=0.9905,
+        )
+        if functional_ready else None
+    )
+    appearance_chart = (
+        smt_kpi_line_chart(
+            trend, "Period", "AppearanceTotalPassRate", f"Appearance Total Pass Rate trend · {trend_label}", "#1D5FBF", "percent",
+            target_value=0.9904,
+        )
+        if appearance_ready else None
+    )
+    mando_chart = (
+        smt_kpi_line_chart(
+            trend, "Period", "FunctionMandoPPM", f"Function Mando trend · {trend_label}", "#C2410C", "ppm",
+            target_value=3_600,
+        )
+        if functional_ready else None
+    )
+    oqc_fqc_chart = None
+    if not oqc_fqc_records.empty:
+        oqc_fqc_trend, oqc_fqc_settings = build_assembly_oqc_fqc_trend(oqc_fqc_records, start_date, end_date)
+        oqc_fqc_chart = smt_kpi_line_chart(
+            oqc_fqc_trend,
+            "Period",
+            "CombinedPassRate",
+            f"Assembly OQC × FQC Pass Rate trend · {oqc_fqc_settings['label']}",
+            "#0D7A45",
+            "percent",
+            target_value=0.987,
+        )
+    dense_trends = max(len(trend), len(oqc_fqc_records)) > 10
+    charts = [
+        (function_chart, "Function Pass Rate trend will appear after Functional Failure stations are defined."),
+        (appearance_chart, "Appearance Total Pass Rate trend will appear after Appearance Failure stations are defined."),
+        (mando_chart, "Function Mando trend will appear after Functional Failure stations are defined."),
+        (oqc_fqc_chart, "Assembly OQC × FQC Pass Rate trend will appear after the first manual inspection entry."),
+    ]
+    if dense_trends:
+        for chart, empty_message in charts:
+            if chart is not None:
+                show_chart(chart)
+            else:
+                st.info(empty_message)
+    else:
+        for chart_pair in (charts[:2], charts[2:]):
+            left, right = st.columns(2)
+            for column, (chart, empty_message) in zip((left, right), chart_pair):
+                with column:
+                    if chart is not None:
+                        show_chart(chart)
+                    else:
+                        st.info(empty_message)
+
+    st.markdown("### Manual Assembly OQC and FQC input")
+    with st.form("assembly_oqc_fqc_input_form", clear_on_submit=True):
+        header_columns = st.columns(2)
+        with header_columns[0]:
+            inspection_date = st.date_input(
+                "Inspection date",
+                value=end_date,
+                min_value=start_date,
+                max_value=end_date,
+                key="assembly_oqc_fqc_inspection_date",
+            )
+        with header_columns[1]:
+            inspection_model = st.text_input("Model (optional)", key="assembly_oqc_fqc_model")
+        oqc_column, fqc_column = st.columns(2)
+        with oqc_column:
+            st.markdown("#### OQC")
+            oqc_inspected_input = st.number_input("OQC inspected", min_value=0, value=0, step=1, key="assembly_oqc_inspected")
+            oqc_ok_input = st.number_input("OQC OK", min_value=0, value=0, step=1, key="assembly_oqc_ok")
+            oqc_ng_input = st.number_input("OQC NG", min_value=0, value=0, step=1, key="assembly_oqc_ng")
+        with fqc_column:
+            st.markdown("#### FQC")
+            fqc_inspected_input = st.number_input("FQC inspected", min_value=0, value=0, step=1, key="assembly_fqc_inspected")
+            fqc_ok_input = st.number_input("FQC OK", min_value=0, value=0, step=1, key="assembly_fqc_ok")
+            fqc_ng_input = st.number_input("FQC NG", min_value=0, value=0, step=1, key="assembly_fqc_ng")
+        inspection_notes = st.text_input("Notes (optional)", key="assembly_oqc_fqc_notes")
+        oqc_fqc_submit = st.form_submit_button("Save Assembly OQC and FQC inspection", use_container_width=True)
+    if oqc_fqc_submit:
+        try:
+            save_assembly_oqc_fqc_inspection(
+                inspection_date,
+                inspection_model,
+                int(oqc_inspected_input),
+                int(oqc_ok_input),
+                int(oqc_ng_input),
+                int(fqc_inspected_input),
+                int(fqc_ok_input),
+                int(fqc_ng_input),
+                inspection_notes,
+            )
+        except ValueError as exc:
+            st.error(str(exc))
+        else:
+            st.success("Assembly OQC and FQC inspection saved.")
+            st.rerun()
+
+    st.markdown("### Assembly OQC and FQC inspection history")
+    if oqc_fqc_records.empty:
+        st.info(f"No Assembly OQC or FQC inspection records were entered for {period_note}.")
+    else:
+        oqc_fqc_view = oqc_fqc_records.copy()
+        oqc_fqc_view["InspectionDate"] = oqc_fqc_view["InspectionDate"].dt.strftime("%d/%m/%Y")
+        oqc_fqc_view["CreatedAt"] = pd.to_datetime(oqc_fqc_view["CreatedAt"], errors="coerce").dt.strftime("%d/%m/%y %H:%M")
+        for source_column, output_column in [
+            ("OQCPassRate", "OQCPassRatePct"),
+            ("FQCPassRate", "FQCPassRatePct"),
+            ("CombinedPassRate", "OQCxFQCPassRatePct"),
+        ]:
+            oqc_fqc_view[output_column] = (oqc_fqc_view[source_column] * 100).round(2)
+        visible_columns = [
+            "ID", "InspectionDate", "Model",
+            "OQCInspected", "OQCOK", "OQCNG", "OQCPassRatePct",
+            "FQCInspected", "FQCOK", "FQCNG", "FQCPassRatePct", "OQCxFQCPassRatePct",
+            "Notes", "CreatedAt",
+        ]
+        styled_table(
+            oqc_fqc_view[visible_columns],
+            table_class="inspection-history-table assembly-inspection-history-table",
+        )
+        st.download_button(
+            "Download Assembly OQC and FQC history CSV",
+            data=oqc_fqc_view.to_csv(index=False).encode("utf-8-sig"),
+            file_name="assembly_oqc_fqc_inspection_history.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+        with st.expander("Delete an Assembly OQC/FQC inspection record"):
+            st.caption("Select the incorrect manual record, then confirm its deletion. This action cannot be undone.")
+            assembly_delete_options = {
+                int(row.ID): (
+                    f"ID {int(row.ID)} · {row.InspectionDate} · "
+                    f"{row.Model or 'No model'} · OQC {int(row.OQCInspected)} · FQC {int(row.FQCInspected)}"
+                )
+                for row in oqc_fqc_view.itertuples(index=False)
+            }
+            assembly_delete_id = st.selectbox(
+                "Assembly OQC/FQC record to delete",
+                options=list(assembly_delete_options),
+                format_func=lambda record_id: assembly_delete_options[record_id],
+                key="assembly_oqc_fqc_delete_id",
+            )
+            if st.button("Delete selected Assembly OQC/FQC record", type="secondary", key="assembly_oqc_fqc_delete_button"):
+                try:
+                    delete_assembly_oqc_fqc_inspection(assembly_delete_id)
+                except ValueError as exc:
+                    st.error(str(exc))
+                else:
+                    st.success("Assembly OQC/FQC inspection record deleted.")
+                    st.rerun()
+
+
+def _dashboard_defect_key(frame, pcb_column: str = "PCB"):
+    import pandas as pd
+
+    if frame.empty:
+        return pd.Series(dtype="object", index=frame.index)
+    pcb = frame.get(pcb_column, pd.Series("", index=frame.index)).fillna("").astype(str).str.strip()
+    return pcb.where(pcb.ne(""), "ROW-" + frame.index.astype(str))
+
+
+def _dashboard_priority(value: float, target: float | None = None) -> str:
+    if value is None:
+        return "Review data"
+    try:
+        if value != value:
+            return "Review data"
+    except TypeError:
+        return "Review data"
+    if not isinstance(value, Number):
+        return "Review data"
+    if target and target > 0:
+        ratio = float(value) / float(target)
+        if ratio >= 1.5:
+            return "Critical"
+        if ratio >= 1:
+            return "High"
+        if ratio >= 0.6:
+            return "Medium"
+        return "Monitor"
+    if value >= 5_000:
+        return "Critical"
+    if value >= 2_500:
+        return "High"
+    if value >= 1_000:
+        return "Medium"
+    return "Monitor"
+
+
+def _build_smt_dashboard_view(analysis: dict, model: str, station: str, failure_type: str) -> dict:
+    import pandas as pd
+    from tools import smt_quality_dashboard
+
+    covered = analysis["covered_raw"].copy()
+    calendar = analysis["raw"].copy()
+    selected_input = analysis["selected_input"].copy()
+
+    def apply_filters(frame):
+        view = frame.copy()
+        if model != "All":
+            view = view[view["Model"].eq(model)]
+        if station != "All":
+            view = view[view["Operation"].eq(station)]
+        if failure_type != "All":
+            view = view[view["FailureType"].eq(failure_type)]
+        return view
+
+    covered = apply_filters(covered)
+    calendar = apply_filters(calendar)
+    if model != "All":
+        selected_input = selected_input[selected_input["Model"].eq(model)].copy()
+
+    covered["_DefectKey"] = _dashboard_defect_key(covered)
+    calendar["_DefectKey"] = _dashboard_defect_key(calendar)
+    confirmed = covered[~covered["IsRejudgeOK"].fillna(False).astype(bool)].copy()
+    rejudge = covered[covered["IsRejudgeOK"].fillna(False).astype(bool)].copy()
+    classified = confirmed[
+        confirmed["FailureType"].isin(["Functional Failure", "Appearance Failure"])
+    ].copy()
+    functional = confirmed[confirmed["FailureType"].eq("Functional Failure")].copy()
+    appearance = confirmed[confirmed["FailureType"].eq("Appearance Failure")].copy()
+
+    produced = int(selected_input["Input"].sum())
+
+    def unique_count(frame) -> int:
+        return int(frame["_DefectKey"].nunique()) if not frame.empty else 0
+
+    confirmed_pcbs = unique_count(confirmed)
+    classified_pcbs = unique_count(classified)
+    functional_pcbs = unique_count(functional)
+    appearance_pcbs = unique_count(appearance)
+    functional_keys = set(functional["_DefectKey"])
+    appearance_keys = set(appearance["_DefectKey"])
+    both_type_pcbs = len(functional_keys & appearance_keys)
+    functional_only_pcbs = len(functional_keys - appearance_keys)
+    appearance_only_pcbs = len(appearance_keys - functional_keys)
+
+    daily_input = smt_quality_dashboard.distribute_smt_input_to_days(selected_input)
+    trend_rows = []
+    for row in analysis["trend"].itertuples(index=False):
+        begin = pd.Timestamp(row.PeriodStart)
+        end = pd.Timestamp(row.PeriodEndExclusive)
+        period_input = int(
+            daily_input.loc[
+                daily_input["BeginDate"].ge(begin) & daily_input["BeginDate"].lt(end),
+                "Input",
+            ].sum()
+        )
+        period_confirmed = confirmed[
+            confirmed["TestTime"].ge(begin) & confirmed["TestTime"].lt(end)
+        ]
+        period_classified = period_confirmed[
+            period_confirmed["FailureType"].isin(["Functional Failure", "Appearance Failure"])
+        ]
+        period_functional = period_confirmed[
+            period_confirmed["FailureType"].eq("Functional Failure")
+        ]
+        period_appearance = period_confirmed[
+            period_confirmed["FailureType"].eq("Appearance Failure")
+        ]
+        confirmed_count = unique_count(period_confirmed)
+        classified_count = unique_count(period_classified)
+        functional_count = unique_count(period_functional)
+        appearance_count = unique_count(period_appearance)
+        valid = bool(period_input and classified_count <= period_input)
+        trend_rows.append(
+            {
+                "PeriodDate": begin,
+                "Period": row.Period,
+                "Input": period_input,
+                "ConfirmedDefectPCBs": confirmed_count,
+                "ClassifiedDefectPCBs": classified_count,
+                "FunctionalDefectPCBs": functional_count,
+                "AppearanceDefectPCBs": appearance_count,
+                "OverallPPM": (
+                    confirmed_count / period_input * 1_000_000
+                    if period_input and confirmed_count <= period_input
+                    else None
+                ),
+                "ProcessPPM": classified_count / period_input * 1_000_000 if valid else None,
+                "FunctionalPPM": (
+                    functional_count / period_input * 1_000_000
+                    if period_input and functional_count <= period_input
+                    else None
+                ),
+                "AppearancePPM": (
+                    appearance_count / period_input * 1_000_000
+                    if period_input and appearance_count <= period_input
+                    else None
+                ),
+                "Status": "Valid" if valid else "Blocked: classified NG PCB exceeds input",
+            }
+        )
+    trend = pd.DataFrame(trend_rows)
+
+    input_by_model = (
+        selected_input.groupby("Model", as_index=False).agg(Input=("Input", "sum"))
+        if not selected_input.empty
+        else pd.DataFrame(columns=["Model", "Input"])
+    )
+    defects_by_model = (
+        confirmed.groupby("Model", as_index=False).agg(NGPCBs=("_DefectKey", "nunique"))
+        if not confirmed.empty
+        else pd.DataFrame(columns=["Model", "NGPCBs"])
+    )
+    models = input_by_model.merge(defects_by_model, on="Model", how="left").fillna(0)
+    models["PPM"] = models["NGPCBs"] / models["Input"].replace(0, pd.NA) * 1_000_000
+
+    pareto = (
+        confirmed.groupby("Phenomenon", as_index=False)
+        .agg(NGPCBs=("_DefectKey", "nunique"))
+        .sort_values("NGPCBs", ascending=False)
+        if not confirmed.empty
+        else pd.DataFrame(columns=["Phenomenon", "NGPCBs"])
+    )
+
+    model_station = (
+        confirmed.groupby(["Model", "Operation"], as_index=False)
+        .agg(NGPCBs=("_DefectKey", "nunique"))
+        if not confirmed.empty
+        else pd.DataFrame(columns=["Model", "Operation", "NGPCBs"])
+    )
+    if not model_station.empty:
+        model_station = model_station.merge(input_by_model, on="Model", how="left")
+        model_station["PPM"] = (
+            model_station["NGPCBs"] / model_station["Input"].replace(0, pd.NA) * 1_000_000
+        )
+        top_models = (
+            model_station.groupby("Model")["NGPCBs"].sum().nlargest(6).index.tolist()
+        )
+        top_stations = (
+            model_station.groupby("Operation")["NGPCBs"].sum().nlargest(7).index.tolist()
+        )
+        heatmap = (
+            model_station[
+                model_station["Model"].isin(top_models)
+                & model_station["Operation"].isin(top_stations)
+            ]
+            .pivot_table(index="Model", columns="Operation", values="PPM", aggfunc="sum", fill_value=0)
+            .reindex(index=top_models, columns=top_stations, fill_value=0)
+        )
+    else:
+        heatmap = pd.DataFrame()
+
+    priority = (
+        confirmed.groupby(["Phenomenon", "Operation", "Model", "DutyType"], as_index=False)
+        .agg(NGPCBs=("_DefectKey", "nunique"))
+        if not confirmed.empty
+        else pd.DataFrame(columns=["Phenomenon", "Operation", "Model", "DutyType", "NGPCBs"])
+    )
+    if not priority.empty:
+        priority = priority.merge(input_by_model, on="Model", how="left")
+        priority["ImpactPPM"] = priority["NGPCBs"] / priority["Input"].replace(0, pd.NA) * 1_000_000
+        priority["Priority"] = priority["ImpactPPM"].map(
+            lambda value: _dashboard_priority(value, 5_000)
+        )
+        priority = priority.sort_values(
+            ["ImpactPPM", "NGPCBs"], ascending=[False, False]
+        ).head(8)
+
+    operation_summary = (
+        confirmed.groupby("Operation", as_index=False)
+        .agg(NGPCBs=("_DefectKey", "nunique"))
+        .sort_values("NGPCBs", ascending=False)
+        if not confirmed.empty
+        else pd.DataFrame(columns=["Operation", "NGPCBs"])
+    )
+    duty_summary = (
+        confirmed.groupby("DutyType", as_index=False)
+        .agg(NGPCBs=("_DefectKey", "nunique"))
+        .sort_values("NGPCBs", ascending=False)
+        if not confirmed.empty
+        else pd.DataFrame(columns=["DutyType", "NGPCBs"])
+    )
+
+    repeat_counts = (
+        covered.groupby("_DefectKey").size().sort_values(ascending=False)
+        if not covered.empty
+        else pd.Series(dtype="int64")
+    )
+    repeated_keys = repeat_counts[repeat_counts > 1].index
+    repeat_detail = covered[covered["_DefectKey"].isin(repeated_keys)].copy()
+    repeat_detail["Occurrences"] = repeat_detail["_DefectKey"].map(repeat_counts)
+
+    coverage_rate = (
+        float(calendar["HasExactInputCoverage"].fillna(False).mean())
+        if len(calendar) and "HasExactInputCoverage" in calendar.columns
+        else (len(covered) / len(calendar) if len(calendar) else 1.0)
+    )
+    classification_rate = (
+        len(classified) / len(confirmed) if len(confirmed) else 1.0
+    )
+    unknown_reason_records = int(
+        confirmed["FaultReason"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.lower()
+        .isin({"", "unknown", "unknownothers"})
+        .sum()
+    )
+    process_valid = bool(produced and classified_pcbs <= produced)
+    overall_valid = bool(produced and confirmed_pcbs <= produced)
+    return {
+        "produced": produced,
+        "confirmed_pcbs": confirmed_pcbs,
+        "classified_pcbs": classified_pcbs,
+        "functional_pcbs": functional_pcbs,
+        "appearance_pcbs": appearance_pcbs,
+        "functional_only_pcbs": functional_only_pcbs,
+        "appearance_only_pcbs": appearance_only_pcbs,
+        "both_type_pcbs": both_type_pcbs,
+        "overall_ppm": confirmed_pcbs / produced * 1_000_000 if overall_valid else None,
+        "process_ppm": classified_pcbs / produced * 1_000_000 if process_valid else None,
+        "trend": trend,
+        "models": models,
+        "pareto": pareto,
+        "heatmap": heatmap,
+        "priority": priority,
+        "operation_summary": operation_summary,
+        "duty_summary": duty_summary,
+        "confirmed": confirmed,
+        "rejudge": rejudge,
+        "repeat_detail": repeat_detail,
+        "coverage_rate": coverage_rate,
+        "classification_rate": classification_rate,
+        "unknown_reason_records": unknown_reason_records,
+        "period_pooled_records": int(
+            calendar.get("UsesPeriodPooledInput", pd.Series(False, index=calendar.index))
+            .fillna(False)
+            .sum()
+        ),
+        "unclassified_records": int(
+            confirmed["FailureType"].eq("Unclassified").sum()
+        ),
+        "exceptions": int(trend["Status"].ne("Valid").sum()) if not trend.empty else 0,
+    }
+
+
+def smt_quality_dashboard_v2(color: str) -> None:
+    import pandas as pd
+    from tools import dashboard_charts, smt_quality_dashboard
+
+    smt_quality_dashboard.init_smt_store()
+    st.markdown(
+        f"<h1 class='section-title' style='color:{color};'>SMT · Quality Dashboard</h1>",
+        unsafe_allow_html=True,
+    )
+    input_paths, defect_paths = smt_quality_dashboard.stored_smt_sources()
+    if not input_paths or not defect_paths:
+        st.warning("SMT stored data is incomplete. Add at least one input file and one defect file.")
+        with st.expander("Upload SMT data", expanded=True):
+            smt_quality_dashboard._upload_section(color)
+        return
+
+    input_signatures = tuple(smt_quality_dashboard.path_signature(path) for path in input_paths)
+    defect_signatures = tuple(smt_quality_dashboard.path_signature(path) for path in defect_paths)
+    minimum_date, maximum_date = smt_quality_dashboard.input_bounds(input_signatures)
+
+    filter_columns = st.columns([1.45, 1, 1, 1])
+    with filter_columns[0]:
+        selected_period = st.date_input(
+            "Date range",
+            value=(minimum_date.date(), maximum_date.date()),
+            min_value=minimum_date.date(),
+            max_value=maximum_date.date(),
+            format="DD/MM/YYYY",
+            key="smt_quality_v2_period",
+        )
+    if isinstance(selected_period, (tuple, list)) and len(selected_period) >= 2:
+        start_date, end_date = selected_period[0], selected_period[1]
+    elif isinstance(selected_period, (tuple, list)) and len(selected_period) == 1:
+        start_date = end_date = selected_period[0]
+    else:
+        start_date = end_date = selected_period
+    if end_date < start_date:
+        start_date, end_date = end_date, start_date
+
+    try:
+        analysis = smt_quality_dashboard.analyze_smt_quality_paths(
+            input_signatures,
+            defect_signatures,
+            start_date.isoformat(),
+            end_date.isoformat(),
+            smt_quality_dashboard.SMT_FAILURE_RULE_VERSION,
+        )
+    except Exception as exc:
+        st.error(f"Unable to calculate the SMT dashboard: {exc}")
+        return
+    analysis = {
+        **analysis,
+        "trend": smt_quality_dashboard.refresh_chart_period_labels(analysis["trend"]),
+    }
+    raw = analysis["raw"]
+    model_options = ["All", *sorted(set(analysis["selected_input"]["Model"].dropna().astype(str)))]
+    station_options = ["All", *sorted(set(raw["Operation"].dropna().astype(str)))]
+    failure_options = ["All", "Functional Failure", "Appearance Failure", "Unclassified"]
+    with filter_columns[1]:
+        model = st.selectbox("Model", model_options, key="smt_quality_v2_model")
+    with filter_columns[2]:
+        station = st.selectbox("Process / Station", station_options, key="smt_quality_v2_station")
+    with filter_columns[3]:
+        failure_type = st.selectbox(
+            "Failure type", failure_options, key="smt_quality_v2_failure_type"
+        )
+
+    view = _build_smt_dashboard_view(analysis, model, station, failure_type)
+    grain_label = trend_grain_labels(requested_trend_grain(start_date, end_date))[0]
+    quality = analysis["quality"]
+
+    exclusive_total = (
+        view["functional_only_pcbs"]
+        + view["appearance_only_pcbs"]
+        + view["both_type_pcbs"]
+    )
+    functional_share = view["functional_only_pcbs"] / exclusive_total if exclusive_total else 0
+    appearance_share = view["appearance_only_pcbs"] / exclusive_total if exclusive_total else 0
+    both_share = view["both_type_pcbs"] / exclusive_total if exclusive_total else 0
+    cards = st.columns(4)
+    with cards[0]:
+        smt_kpi_card("SMT input", fmt_int(view["produced"]), "Boards in the selected scope", color)
+    with cards[1]:
+        smt_kpi_card(
+            "Confirmed defect PCBs",
+            fmt_int(view["confirmed_pcbs"]),
+            (
+                f"Overall PPM {fmt_ppm(view['overall_ppm'])}"
+                if view["overall_ppm"] is not None
+                else "Overall PPM N/A"
+            ),
+            color,
+        )
+    with cards[2]:
+        smt_kpi_card(
+            "SMT Process NG",
+            f"{fmt_ppm(view['process_ppm'])} PPM" if view["process_ppm"] is not None else "N/A",
+            f"{fmt_int(view['classified_pcbs'])} functional + appearance NG PCBs",
+            color,
+        )
+    with cards[3]:
+        smt_kpi_card(
+            "Failure profile",
+            f"{functional_share:.0%} F · {appearance_share:.0%} A · {both_share:.0%} B"
+            if exclusive_total
+            else "0% F · 0% A · 0% B",
+            f"F/A only · B = both ({fmt_int(view['both_type_pcbs'])} PCBs)",
+            color,
+        )
+    left, right = st.columns(2)
+    with left:
+        show_chart(
+            dashboard_charts.ppm_trend_chart(
+                view["trend"],
+                f"SMT Process NG PPM trend · {grain_label}",
+                [("ProcessPPM", "SMT Process NG", color)],
+                target_value=5_000,
+                exception_mask=view["trend"]["Status"].ne("Valid"),
+            )
+        )
+    with right:
+        show_chart(
+            dashboard_charts.failure_donut_chart(
+                view["functional_only_pcbs"],
+                view["appearance_only_pcbs"],
+                both=view["both_type_pcbs"],
+            )
+        )
+
+    left, right = st.columns(2)
+    with left:
+        show_chart(
+            dashboard_charts.pareto_chart(
+                view["pareto"], "Phenomenon", "NGPCBs", "Top defects · Pareto", color
+            )
+        )
+    with right:
+        show_chart(
+            dashboard_charts.model_ppm_input_chart(
+                view["models"], "Worst models by PPM and input", color
+            )
+        )
+
+    left, right = st.columns(2)
+    with left:
+        if not view["heatmap"].empty:
+            show_chart(
+                dashboard_charts.heatmap_chart(
+                    view["heatmap"], "Model × station PPM heatmap"
+                )
+            )
+        else:
+            st.info("The model × station heatmap needs confirmed defects in the selected scope.")
+    with right:
+        st.markdown("#### Action priority")
+        if view["priority"].empty:
+            st.info("No confirmed defects match the selected filters.")
+        else:
+            action_priority_cards(
+                view["priority"],
+                defect_column="Phenomenon",
+                station_column="Operation",
+                model_column="Model",
+            )
+
+    st.markdown("#### Data quality")
+    data_quality = st.columns(4)
+    with data_quality[0]:
+        smt_kpi_card("Input coverage", fmt_kpi_pct(view["coverage_rate"]), "Defect records with matching input", "#0D7A45")
+    with data_quality[1]:
+        rejudge_rate = len(view["rejudge"]) / max(len(view["rejudge"]) + len(view["confirmed"]), 1)
+        smt_kpi_card("Re-Judge rate", fmt_kpi_pct(rejudge_rate), f"{fmt_int(len(view['rejudge']))} records", "#1D5FBF")
+    with data_quality[2]:
+        smt_kpi_card("Exceptions", fmt_int(view["exceptions"]), "Periods blocked from PPM", "#DC2626")
+    with data_quality[3]:
+        smt_kpi_card(
+            "Classification coverage",
+            fmt_kpi_pct(view["classification_rate"]),
+            f"{fmt_int(view['unclassified_records'])} unclassified records",
+            "#64748B",
+        )
+
+    with st.expander("Functional and appearance failure analysis"):
+        left, right = st.columns(2)
+        functional_pareto = (
+            view["confirmed"][view["confirmed"]["FailureType"].eq("Functional Failure")]
+            .groupby("Phenomenon", as_index=False)
+            .agg(NGPCBs=("_DefectKey", "nunique"))
+            .sort_values("NGPCBs", ascending=False)
+        )
+        appearance_pareto = (
+            view["confirmed"][view["confirmed"]["FailureType"].eq("Appearance Failure")]
+            .groupby("Phenomenon", as_index=False)
+            .agg(NGPCBs=("_DefectKey", "nunique"))
+            .sort_values("NGPCBs", ascending=False)
+        )
+        with left:
+            show_chart(
+                dashboard_charts.pareto_chart(
+                    functional_pareto,
+                    "Phenomenon",
+                    "NGPCBs",
+                    "Functional failure Pareto",
+                    "#0D7A45",
+                )
+            )
+        with right:
+            show_chart(
+                dashboard_charts.pareto_chart(
+                    appearance_pareto,
+                    "Phenomenon",
+                    "NGPCBs",
+                    "Appearance failure Pareto",
+                    "#1D5FBF",
+                )
+            )
+
+    with st.expander("Process, station and responsibility"):
+        left, right = st.columns(2)
+        with left:
+            show_chart(
+                dashboard_charts.ranked_bar_chart(
+                    view["operation_summary"],
+                    "Operation",
+                    "NGPCBs",
+                    "Confirmed NG PCBs by station",
+                    color,
+                )
+            )
+        with right:
+            show_chart(
+                dashboard_charts.ranked_bar_chart(
+                    view["duty_summary"],
+                    "DutyType",
+                    "NGPCBs",
+                    "Confirmed NG PCBs by DutyType",
+                    "#6532C8",
+                )
+            )
+
+    with st.expander("Re-Judge, repeats and data-quality audit"):
+        audit_cards = st.columns(4)
+        with audit_cards[0]:
+            smt_kpi_card("Re-Judge records", fmt_int(len(view["rejudge"])), "False NG / Re-Judge OK", color)
+        with audit_cards[1]:
+            smt_kpi_card(
+                "Repeated PCBs",
+                fmt_int(view["repeat_detail"]["_DefectKey"].nunique()),
+                "More than one record",
+                color,
+            )
+        with audit_cards[2]:
+            smt_kpi_card(
+                "Pooled records",
+                fmt_int(view["period_pooled_records"]),
+                "Retained only in accumulated scopes",
+                "#C2410C",
+            )
+        with audit_cards[3]:
+            smt_kpi_card(
+                "Uncovered records",
+                fmt_int(analysis["totals"]["UncoveredDefectRecords"]),
+                "Excluded from PPM",
+                "#DC2626",
+            )
+        repeat_columns = ["PCB", "Model", "TestTime", "Operation", "FailureType", "Phenomenon", "Occurrences"]
+        if not view["repeat_detail"].empty:
+            styled_table(
+                view["repeat_detail"][[column for column in repeat_columns if column in view["repeat_detail"].columns]],
+                max_rows=30,
+                table_class="compact-dashboard-table",
+            )
+        if not quality["UnclassifiedStations"].empty:
+            st.markdown("##### Unclassified stations")
+            styled_table(
+                quality["UnclassifiedStations"],
+                max_rows=30,
+                table_class="compact-dashboard-table",
+            )
+
+    with st.expander("Filtered detail and export"):
+        visible_columns = [
+            "PCB", "TestTime", "Model", "Operation", "FailureType", "Phenomenon", "DutyType", "Maintenance"
+        ]
+        detail = view["confirmed"][[column for column in visible_columns if column in view["confirmed"].columns]].copy()
+        st.caption(f"{fmt_int(len(detail))} confirmed records match the global filters.")
+        if not detail.empty:
+            styled_table(
+                detail,
+                max_rows=50,
+                table_class="compact-dashboard-table",
+            )
+        st.download_button(
+            "Download filtered SMT detail CSV",
+            data=detail.to_csv(index=False).encode("utf-8-sig"),
+            file_name="smt_quality_filtered_detail.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+
+    with st.expander("Upload SMT data"):
+        smt_quality_dashboard._upload_section(color)
+
+
+def _assembly_duty_category(value: object) -> str:
+    text = " ".join(str(value or "").strip().split())
+    compact = compact_text(text)
+    if compact.startswith("smt"):
+        return "SMT"
+    if "mando" in compact or "man-do" in text.lower() or "man do" in text.lower():
+        return "Mando"
+    if "equipment" in compact:
+        return "Equipment"
+    if "process" in compact:
+        return "Process"
+    if not text or text.lower() in {"nan", "none", "null"}:
+        return "Unknown"
+    return "Assembly"
+
+
+def _build_assembly_dashboard_view(
+    analysis: dict,
+    rules: dict,
+    model: str,
+    station: str,
+    failure_type: str,
+    duty_category: str,
+) -> dict:
+    import pandas as pd
+
+    raw = analysis["raw"].copy()
+    production_detail = analysis["production_detail"].copy()
+    operation_column = "TestOperation"
+    duty_column = rules["mando_column"]
+    functional_operations = {
+        str(value).strip()
+        for value in rules.get("assembly_functional_operations", [])
+        if str(value).strip()
+    }
+    appearance_operations = {
+        str(value).strip()
+        for value in rules.get("assembly_appearance_operations", [])
+        if str(value).strip()
+    }
+    raw["FailureType"] = "Unclassified"
+    raw.loc[raw[operation_column].isin(functional_operations), "FailureType"] = "Functional Failure"
+    raw.loc[raw[operation_column].isin(appearance_operations), "FailureType"] = "Appearance Failure"
+    raw["DutyCategory"] = raw[duty_column].map(_assembly_duty_category)
+
+    if model != "All":
+        raw = raw[raw["Model"].eq(model)].copy()
+        production_detail = production_detail[production_detail["Model"].eq(model)].copy()
+    if station != "All":
+        raw = raw[raw[operation_column].eq(station)].copy()
+    if failure_type != "All":
+        raw = raw[raw["FailureType"].eq(failure_type)].copy()
+    if duty_category != "All":
+        raw = raw[raw["DutyCategory"].eq(duty_category)].copy()
+
+    raw["_DefectKey"] = _dashboard_defect_key(raw)
+    confirmed = raw[raw["ConfirmedDefect"].fillna(False).astype(bool)].copy()
+    rejudge = raw[raw["IsRejudgeOK"].fillna(False).astype(bool)].copy()
+    functional = confirmed[confirmed["FailureType"].eq("Functional Failure")].copy()
+    appearance = confirmed[confirmed["FailureType"].eq("Appearance Failure")].copy()
+    functional_mando = functional[
+        keyword_mask(functional[duty_column], ["Mando", "Man-do", "Man Do", "Man_Do"])
+    ].copy()
+    smt_origin = confirmed[confirmed["DutyCategory"].eq("SMT")].copy()
+    produced = int(production_detail["Produced"].sum())
+
+    def unique_count(frame) -> int:
+        return int(frame["_DefectKey"].nunique()) if not frame.empty else 0
+
+    confirmed_pcbs = unique_count(confirmed)
+    functional_pcbs = unique_count(functional)
+    appearance_pcbs = unique_count(appearance)
+    mando_pcbs = unique_count(functional_mando)
+    smt_pcbs = unique_count(smt_origin)
+
+    settings = analysis["trend_settings"]
+    production_for_trend = (
+        distribute_production_to_days(production_detail)
+        if settings.get("input_distributed")
+        else production_detail
+    )
+    production_period = add_trend_period(
+        production_for_trend, "ProductionStart", settings
+    )
+    production_trend = (
+        production_period.groupby("PeriodDate", as_index=False).agg(Input=("Produced", "sum"))
+        if not production_period.empty
+        else pd.DataFrame(columns=["PeriodDate", "Input"])
+    )
+
+    def period_count(frame, column_name: str):
+        if frame.empty:
+            return pd.DataFrame(columns=["PeriodDate", column_name])
+        period_frame = add_trend_period(frame, "_Date", settings)
+        return period_frame.groupby("PeriodDate", as_index=False).agg(
+            **{column_name: ("_DefectKey", "nunique")}
+        )
+
+    trend = production_trend.copy()
+    for frame, column in [
+        (confirmed, "ConfirmedPCBs"),
+        (functional, "FunctionalPCBs"),
+        (appearance, "AppearancePCBs"),
+        (functional_mando, "MandoPCBs"),
+        (smt_origin, "SMTOriginPCBs"),
+    ]:
+        trend = trend.merge(period_count(frame, column), on="PeriodDate", how="outer")
+    if trend.empty:
+        trend = pd.DataFrame(
+            columns=[
+                "PeriodDate", "Period", "Input", "ConfirmedPCBs", "FunctionalPCBs",
+                "AppearancePCBs", "MandoPCBs", "SMTOriginPCBs", "ConfirmedPPM",
+                "FunctionalPPM", "AppearancePPM", "MandoPPM", "SMTOriginPPM", "Status",
+            ]
+        )
+    else:
+        count_columns = [
+            "Input", "ConfirmedPCBs", "FunctionalPCBs", "AppearancePCBs",
+            "MandoPCBs", "SMTOriginPCBs",
+        ]
+        trend[count_columns] = trend[count_columns].fillna(0).astype(int)
+        trend = trend.sort_values("PeriodDate")
+        trend["Period"] = trend["PeriodDate"].map(
+            lambda value: format_trend_period(value, settings["grain"])
+        )
+        for count_column, ppm_column in [
+            ("ConfirmedPCBs", "ConfirmedPPM"),
+            ("FunctionalPCBs", "FunctionalPPM"),
+            ("AppearancePCBs", "AppearancePPM"),
+            ("MandoPCBs", "MandoPPM"),
+            ("SMTOriginPCBs", "SMTOriginPPM"),
+        ]:
+            trend[ppm_column] = (
+                trend[count_column] / trend["Input"].replace(0, pd.NA) * 1_000_000
+            )
+            trend.loc[trend[count_column] > trend["Input"], ppm_column] = pd.NA
+        trend["Status"] = "Valid"
+        trend.loc[trend["ConfirmedPCBs"] > trend["Input"], "Status"] = (
+            "Blocked: confirmed NG PCB exceeds input"
+        )
+
+    input_by_model = (
+        production_detail.groupby("Model", as_index=False).agg(Input=("Produced", "sum"))
+        if not production_detail.empty
+        else pd.DataFrame(columns=["Model", "Input"])
+    )
+    defects_by_model = (
+        confirmed.groupby("Model", as_index=False).agg(NGPCBs=("_DefectKey", "nunique"))
+        if not confirmed.empty
+        else pd.DataFrame(columns=["Model", "NGPCBs"])
+    )
+    models = input_by_model.merge(defects_by_model, on="Model", how="left").fillna(0)
+    models["PPM"] = models["NGPCBs"] / models["Input"].replace(0, pd.NA) * 1_000_000
+
+    pareto = (
+        confirmed.groupby("Phenomenon", as_index=False)
+        .agg(NGPCBs=("_DefectKey", "nunique"))
+        .sort_values("NGPCBs", ascending=False)
+        if not confirmed.empty
+        else pd.DataFrame(columns=["Phenomenon", "NGPCBs"])
+    )
+    duty_summary = (
+        confirmed.groupby("DutyCategory", as_index=False)
+        .agg(NGPCBs=("_DefectKey", "nunique"))
+        .sort_values("NGPCBs", ascending=False)
+        if not confirmed.empty
+        else pd.DataFrame(columns=["DutyCategory", "NGPCBs"])
+    )
+    duty_summary["PPM"] = (
+        duty_summary["NGPCBs"] / max(produced, 1) * 1_000_000
+    )
+    line_summary = (
+        confirmed.groupby("Line", as_index=False)
+        .agg(NGPCBs=("_DefectKey", "nunique"))
+        .sort_values("NGPCBs", ascending=False)
+        if not confirmed.empty
+        else pd.DataFrame(columns=["Line", "NGPCBs"])
+    )
+    smt_pareto = (
+        smt_origin.groupby("Phenomenon", as_index=False)
+        .agg(NGPCBs=("_DefectKey", "nunique"))
+        .sort_values("NGPCBs", ascending=False)
+        if not smt_origin.empty
+        else pd.DataFrame(columns=["Phenomenon", "NGPCBs"])
+    )
+
+    model_station = (
+        confirmed.groupby(["Model", operation_column], as_index=False)
+        .agg(NGPCBs=("_DefectKey", "nunique"))
+        if not confirmed.empty
+        else pd.DataFrame(columns=["Model", operation_column, "NGPCBs"])
+    )
+    if not model_station.empty:
+        model_station = model_station.merge(input_by_model, on="Model", how="left")
+        model_station["PPM"] = (
+            model_station["NGPCBs"] / model_station["Input"].replace(0, pd.NA) * 1_000_000
+        )
+        top_models = model_station.groupby("Model")["NGPCBs"].sum().nlargest(6).index.tolist()
+        top_stations = (
+            model_station.groupby(operation_column)["NGPCBs"].sum().nlargest(7).index.tolist()
+        )
+        heatmap = (
+            model_station[
+                model_station["Model"].isin(top_models)
+                & model_station[operation_column].isin(top_stations)
+            ]
+            .pivot_table(index="Model", columns=operation_column, values="PPM", aggfunc="sum", fill_value=0)
+            .reindex(index=top_models, columns=top_stations, fill_value=0)
+        )
+    else:
+        heatmap = pd.DataFrame()
+
+    priority = (
+        confirmed.groupby(
+            ["Phenomenon", operation_column, "Model", duty_column, "DutyCategory"],
+            as_index=False,
+        ).agg(NGPCBs=("_DefectKey", "nunique"))
+        if not confirmed.empty
+        else pd.DataFrame(
+            columns=["Phenomenon", operation_column, "Model", duty_column, "DutyCategory", "NGPCBs"]
+        )
+    )
+    if not priority.empty:
+        priority = priority.merge(input_by_model, on="Model", how="left")
+        priority["ImpactPPM"] = priority["NGPCBs"] / priority["Input"].replace(0, pd.NA) * 1_000_000
+        priority["Priority"] = priority["ImpactPPM"].map(_dashboard_priority)
+        priority = priority.sort_values(
+            ["ImpactPPM", "NGPCBs"], ascending=[False, False]
+        ).head(8)
+
+    classification_rate = (
+        confirmed["FailureType"].ne("Unclassified").mean() if len(confirmed) else 1.0
+    )
+    input_stats = analysis.get("production_input_stats", {})
+    exceptions = int(input_stats.get("selected_blocked_rows", input_stats.get("blocked_rows", 0)))
+    exceptions += int(trend["Status"].ne("Valid").sum()) if not trend.empty else 0
+    overall_valid = bool(produced and confirmed_pcbs <= produced)
+    mando_valid = bool(produced and mando_pcbs <= produced)
+    return {
+        "raw": raw,
+        "confirmed": confirmed,
+        "rejudge": rejudge,
+        "produced": produced,
+        "confirmed_pcbs": confirmed_pcbs,
+        "functional_pcbs": functional_pcbs,
+        "appearance_pcbs": appearance_pcbs,
+        "mando_pcbs": mando_pcbs,
+        "smt_pcbs": smt_pcbs,
+        "overall_ppm": confirmed_pcbs / produced * 1_000_000 if overall_valid else None,
+        "mando_ppm": mando_pcbs / produced * 1_000_000 if mando_valid else None,
+        "smt_ppm": smt_pcbs / produced * 1_000_000 if produced and smt_pcbs <= produced else None,
+        "trend": trend,
+        "models": models,
+        "pareto": pareto,
+        "duty_summary": duty_summary,
+        "line_summary": line_summary,
+        "smt_pareto": smt_pareto,
+        "heatmap": heatmap,
+        "priority": priority,
+        "classification_rate": float(classification_rate),
+        "unclassified_operations": sorted(
+            set(raw[operation_column].dropna().astype(str))
+            - functional_operations
+            - appearance_operations
+        ),
+        "exceptions": exceptions,
+    }
+
+
+def _assembly_upload_section_v2(store_status: dict) -> None:
+    st.caption("Add one cumulative defects workbook and one or more production/input files.")
+    cards = st.columns(4)
+    with cards[0]:
+        smt_kpi_card("Defect files", fmt_int(store_status["defects"]), "Local history", "#6532C8")
+    with cards[1]:
+        smt_kpi_card("Input files", fmt_int(store_status["input"]), "Local history", "#6532C8")
+    with cards[2]:
+        smt_kpi_card("Stored size", f"{store_status['bytes'] / 1024 / 1024:.1f} MB", "Local files", "#6532C8")
+    with cards[3]:
+        smt_kpi_card("Latest import", str(store_status["latest"]), "Local data store", "#6532C8")
+    uploaded_defects = st.file_uploader(
+        "Assembly defects file", type=["xlsx"], key="assembly_quality_v2_defects_upload"
+    )
+    uploaded_inputs = st.file_uploader(
+        "Assembly production/input files",
+        type=["csv", "xls", "xlsx"],
+        accept_multiple_files=True,
+        key="assembly_quality_v2_inputs_upload",
+    )
+    if uploaded_defects and uploaded_inputs:
+        if st.button("Save Assembly files", use_container_width=True, key="assembly_quality_v2_save"):
+            results = [persist_assembly_source(uploaded_defects, "defects", "manual upload")]
+            results.extend(
+                persist_assembly_source(uploaded, "input", "manual upload")
+                for uploaded in uploaded_inputs
+            )
+            st.session_state["assembly_last_import_results"] = results
+            st.success("Assembly files processed.")
+            st.rerun()
+    if st.button(
+        "Refresh monitored folder",
+        use_container_width=True,
+        key="assembly_quality_v2_refresh_folder",
+    ):
+        st.session_state["assembly_last_import_results"] = import_assembly_monitored_folder()
+        st.rerun()
+    if "assembly_last_import_results" in st.session_state:
+        import_results_table(st.session_state["assembly_last_import_results"])
+
+
+def assembly_quality_dashboard_v2(color: str) -> None:
+    import pandas as pd
+    from tools import dashboard_charts
+
+    stored_rules = load_rules()
+    if not st.session_state.get("assembly_auto_import_checked", False):
+        results = import_assembly_monitored_folder()
+        st.session_state["assembly_auto_import_checked"] = True
+        if any(result["status"] == "imported" for result in results):
+            st.session_state["assembly_last_import_results"] = results
+    store_status = assembly_store_status()
+    stored_defects, stored_inputs = stored_assembly_sources()
+    st.markdown(
+        f"<h1 class='section-title' style='color:{color};'>Assembly · Quality Dashboard</h1>",
+        unsafe_allow_html=True,
+    )
+    if not stored_defects or not stored_inputs:
+        st.warning("Stored Assembly input and defect files are required.")
+        with st.expander("Upload Assembly data", expanded=True):
+            _assembly_upload_section_v2(store_status)
+        return
+
+    selected_defects, defect_source_note = select_defect_sources(stored_defects)
+    minimum_date, maximum_date = assembly_input_bounds(stored_inputs)
+    filter_columns = st.columns([1.35, 0.9, 1.1, 1, 0.9])
+    with filter_columns[0]:
+        selected_period = st.date_input(
+            "Date range",
+            value=(minimum_date, maximum_date),
+            min_value=minimum_date,
+            max_value=maximum_date,
+            format="DD/MM/YYYY",
+            key="assembly_quality_v2_period",
+        )
+    if isinstance(selected_period, (tuple, list)) and len(selected_period) >= 2:
+        start_date, end_date = selected_period[0], selected_period[1]
+    elif isinstance(selected_period, (tuple, list)) and len(selected_period) == 1:
+        start_date = end_date = selected_period[0]
+    else:
+        start_date = end_date = selected_period
+    if end_date < start_date:
+        start_date, end_date = end_date, start_date
+
+    rules = stored_rules.copy()
+    rules["date_start"] = start_date.isoformat()
+    rules["date_end"] = end_date.isoformat()
+    try:
+        analysis = analyze_skd_quality_cached(
+            selected_defects,
+            stored_inputs,
+            rules,
+            f"Local stored Assembly data · {defect_source_note}",
+        )
+    except Exception as exc:
+        st.error(f"Unable to calculate the Assembly dashboard: {exc}")
+        return
+
+    raw = analysis["raw"].copy()
+    raw["FailureType"] = "Unclassified"
+    raw.loc[
+        raw["TestOperation"].isin(rules.get("assembly_functional_operations", [])),
+        "FailureType",
+    ] = "Functional Failure"
+    raw.loc[
+        raw["TestOperation"].isin(rules.get("assembly_appearance_operations", [])),
+        "FailureType",
+    ] = "Appearance Failure"
+    raw["DutyCategory"] = raw[rules["mando_column"]].map(_assembly_duty_category)
+    model_options = ["All", *sorted(set(analysis["production_detail"]["Model"].dropna().astype(str)))]
+    station_options = ["All", *sorted(set(raw["TestOperation"].dropna().astype(str)))]
+    failure_options = ["All", "Functional Failure", "Appearance Failure", "Unclassified"]
+    duty_options = ["All", *sorted(set(raw["DutyCategory"].dropna().astype(str)))]
+    with filter_columns[1]:
+        model = st.selectbox("Model", model_options, key="assembly_quality_v2_model")
+    with filter_columns[2]:
+        station = st.selectbox(
+            "Process / Station", station_options, key="assembly_quality_v2_station"
+        )
+    with filter_columns[3]:
+        failure_type = st.selectbox(
+            "Failure type", failure_options, key="assembly_quality_v2_failure"
+        )
+    with filter_columns[4]:
+        duty_category = st.selectbox(
+            "DutyType", duty_options, key="assembly_quality_v2_duty"
+        )
+
+    view = _build_assembly_dashboard_view(
+        analysis, rules, model, station, failure_type, duty_category
+    )
+    grain_label = analysis["trend_settings"]["label"]
+
+    total_classified = view["functional_pcbs"] + view["appearance_pcbs"]
+    functional_share = (
+        view["functional_pcbs"] / total_classified if total_classified else 0
+    )
+    cards = st.columns(4)
+    with cards[0]:
+        smt_kpi_card("Assembly input", fmt_int(view["produced"]), "Units in the selected scope", color)
+    with cards[1]:
+        smt_kpi_card(
+            "Confirmed defect PCBs",
+            fmt_int(view["confirmed_pcbs"]),
+            (
+                f"Overall PPM {fmt_ppm(view['overall_ppm'])}"
+                if view["overall_ppm"] is not None
+                else "Overall PPM N/A"
+            ),
+            color,
+        )
+    with cards[2]:
+        smt_kpi_card(
+            "Failure mix",
+            f"{functional_share:.0%} / {1 - functional_share:.0%}" if total_classified else "0% / 0%",
+            f"{fmt_int(view['functional_pcbs'])} functional · {fmt_int(view['appearance_pcbs'])} appearance",
+            color,
+        )
+    with cards[3]:
+        smt_kpi_card(
+            "Function Mando",
+            f"{fmt_ppm(view['mando_ppm'])} PPM" if view["mando_ppm"] is not None else "N/A",
+            f"{fmt_int(view['mando_pcbs'])} functional Mando NG PCBs",
+            color,
+        )
+
+    left, right = st.columns(2)
+    with left:
+        show_chart(
+            dashboard_charts.ppm_trend_chart(
+                view["trend"],
+                f"Confirmed PPM vs Function Mando PPM · {grain_label}",
+                [
+                    ("ConfirmedPPM", "Confirmed PPM", color),
+                    ("MandoPPM", "Function Mando PPM", "#C2410C"),
+                ],
+                target_value=3_600,
+            )
+        )
+    with right:
+        show_chart(
+            dashboard_charts.failure_donut_chart(
+                view["functional_pcbs"], view["appearance_pcbs"]
+            )
+        )
+
+    left, right = st.columns(2)
+    with left:
+        show_chart(
+            dashboard_charts.pareto_chart(
+                view["pareto"], "Phenomenon", "NGPCBs", "Top defects · Pareto", color
+            )
+        )
+    with right:
+        show_chart(
+            dashboard_charts.model_ppm_input_chart(
+                view["models"], "Worst models by PPM and input", color
+            )
+        )
+
+    left, right = st.columns(2)
+    with left:
+        show_chart(
+            dashboard_charts.ranked_bar_chart(
+                view["duty_summary"],
+                "DutyCategory",
+                "PPM",
+                "DutyType / failure origin",
+                color,
+                value_suffix="",
+            )
+        )
+    with right:
+        st.markdown("#### Action priority")
+        if view["priority"].empty:
+            st.info("No confirmed defects match the selected filters.")
+        else:
+            action_priority_cards(
+                view["priority"],
+                defect_column="Phenomenon",
+                station_column="TestOperation",
+                model_column="Model",
+            )
+
+    st.markdown("#### SMT-origin failures")
+    left, right = st.columns(2)
+    with left:
+        show_chart(
+            dashboard_charts.ppm_trend_chart(
+                view["trend"],
+                f"Assembly defects of SMT origin · {grain_label}",
+                [("SMTOriginPPM", "SMT-origin PPM", "#0D7A45")],
+                target_value=700,
+            )
+        )
+    with right:
+        show_chart(
+            dashboard_charts.ranked_bar_chart(
+                view["smt_pareto"],
+                "Phenomenon",
+                "NGPCBs",
+                "Top SMT-origin defect causes",
+                "#0D7A45",
+            )
+        )
+
+    st.markdown("#### Data quality")
+    data_quality = st.columns(4)
+    with data_quality[0]:
+        smt_kpi_card(
+            "Classification coverage",
+            fmt_kpi_pct(view["classification_rate"]),
+            f"{fmt_int(len(view['unclassified_operations']))} unclassified stations",
+            "#0D7A45",
+        )
+    with data_quality[1]:
+        rejudge_rate = len(view["rejudge"]) / max(len(view["rejudge"]) + len(view["confirmed"]), 1)
+        smt_kpi_card("Re-Judge rate", fmt_kpi_pct(rejudge_rate), f"{fmt_int(len(view['rejudge']))} records", "#1D5FBF")
+    with data_quality[2]:
+        smt_kpi_card("Exceptions", fmt_int(view["exceptions"]), "Blocked input or PPM periods", "#DC2626")
+    with data_quality[3]:
+        smt_kpi_card("Defect updates merged", fmt_int(analysis["defect_merge_stats"].get("merged_updates", 0)), "Latest non-blank values retained", "#64748B")
+
+    with st.expander("Functional, appearance, model and station analysis"):
+        left, right = st.columns(2)
+        functional_pareto = (
+            view["confirmed"][view["confirmed"]["FailureType"].eq("Functional Failure")]
+            .groupby("Phenomenon", as_index=False)
+            .agg(NGPCBs=("_DefectKey", "nunique"))
+            .sort_values("NGPCBs", ascending=False)
+        )
+        appearance_pareto = (
+            view["confirmed"][view["confirmed"]["FailureType"].eq("Appearance Failure")]
+            .groupby("Phenomenon", as_index=False)
+            .agg(NGPCBs=("_DefectKey", "nunique"))
+            .sort_values("NGPCBs", ascending=False)
+        )
+        with left:
+            show_chart(
+                dashboard_charts.pareto_chart(
+                    functional_pareto, "Phenomenon", "NGPCBs", "Functional failure Pareto", color
+                )
+            )
+        with right:
+            show_chart(
+                dashboard_charts.pareto_chart(
+                    appearance_pareto, "Phenomenon", "NGPCBs", "Appearance failure Pareto", "#1D5FBF"
+                )
+            )
+        left, right = st.columns(2)
+        with left:
+            if not view["heatmap"].empty:
+                show_chart(
+                    dashboard_charts.heatmap_chart(
+                        view["heatmap"], "Model × station PPM heatmap", color_scale="Purples"
+                    )
+                )
+            else:
+                st.info("The model × station heatmap needs confirmed defects in the selected scope.")
+        with right:
+            show_chart(
+                dashboard_charts.ranked_bar_chart(
+                    view["line_summary"], "Line", "NGPCBs", "Confirmed NG PCBs by line", color
+                )
+            )
+
+    with st.expander("Assembly failure classification rules"):
+        operation_options = sorted(set(analysis["raw"]["TestOperation"].dropna().astype(str)))
+        with st.form("assembly_quality_v2_classification_form"):
+            functional_selection = st.multiselect(
+                "Functional Failure stations",
+                options=operation_options,
+                default=[
+                    value
+                    for value in rules.get("assembly_functional_operations", [])
+                    if value in operation_options
+                ],
+                key="assembly_quality_v2_functional_operations",
+            )
+            appearance_selection = st.multiselect(
+                "Appearance Failure stations",
+                options=operation_options,
+                default=[
+                    value
+                    for value in rules.get("assembly_appearance_operations", [])
+                    if value in operation_options
+                ],
+                key="assembly_quality_v2_appearance_operations",
+            )
+            save_classification = st.form_submit_button(
+                "Save Assembly classification", use_container_width=True
+            )
+        if save_classification:
+            overlap = sorted(set(functional_selection) & set(appearance_selection))
+            if overlap:
+                st.error("A station cannot be both Functional and Appearance: " + ", ".join(overlap))
+            else:
+                updated_rules = load_rules()
+                updated_rules["assembly_functional_operations"] = functional_selection
+                updated_rules["assembly_appearance_operations"] = appearance_selection
+                save_rules(updated_rules)
+                st.success("Assembly failure classification saved.")
+                st.rerun()
+
+    with st.expander("Filtered detail, audit and export"):
+        visible_columns = [
+            "PCB", "TestTime", "Model", "TestOperation", "FailureType", "Phenomenon",
+            rules["mando_column"], "Maintenance",
+        ]
+        detail = view["confirmed"][
+            [column for column in visible_columns if column in view["confirmed"].columns]
+        ].copy()
+        st.caption(f"{fmt_int(len(detail))} confirmed records match the global filters.")
+        if not detail.empty:
+            styled_table(
+                detail,
+                max_rows=50,
+                table_class="compact-dashboard-table",
+            )
+        st.download_button(
+            "Download filtered Assembly detail CSV",
+            data=detail.to_csv(index=False).encode("utf-8-sig"),
+            file_name="assembly_quality_filtered_detail.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+        if not analysis["production_input_audit"].empty:
+            audit_columns = [
+                "Model", "ProductionStart", "ProductionEnd", "Produced", "InputStatus", "InputDecision"
+            ]
+            styled_table(
+                analysis["production_input_audit"][
+                    [column for column in audit_columns if column in analysis["production_input_audit"].columns]
+                ],
+                max_rows=50,
+                table_class="compact-dashboard-table",
+            )
+        if st.button("Prepare Assembly analysis workbook", use_container_width=True):
+            st.session_state["assembly_quality_v2_export"] = make_skd_export(analysis).getvalue()
+        if "assembly_quality_v2_export" in st.session_state:
+            st.download_button(
+                "Download Assembly analysis workbook",
+                data=st.session_state["assembly_quality_v2_export"],
+                file_name="assembly_quality_analysis.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
+
+    with st.expander("Upload Assembly data"):
+        _assembly_upload_section_v2(store_status)
+
+
 def kpi_track_page(module: str, color: str) -> None:
+    if module == "SMT":
+        smt_kpi_track_page(color)
+        return
+    if module == "Assembly":
+        assembly_kpi_track_page(color)
+        return
     st.markdown(f"<h1 class='section-title' style='color:{color};'>{module} KPI Track</h1>", unsafe_allow_html=True)
     cols = st.columns(4)
     metrics = [("FPY", "98.65%"), ("OEE", "85.42%"), ("Defect Rate", "0.68%"), ("Rework Rate", "1.25%")]
@@ -2949,15 +6394,11 @@ def kpi_track_page(module: str, color: str) -> None:
 
 def dashboard_page(module: str, color: str) -> None:
     if module == "Assembly":
-        assembly_quality_dashboard(color)
+        assembly_quality_dashboard_v2(color)
         return
 
     if module == "SMT":
-        import importlib
-        from tools import smt_input_tool
-
-        importlib.reload(smt_input_tool)
-        smt_input_tool.render_smt_quality_dashboard(color)
+        smt_quality_dashboard_v2(color)
         return
 
     st.markdown(f"<h1 class='section-title' style='color:{color};'>{module} Quality Dashboard</h1>", unsafe_allow_html=True)
@@ -3154,7 +6595,7 @@ def about_page() -> None:
     st.markdown(
         f"""
         <div class="card">
-            <h3>Jovi Quality Portal</h3>
+            <h3>Jovi Quality Center</h3>
             <p><b>Current version:</b> {APP_VERSION}</p>
             <p><b>Developed by:</b> {DEVELOPER}<br><b>Role:</b> {ROLE}<br><b>Manager:</b> {MANAGER}</p>
         </div>
@@ -3184,7 +6625,7 @@ def render_page() -> None:
             dashboard_page(module, color)
         elif tab == "BOM Comparison Tool - SMT":
             bom_tool_smt_page()
-        elif tab == "BOM Comparison Tool - Assy":
+        elif tab == "BOM Comparison Tool - Assembly":
             bom_tool_assy_page()
     elif module == "IQC":
         iqc_page()
@@ -3193,8 +6634,13 @@ def render_page() -> None:
 
 
 init_state()
+if not st.session_state.get("authenticated", False):
+    login_page()
+    st.stop()
+
 sync_navigation_from_query()
 apply_global_css()
+install_chart_copy_controls()
 sidebar()
 topbar()
 render_page()
