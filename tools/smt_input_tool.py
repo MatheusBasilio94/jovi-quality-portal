@@ -188,24 +188,34 @@ def input_chart(frame: pd.DataFrame, color: str):
     import plotly.graph_objects as go
 
     chart = go.Figure()
+    input_max = pd.to_numeric(frame["Input"], errors="coerce").max()
     chart.add_bar(
         x=frame["Input Date"],
         y=frame["Input"],
         marker_color=color,
-        text=frame["Input"],
+        text=[f"{float(value):,.0f}" for value in frame["Input"]],
         textposition="outside",
+        textfont=dict(size=11, color="#0B1F3A"),
+        cliponaxis=False,
         hovertemplate="%{x|%d/%m/%Y}<br>Input: %{y:,}<extra></extra>",
     )
     chart.update_layout(
         title="Unique SMT input by day",
-        height=430,
-        margin=dict(l=20, r=20, t=60, b=30),
+        height=470,
+        margin=dict(l=45, r=35, t=80, b=70),
         xaxis_title="Operate Time date",
         yaxis_title="Unique PCB No.",
         showlegend=False,
         paper_bgcolor="white",
         plot_bgcolor="white",
+        uniformtext_minsize=9,
+        uniformtext_mode="show",
     )
+    chart.update_yaxes(
+        range=[0, float(input_max) * 1.2] if pd.notna(input_max) and input_max > 0 else None,
+        automargin=True,
+    )
+    chart.update_xaxes(tickformat="%d/%m", tickangle=-35 if len(frame) > 10 else 0, automargin=True)
     return chart
 
 

@@ -8,7 +8,7 @@ import pandas as pd
 import streamlit as st
 
 
-TOOL_VERSION = "v2.0.7"
+TOOL_VERSION = "v2.0.8"
 
 MICROSIGA_ALIASES = {
     "code": ["codigo", "cod", "material code", "child material code"],
@@ -235,6 +235,10 @@ def build_summary(result: pd.DataFrame, issues: pd.DataFrame, jovi_count: int) -
     extra = int(issues["Issue Type"].eq("Extra in Microsiga").sum()) if not issues.empty else 0
     quantity = int(issues["Issue Type"].eq("Quantity Mismatch").sum()) if not issues.empty else 0
     return {
+        "Tool Version": TOOL_VERSION,
+        "Reference BOM": "Jovi",
+        "Compared BOM": "Microsiga",
+        "Comparison Scope": "Code and Quantity only",
         "Jovi Items": jovi_count,
         "Match": matches,
         "Match Rate": matches / jovi_count if jovi_count else 0.0,
@@ -256,6 +260,18 @@ def generate_excel(analysis: dict) -> bytes:
         analysis["result"].to_excel(writer, index=False, sheet_name="All_Results")
         analysis["microsiga"].to_excel(writer, index=False, sheet_name="Microsiga_Normalized")
         analysis["jovi"].to_excel(writer, index=False, sheet_name="Jovi_Normalized")
+        rules = pd.DataFrame([
+            {"Item": "Tool Version", "Definition": TOOL_VERSION},
+            {"Item": "Reference BOM", "Definition": "Jovi official BOM"},
+            {"Item": "Compared BOM", "Definition": "Microsiga BOM"},
+            {"Item": "Compared Fields", "Definition": "Code / Child Material and Quantity"},
+            {"Item": "Description", "Definition": "Displayed for traceability; not compared"},
+            {"Item": "Missing", "Definition": "Exists in Jovi and does not exist in Microsiga"},
+            {"Item": "Extra", "Definition": "Exists in Microsiga and does not exist in Jovi"},
+            {"Item": "Jovi Exclusion", "Definition": "Ignore Child material code beginning with HQHQ"},
+            {"Item": "Microsiga Exclusion", "Definition": "Ignore exact codes G701 and G999"},
+        ])
+        rules.to_excel(writer, index=False, sheet_name="Comparison_Rules")
         audit = pd.DataFrame([
             {"Source": "Microsiga", "Rule": "Exact code G701 or G999", "Ignored Rows": analysis["ignored_microsiga"]},
             {"Source": "Jovi", "Rule": "Child material code starts with HQHQ", "Ignored Rows": analysis["ignored_jovi"]},
@@ -290,7 +306,7 @@ def render_bom_comparison_assy_tool(color: str) -> None:
     st.markdown(
         f"""
         <div class="learning-hero" style="border-left:4px solid {color};">
-            <div class="small-muted">Assembly Quality Tool · {TOOL_VERSION}</div>
+            <div class="small-muted">Integrated Assembly Quality Tool · {TOOL_VERSION}</div>
             <h1 class="section-title" style="color:{color};margin:0.25rem 0;">Assembly · BOM Comparison Tool</h1>
             <p class="small-muted">Compare BOM Microsiga against the official Jovi BOM reference.</p>
         </div>
@@ -298,7 +314,9 @@ def render_bom_comparison_assy_tool(color: str) -> None:
         unsafe_allow_html=True,
     )
     st.info(
-        "Assembly rules: compare Code/Child Material and Quantity only. Description and Position are shown for traceability. "
+        "Validated Assembly rules: Jovi is the official reference and Microsiga is the compared BOM. "
+        "Compare Code/Child Material and Quantity only; descriptions and positions are shown only for traceability. "
+        "Missing means present in Jovi and absent from Microsiga; Extra means present in Microsiga and absent from Jovi. "
         "Jovi codes beginning with HQHQ and exact Microsiga codes G701/G999 are excluded before comparison."
     )
 
@@ -398,7 +416,7 @@ def render_bom_comparison_assy_tool(color: str) -> None:
             st.download_button(
                 "Download Assembly BOM comparison report",
                 data=generate_excel(analysis),
-                file_name="Assembly_BOM_Comparison_Report_v2_0_7.xlsx",
+                file_name="Assembly_BOM_Comparison_Report_v2_0_8.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True,
                 key="bom_assy_download",

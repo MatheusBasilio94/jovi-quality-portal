@@ -1,1 +1,1 @@
-"""Internal tools rendered inside the Jovi Quality Portal."""
+"""Internal tools rendered inside the Jovi Quality Center."""
