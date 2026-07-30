@@ -6,7 +6,7 @@ import re
 import hashlib
 import sqlite3
 import streamlit as st
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from html import escape
 from io import BytesIO
 from numbers import Number
@@ -15,7 +15,7 @@ from pathlib import Path
 from tools.trend_rules import analysis_period_days, requested_trend_grain, trend_grain_labels
 
 
-APP_VERSION = "v0.2.7"
+APP_VERSION = "v0.2.8"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -67,10 +67,12 @@ MODULES = {
     "SMT": {"color": "#0D7A45", "tabs": ["KPI Track", "Quality Dashboard", "BOM Comparison Tool - SMT"]},
     "Assembly": {"color": "#6532C8", "tabs": ["KPI Track", "Quality Dashboard", "BOM Comparison Tool - Assembly"]},
     "IQC": {"color": "#B45309", "tabs": ["Overview"]},
+    "Smart Report": {"color": "#0F766E", "tabs": []},
     "About": {"color": "#1D5FBF", "tabs": []},
 }
 
 VERSION_HISTORY = [
+    ("v0.2.8", "Added Smart Report with real SMT and Assembly top-defect suggestions, functional-failure priority, persistent action fields, and WhatsApp-ready reports without modifying source data files."),
     ("v0.2.7", "Centered Home module titles and descriptions and added clear vertical spacing between the hero panel and the Learning Area, SMT, Assembly and IQC cards."),
     ("v0.2.6", "Replaced full-page navigation links with session-preserving Streamlit navigation buttons in the sidebar and Home module cards, preventing authentication loss when switching modules or tabs."),
     ("v0.2.5", "Restored full chart height after the control-bar adjustment, kept chart actions inside the upper-right border, raised bottom legends, and expanded right margins for Pareto, model/input and heatmap charts to prevent axis-title clipping."),
@@ -1095,6 +1097,31 @@ def apply_global_css() -> None:
             line-height: 1.25;
         }
         .small-muted { color: #17243A; font-size: 0.85rem; font-weight: 650; }
+        .smart-report-title { color:#0B1F3A; font-size:2.05rem; font-weight:900; letter-spacing:-.03em; margin:.1rem 0 .2rem; }
+        .smart-report-subtitle { color:#53657D; font-size:.93rem; font-weight:650; margin:0 0 1.1rem; }
+        .smart-control-label { color:#50627B; font-size:.78rem; font-weight:850; letter-spacing:.02em; margin:0 0 .35rem; text-transform:uppercase; }
+        .smart-kpi { background:#FFF; border:1px solid #E1E8F2; border-radius:.75rem; min-height:104px; padding:1rem 1.05rem; box-shadow:0 6px 17px rgba(15,35,65,.06); box-sizing:border-box; }
+        .smart-kpi-label { color:#5C6B80; font-size:.82rem; font-weight:800; margin-bottom:.32rem; }
+        .smart-kpi-value { color:#102440; font-size:1.65rem; font-weight:900; letter-spacing:-.04em; line-height:1.05; }
+        .smart-kpi-note { color:#0D8A50; font-size:.73rem; font-weight:800; margin-top:.36rem; }
+        .smart-kpi-note.attention { color:#C2410C; }
+        .smart-area-panel,.smart-whatsapp-panel { background:#FFF; border:1px solid #DCE5F0; border-radius:.8rem; padding:1rem; box-shadow:0 6px 18px rgba(15,35,65,.055); box-sizing:border-box; min-height:400px; }
+        .smart-area-head { display:flex; align-items:center; gap:.6rem; margin-bottom:.25rem; }
+        .smart-area-icon { display:inline-flex; align-items:center; justify-content:center; width:29px; height:29px; border-radius:.45rem; color:#FFF; font-size:.85rem; font-weight:900; }
+        .smart-area-title { font-size:1.22rem; font-weight:900; }
+        .smart-area-caption { color:#5C6B80; font-size:.76rem; font-weight:750; margin:0 0 .85rem; }
+        .smart-defect-list { border:1px solid #DDE6F0; border-radius:.6rem; overflow:hidden; margin:.4rem 0 .85rem; }
+        .smart-defect-item { display:grid; grid-template-columns:26px minmax(0,1fr) auto; align-items:center; gap:.55rem; min-height:45px; padding:.52rem .6rem; border-bottom:1px solid #E7EDF5; color:#152941; font-size:.8rem; font-weight:800; box-sizing:border-box; }
+        .smart-defect-item:last-child { border-bottom:0; }
+        .smart-defect-item.selected { background:#F1FBF6; }
+        .smart-defect-rank { align-items:center; border-radius:.35rem; color:#FFF; display:inline-flex; font-size:.75rem; font-weight:900; height:24px; justify-content:center; width:24px; }
+        .smart-defect-meta { color:#54667D; font-size:.75rem; font-weight:800; text-align:right; white-space:nowrap; }
+        .smart-action-summary { background:#F8FBFD; border:1px solid #D8E6DD; border-radius:.58rem; overflow:hidden; }
+        .smart-action-row { display:grid; grid-template-columns:100px minmax(0,1fr); gap:.5rem; padding:.6rem .7rem; border-bottom:1px solid #E3EBE7; color:#32445B; font-size:.75rem; line-height:1.34; }
+        .smart-action-row:last-child { border-bottom:0; }
+        .smart-action-label { color:#13273F; font-weight:900; }
+        .smart-preview-copy { background:#F7FCF9; border:1px solid #B9DEC7; border-radius:.58rem; color:#173421; font-family:Consolas,"Courier New",monospace; font-size:.75rem; font-weight:650; line-height:1.55; min-height:248px; padding:.85rem; white-space:pre-wrap; }
+        .smart-preview-footnote { color:#63728A; font-size:.73rem; font-weight:700; margin:.72rem 0 .2rem; }
         hr { border-color: var(--border) !important; }
         </style>
         """,
@@ -1295,6 +1322,38 @@ def apply_login_css() -> None:
             background: #0D7A45;
             box-shadow: 0 0 0 4px rgba(13,122,69,0.12);
         }
+
+        .smart-report-title {
+            color: #0B1F3A;
+            font-size: 2.05rem;
+            font-weight: 900;
+            letter-spacing: -0.03em;
+            margin: 0.1rem 0 0.2rem 0;
+        }
+        .smart-report-subtitle { color: #53657D; font-size: 0.93rem; font-weight: 650; margin: 0 0 1.1rem 0; }
+        .smart-control-label { color: #50627B; font-size: 0.78rem; font-weight: 850; letter-spacing: 0.02em; margin: 0 0 0.35rem 0; text-transform: uppercase; }
+        .smart-kpi { background:#FFF; border:1px solid #E1E8F2; border-radius:.75rem; min-height:104px; padding:1rem 1.05rem; box-shadow:0 6px 17px rgba(15,35,65,.06); box-sizing:border-box; }
+        .smart-kpi-label { color:#5C6B80; font-size:.82rem; font-weight:800; margin-bottom:.32rem; }
+        .smart-kpi-value { color:#102440; font-size:1.65rem; font-weight:900; letter-spacing:-.04em; line-height:1.05; }
+        .smart-kpi-note { color:#0D8A50; font-size:.73rem; font-weight:800; margin-top:.36rem; }
+        .smart-kpi-note.attention { color:#C2410C; }
+        .smart-area-panel,.smart-whatsapp-panel { background:#FFF; border:1px solid #DCE5F0; border-radius:.8rem; padding:1rem; box-shadow:0 6px 18px rgba(15,35,65,.055); box-sizing:border-box; min-height:400px; }
+        .smart-area-head { display:flex; align-items:center; gap:.6rem; margin-bottom:.25rem; }
+        .smart-area-icon { display:inline-flex; align-items:center; justify-content:center; width:29px; height:29px; border-radius:.45rem; color:#FFF; font-size:.85rem; font-weight:900; }
+        .smart-area-title { font-size:1.22rem; font-weight:900; }
+        .smart-area-caption { color:#5C6B80; font-size:.76rem; font-weight:750; margin:0 0 .85rem 0; }
+        .smart-defect-list { border:1px solid #DDE6F0; border-radius:.6rem; overflow:hidden; margin:.4rem 0 .85rem 0; }
+        .smart-defect-item { display:grid; grid-template-columns:26px minmax(0,1fr) auto; align-items:center; gap:.55rem; min-height:45px; padding:.52rem .6rem; border-bottom:1px solid #E7EDF5; color:#152941; font-size:.8rem; font-weight:800; box-sizing:border-box; }
+        .smart-defect-item:last-child { border-bottom:0; }
+        .smart-defect-item.selected { background:#F1FBF6; }
+        .smart-defect-rank { align-items:center; border-radius:.35rem; color:#FFF; display:inline-flex; font-size:.75rem; font-weight:900; height:24px; justify-content:center; width:24px; }
+        .smart-defect-meta { color:#54667D; font-size:.75rem; font-weight:800; text-align:right; white-space:nowrap; }
+        .smart-action-summary { background:#F8FBFD; border:1px solid #D8E6DD; border-radius:.58rem; overflow:hidden; }
+        .smart-action-row { display:grid; grid-template-columns:100px minmax(0,1fr); gap:.5rem; padding:.6rem .7rem; border-bottom:1px solid #E3EBE7; color:#32445B; font-size:.75rem; line-height:1.34; }
+        .smart-action-row:last-child { border-bottom:0; }
+        .smart-action-label { color:#13273F; font-weight:900; }
+        .smart-preview-copy { background:#F7FCF9; border:1px solid #B9DEC7; border-radius:.58rem; color:#173421; font-family:Consolas,"Courier New",monospace; font-size:.75rem; font-weight:650; line-height:1.55; min-height:248px; padding:.85rem; white-space:pre-wrap; }
+        .smart-preview-footnote { color:#63728A; font-size:.73rem; font-weight:700; margin:.72rem 0 .2rem 0; }
 
         @media (max-width: 820px) {
             [data-testid="stMainBlockContainer"] {
@@ -2386,6 +2445,89 @@ def init_quality_store() -> None:
                 CHECK (fqc_ok_qty + fqc_ng_qty = fqc_inspected_qty)
             )
             """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS smart_report_actions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                area TEXT NOT NULL,
+                period_key TEXT NOT NULL,
+                defect_name TEXT NOT NULL,
+                failure_type TEXT NOT NULL,
+                root_cause TEXT,
+                cause_status TEXT NOT NULL DEFAULT 'Under investigation',
+                containment TEXT,
+                countermeasure TEXT,
+                owner TEXT,
+                due_date TEXT,
+                updated_at TEXT NOT NULL,
+                UNIQUE (area, period_key, defect_name, failure_type)
+            )
+            """
+        )
+
+
+def load_smart_report_actions(area: str, period_key: str) -> dict[str, dict]:
+    import pandas as pd
+
+    init_quality_store()
+    with sqlite3.connect(QUALITY_DB_PATH) as conn:
+        frame = pd.read_sql_query(
+            """
+            SELECT defect_name, failure_type, root_cause, cause_status, containment,
+                   countermeasure, owner, due_date, updated_at
+            FROM smart_report_actions
+            WHERE area = ? AND period_key = ?
+            """,
+            conn,
+            params=(area, period_key),
+        )
+    return {
+        f"{row.failure_type}|{row.defect_name}": {
+            "root_cause": row.root_cause or "",
+            "cause_status": row.cause_status or "Under investigation",
+            "containment": row.containment or "",
+            "countermeasure": row.countermeasure or "",
+            "owner": row.owner or "",
+            "due_date": row.due_date or "",
+            "updated_at": row.updated_at or "",
+        }
+        for row in frame.itertuples(index=False)
+    }
+
+
+def save_smart_report_action(area: str, period_key: str, item: dict, action: dict) -> None:
+    init_quality_store()
+    with sqlite3.connect(QUALITY_DB_PATH) as conn:
+        conn.execute(
+            """
+            INSERT INTO smart_report_actions (
+                area, period_key, defect_name, failure_type, root_cause, cause_status,
+                containment, countermeasure, owner, due_date, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(area, period_key, defect_name, failure_type) DO UPDATE SET
+                root_cause = excluded.root_cause,
+                cause_status = excluded.cause_status,
+                containment = excluded.containment,
+                countermeasure = excluded.countermeasure,
+                owner = excluded.owner,
+                due_date = excluded.due_date,
+                updated_at = excluded.updated_at
+            """,
+            (
+                area,
+                period_key,
+                item["defect"],
+                item["failure_type"],
+                action["root_cause"].strip(),
+                action["cause_status"],
+                action["containment"].strip(),
+                action["countermeasure"].strip(),
+                action["owner"].strip(),
+                action["due_date"].strip(),
+                datetime.now().isoformat(timespec="seconds"),
+            ),
         )
 
 
@@ -4022,6 +4164,389 @@ def assembly_quality_dashboard(color: str) -> None:
             """,
             unsafe_allow_html=True,
         )
+
+
+def smart_report_reference_date() -> date:
+    from tools import smt_quality_dashboard
+
+    latest_dates = []
+    try:
+        smt_inputs, _ = smt_quality_dashboard.stored_smt_sources()
+        if smt_inputs:
+            signatures = tuple(smt_quality_dashboard.path_signature(path) for path in smt_inputs)
+            _, end = smt_quality_dashboard.input_bounds(signatures)
+            latest_dates.append(end.date())
+    except Exception:
+        pass
+    try:
+        _, assembly_inputs = stored_assembly_sources()
+        if assembly_inputs:
+            _, end = assembly_input_bounds(assembly_inputs)
+            latest_dates.append(end)
+    except Exception:
+        pass
+    return min(latest_dates) if latest_dates else date.today()
+
+
+def smart_report_period_selector(reference_date: date) -> tuple[str, date, date, str, str]:
+    report_type = st.segmented_control(
+        "Report type",
+        ["Daily", "Weekly", "Monthly"],
+        default="Daily",
+        selection_mode="single",
+        key="smart_report_type",
+        label_visibility="collapsed",
+    ) or "Daily"
+    selected = st.date_input(
+        "Reference date",
+        value=reference_date,
+        key="smart_report_reference_date",
+        label_visibility="collapsed",
+    )
+    if report_type == "Daily":
+        start = end = selected
+        label = selected.strftime("%m/%d/%Y")
+    elif report_type == "Weekly":
+        start = selected - timedelta(days=selected.weekday())
+        end = start + timedelta(days=6)
+        label = f"{start.strftime('%m/%d/%Y')} – {end.strftime('%m/%d/%Y')}"
+    else:
+        start = selected.replace(day=1)
+        following_month = (start.replace(day=28) + timedelta(days=4)).replace(day=1)
+        end = following_month - timedelta(days=1)
+        label = start.strftime("%b %Y")
+    period_key = f"{report_type}|{start.isoformat()}|{end.isoformat()}"
+    return report_type, start, end, label, period_key
+
+
+def smart_report_defect_key(frame):
+    import pandas as pd
+
+    if frame.empty:
+        return pd.Series(dtype="object", index=frame.index)
+    if "PCB" in frame.columns:
+        pcb = frame["PCB"].fillna("").astype(str).str.strip()
+        return pcb.where(pcb.ne(""), "ROW-" + frame.index.astype(str))
+    return "ROW-" + frame.index.astype(str)
+
+
+def smart_report_candidates(frame, produced: int) -> list[dict]:
+    import pandas as pd
+
+    if frame.empty:
+        return []
+    data = frame.copy()
+    data["FailureType"] = data.get("FailureType", "Unclassified").fillna("Unclassified").astype(str)
+    data["Phenomenon"] = data.get("Phenomenon", "Unknown").fillna("Unknown").astype(str).str.strip().replace("", "Unknown")
+    data["_SmartDefectKey"] = smart_report_defect_key(data)
+    grouped = (
+        data.groupby(["FailureType", "Phenomenon"], as_index=False)
+        .agg(Cases=("_SmartDefectKey", "nunique"))
+    )
+    priority = {"Functional Failure": 0, "Appearance Failure": 1, "Unclassified": 2}
+    grouped["Priority"] = grouped["FailureType"].map(priority).fillna(3)
+    grouped = grouped.sort_values(["Priority", "Cases", "Phenomenon"], ascending=[True, False, True]).head(8)
+    candidates = []
+    for row in grouped.itertuples(index=False):
+        cases = int(row.Cases)
+        rate = cases / produced * 100 if produced else None
+        candidates.append(
+            {
+                "defect": str(row.Phenomenon),
+                "failure_type": str(row.FailureType),
+                "cases": cases,
+                "rate": rate,
+                "key": f"{row.FailureType}|{row.Phenomenon}",
+            }
+        )
+    return candidates
+
+
+def smart_report_smt_data(start_date: date, end_date: date) -> tuple[list[dict], int, int, str]:
+    from tools import smt_quality_dashboard
+
+    input_paths, defect_paths = smt_quality_dashboard.stored_smt_sources()
+    if not input_paths or not defect_paths:
+        return [], 0, 0, "SMT input and defect files are required."
+    signatures_input = tuple(smt_quality_dashboard.path_signature(path) for path in input_paths)
+    signatures_defect = tuple(smt_quality_dashboard.path_signature(path) for path in defect_paths)
+    analysis = smt_quality_dashboard.analyze_smt_quality_paths(
+        signatures_input,
+        signatures_defect,
+        start_date.isoformat(),
+        end_date.isoformat(),
+    )
+    raw = analysis["raw"].copy()
+    confirmed = raw[~raw["IsRejudgeOK"].fillna(False).astype(bool)].copy()
+    produced = int(analysis["selected_input"]["Input"].sum())
+    repeated = int(analysis["totals"].get("RepeatedPCBs", 0))
+    return smart_report_candidates(confirmed, produced), produced, repeated, ""
+
+
+def smart_report_assembly_data(start_date: date, end_date: date) -> tuple[list[dict], int, int, str]:
+    stored_defects, stored_inputs = stored_assembly_sources()
+    if not stored_defects or not stored_inputs:
+        return [], 0, 0, "Assembly input and defect files are required."
+    selected_defects, source_note = select_defect_sources(stored_defects)
+    rules = load_rules()
+    rules["date_start"] = start_date.isoformat()
+    rules["date_end"] = end_date.isoformat()
+    analysis = analyze_skd_quality_cached(
+        selected_defects,
+        stored_inputs,
+        rules,
+        f"Local stored Assembly data · {source_note}",
+    )
+    raw = analysis["raw"].copy()
+    functional = {str(value).strip() for value in rules.get("assembly_functional_operations", [])}
+    appearance = {str(value).strip() for value in rules.get("assembly_appearance_operations", [])}
+    raw["FailureType"] = "Unclassified"
+    raw.loc[raw["TestOperation"].isin(functional), "FailureType"] = "Functional Failure"
+    raw.loc[raw["TestOperation"].isin(appearance), "FailureType"] = "Appearance Failure"
+    confirmed = raw[raw["ConfirmedDefect"].fillna(False).astype(bool)].copy()
+    produced = int(analysis["production_detail"]["Produced"].sum())
+    frequency = smart_report_defect_key(confirmed).value_counts()
+    repeated = int((frequency > 1).sum())
+    return smart_report_candidates(confirmed, produced), produced, repeated, ""
+
+
+def smart_report_action_defaults(actions: dict[str, dict], item: dict) -> dict:
+    return actions.get(
+        item["key"],
+        {
+            "root_cause": "",
+            "cause_status": "Under investigation",
+            "containment": "",
+            "countermeasure": "",
+            "owner": "",
+            "due_date": "",
+        },
+    )
+
+
+def smart_report_selected_items(area: str, candidates: list[dict], period_key: str) -> list[dict]:
+    labels = [f"{item['failure_type']} · {item['defect']} ({item['cases']} cases)" for item in candidates]
+    selected_labels = st.session_state.get(f"smart_report_selection_{area}_{period_key}", labels[:3])
+    selected_set = set(selected_labels)
+    return [item for label, item in zip(labels, candidates) if label in selected_set]
+
+
+def smart_report_rate(value: float | None) -> str:
+    return f"{value:.2f}%" if value is not None else "N/A"
+
+
+def smart_report_area_html(area: str, color: str, items: list[dict], actions: dict[str, dict]) -> str:
+    icon = "▦" if area == "SMT" else "⚙"
+    if not items:
+        return (
+            f"<div class='smart-area-panel'><div class='smart-area-head'><span class='smart-area-icon' style='background:{color};'>{icon}</span>"
+            f"<span class='smart-area-title' style='color:{color};'>{area}</span></div>"
+            "<div class='smart-area-caption'>No reportable defects in the selected period.</div></div>"
+        )
+    rows = []
+    for index, item in enumerate(items):
+        selected_class = " selected" if index == 0 else ""
+        rows.append(
+            f"<div class='smart-defect-item{selected_class}'>"
+            f"<span class='smart-defect-rank' style='background:{color};'>{index + 1}</span>"
+            f"<span>{escape(item['defect'])}</span>"
+            f"<span class='smart-defect-meta'>{item['cases']} cases | {smart_report_rate(item['rate'])}</span></div>"
+        )
+    focus = items[0]
+    action = smart_report_action_defaults(actions, focus)
+    owner_due = " · ".join(part for part in [action["owner"], action["due_date"]] if part) or "to be defined"
+    return (
+        f"<div class='smart-area-panel'><div class='smart-area-head'><span class='smart-area-icon' style='background:{color};'>{icon}</span>"
+        f"<span class='smart-area-title' style='color:{color};'>{area}</span></div>"
+        "<div class='smart-area-caption'>Top 3 defects · functional failures first</div>"
+        f"<div class='smart-defect-list'>{''.join(rows)}</div><div class='smart-action-summary'>"
+        f"<div class='smart-action-row'><span class='smart-action-label'>Cause</span><span>{escape(action['root_cause'] or 'under investigation')} — {escape(action['cause_status'].lower())}</span></div>"
+        f"<div class='smart-action-row'><span class='smart-action-label'>Containment</span><span>{escape(action['containment'] or 'not informed')}</span></div>"
+        f"<div class='smart-action-row'><span class='smart-action-label'>Countermeasure</span><span>{escape(action['countermeasure'] or 'not informed')} — {escape(owner_due)}</span></div>"
+        "</div></div>"
+    )
+
+
+def smart_report_area_panel(area: str, color: str, candidates: list[dict], period_key: str) -> tuple[list[dict], dict[str, dict]]:
+    actions = load_smart_report_actions(area, period_key)
+    labels = [f"{item['failure_type']} · {item['defect']} ({item['cases']} cases)" for item in candidates]
+    by_label = dict(zip(labels, candidates))
+    default_labels = labels[:3]
+    with st.expander("Select up to three defects for the report"):
+        selected_labels = st.multiselect(
+            "Reported defects",
+            labels,
+            default=default_labels,
+            max_selections=3,
+            key=f"smart_report_selection_{area}_{period_key}",
+        )
+        st.caption("Functional failures are suggested first. Select an appearance failure only when it is operationally relevant.")
+    selected = [by_label[label] for label in labels if label in selected_labels]
+    st.markdown(smart_report_area_html(area, color, selected, actions), unsafe_allow_html=True)
+    if candidates:
+        with st.expander("Edit cause, containment, and countermeasure"):
+            selected_label = st.selectbox(
+                "Defect being edited",
+                labels,
+                key=f"smart_report_edit_{area}_{period_key}",
+            )
+            item = by_label[selected_label]
+            action = smart_report_action_defaults(actions, item)
+            with st.form(f"smart_report_action_form_{area}_{period_key}_{item['key']}"):
+                include = st.checkbox("Include in report", value=item in selected)
+                status_options = ["Confirmed", "Under investigation", "Undefined"]
+                status = action["cause_status"] if action["cause_status"] in status_options else "Under investigation"
+                c1, c2 = st.columns([1, 2])
+                with c1:
+                    cause_status = st.selectbox("Cause status", status_options, index=status_options.index(status))
+                with c2:
+                    root_cause = st.text_input("Root cause", value=action["root_cause"])
+                containment = st.text_input("Containment", value=action["containment"])
+                countermeasure = st.text_input("Countermeasure", value=action["countermeasure"])
+                c3, c4 = st.columns(2)
+                with c3:
+                    owner = st.text_input("Owner", value=action["owner"])
+                with c4:
+                    due_date = st.text_input("Due date", value=action["due_date"], placeholder="MM/DD/YYYY")
+                if st.form_submit_button("Save information", use_container_width=True):
+                    save_smart_report_action(
+                        area,
+                        period_key,
+                        item,
+                        {
+                            "root_cause": root_cause,
+                            "cause_status": cause_status,
+                            "containment": containment,
+                            "countermeasure": countermeasure,
+                            "owner": owner,
+                            "due_date": due_date,
+                        },
+                    )
+                    if not include:
+                        current_key = f"smart_report_selection_{area}_{period_key}"
+                        current_labels = [value for value in st.session_state.get(current_key, default_labels) if value != selected_label]
+                        st.session_state[current_key] = current_labels
+                    st.success("Information saved without changing the source files.")
+                    st.rerun()
+    return selected, actions
+
+
+def smart_report_message(report_type: str, period_label: str, selected_by_area: dict[str, list[dict]], actions_by_area: dict[str, dict]) -> str:
+    lines = [f"📊 QUALITY {report_type.upper()} — {period_label}", ""]
+    for area, items in selected_by_area.items():
+        lines.append(f"{'🔧' if area == 'SMT' else '⚙️'} {area}")
+        if not items:
+            lines.append("No defects selected.")
+        for rank, item in enumerate(items, start=1):
+            action = smart_report_action_defaults(actions_by_area[area], item)
+            owner_due = ""
+            if action["owner"] or action["due_date"]:
+                owner_due = f" — {action['owner']}, {action['due_date']}".rstrip(" ,")
+            lines.extend(
+                [
+                    f"{rank}. {item['defect']} — {item['cases']} cases | {smart_report_rate(item['rate'])}",
+                    f"   Cause: {action['root_cause'] or 'under investigation'} — {action['cause_status'].lower()}",
+                    f"   Containment: {action['containment'] or 'not informed'}",
+                    f"   Countermeasure: {action['countermeasure'] or 'not informed'}{owner_due}",
+                    "",
+                ]
+            )
+    return "\n".join(lines).strip()
+
+
+def smart_report_kpi_cards(selected_by_area: dict[str, list[dict]], inputs: dict[str, int], repeats: dict[str, int], actions: dict[str, dict]) -> None:
+    selected = [item for area_items in selected_by_area.values() for item in area_items]
+    total_cases = sum(item["cases"] for item in selected)
+    total_input = sum(inputs.values())
+    defect_rate = total_cases / total_input * 100 if total_input else None
+    open_actions = sum(
+        not smart_report_action_defaults(actions[area], item)["root_cause"]
+        or smart_report_action_defaults(actions[area], item)["cause_status"] != "Confirmed"
+        for area, area_items in selected_by_area.items()
+        for item in area_items
+    )
+    recurrence = sum(repeats.values()) / total_cases * 100 if total_cases else 0
+    cards = [
+        ("Total defects", f"{total_cases:,}", "Selected report items", False),
+        ("Defect rate", smart_report_rate(defect_rate), "Selected scope", False),
+        ("Open actions", str(open_actions), "Cause not yet confirmed", True),
+        ("Recurrence", smart_report_rate(recurrence), "Repeated boards in selected scope", False),
+    ]
+    columns = st.columns(4)
+    for column, (label, value, note, attention) in zip(columns, cards):
+        with column:
+            note_class = " attention" if attention else ""
+            st.markdown(
+                f"<div class='smart-kpi'><div class='smart-kpi-label'>{label}</div><div class='smart-kpi-value'>{value}</div><div class='smart-kpi-note{note_class}'>{note}</div></div>",
+                unsafe_allow_html=True,
+            )
+
+
+def smart_report_page() -> None:
+    st.markdown("<div class='smart-report-title'>Smart Report</div><div class='smart-report-subtitle'>Fast, actionable reports generated from the stored SMT and Assembly inputs.</div>", unsafe_allow_html=True)
+    control_column, area_column, action_column = st.columns([1.8, 1.55, 0.85])
+    with control_column:
+        st.markdown("<div class='smart-control-label'>Report period</div>", unsafe_allow_html=True)
+        report_type, start_date, end_date, period_label, period_key = smart_report_period_selector(smart_report_reference_date())
+    with area_column:
+        st.markdown("<div class='smart-control-label'>Area</div>", unsafe_allow_html=True)
+        area_filter = st.segmented_control(
+            "Area",
+            ["All", "SMT", "Assembly"],
+            default="All",
+            selection_mode="single",
+            key="smart_report_area_filter",
+            label_visibility="collapsed",
+        ) or "All"
+    with action_column:
+        st.markdown("<div class='smart-control-label'>&nbsp;</div>", unsafe_allow_html=True)
+        if st.button("Generate report", use_container_width=True, type="primary"):
+            st.toast("Report suggestions refreshed from the stored input data.")
+
+    area_results = {}
+    for area, loader in [("SMT", smart_report_smt_data), ("Assembly", smart_report_assembly_data)]:
+        try:
+            area_results[area] = loader(start_date, end_date)
+        except Exception as exc:
+            area_results[area] = ([], 0, 0, str(exc))
+    areas = ["SMT", "Assembly"] if area_filter == "All" else [area_filter]
+    for area in areas:
+        error = area_results[area][3]
+        if error:
+            st.warning(f"{area} data could not be calculated for this period: {error}")
+
+    selected_by_area: dict[str, list[dict]] = {}
+    actions_by_area: dict[str, dict] = {}
+    inputs = {area: area_results[area][1] for area in areas}
+    repeats = {area: area_results[area][2] for area in areas}
+    for area in areas:
+        selected_by_area[area] = smart_report_selected_items(area, area_results[area][0], period_key)
+        actions_by_area[area] = load_smart_report_actions(area, period_key)
+    smart_report_kpi_cards(selected_by_area, inputs, repeats, actions_by_area)
+    st.write("")
+    message = smart_report_message(report_type, period_label, selected_by_area, actions_by_area)
+    if len(areas) == 2:
+        smt_column, assembly_column, preview_column = st.columns([1.05, 1.05, 1.0])
+        with smt_column:
+            smart_report_area_panel("SMT", MODULES["SMT"]["color"], area_results["SMT"][0], period_key)
+        with assembly_column:
+            smart_report_area_panel("Assembly", MODULES["Assembly"]["color"], area_results["Assembly"][0], period_key)
+        with preview_column:
+            st.markdown("<div class='smart-whatsapp-panel'><div class='smart-area-head'><span class='smart-area-icon' style='background:#16A05D;'>◔</span><span class='smart-area-title'>WhatsApp Preview</span></div><div class='smart-preview-copy'>" + escape(message) + "</div><div class='smart-preview-footnote'>Preview based on selected real-data defects.</div></div>", unsafe_allow_html=True)
+            if st.button("Copy for WhatsApp", key="smart_report_copy_all", use_container_width=True):
+                st.toast("Select the preview text and copy it to WhatsApp.")
+    else:
+        report_column, preview_column = st.columns([1.3, 1.0])
+        area = areas[0]
+        with report_column:
+            smart_report_area_panel(area, MODULES[area]["color"], area_results[area][0], period_key)
+        with preview_column:
+            st.markdown("<div class='smart-whatsapp-panel'><div class='smart-area-head'><span class='smart-area-icon' style='background:#16A05D;'>◔</span><span class='smart-area-title'>WhatsApp Preview</span></div><div class='smart-preview-copy'>" + escape(message) + "</div><div class='smart-preview-footnote'>Preview based on selected real-data defects.</div></div>", unsafe_allow_html=True)
+            if st.button("Copy for WhatsApp", key="smart_report_copy_single", use_container_width=True):
+                st.toast("Select the preview text and copy it to WhatsApp.")
+    with st.expander("Copyable report text"):
+        st.code(message, language=None)
+    st.caption("The report reads the existing stored data. Only action details are saved separately in the local quality database.")
 
 
 def home_page() -> None:
@@ -6629,6 +7154,8 @@ def render_page() -> None:
             bom_tool_assy_page()
     elif module == "IQC":
         iqc_page()
+    elif module == "Smart Report":
+        smart_report_page()
     elif module == "About":
         about_page()
 
