@@ -15,7 +15,7 @@ from pathlib import Path
 from tools.trend_rules import analysis_period_days, requested_trend_grain, trend_grain_labels
 
 
-APP_VERSION = "v0.2.8"
+APP_VERSION = "v0.2.9"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -72,6 +72,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.2.9", "Made Assembly stored data portable across local and Streamlit deployments: sources resolve from the internal data_store directory and future imports save relative paths."),
     ("v0.2.8", "Added Smart Report with real SMT and Assembly top-defect suggestions, functional-failure priority, persistent action fields, and WhatsApp-ready reports without modifying source data files."),
     ("v0.2.7", "Centered Home module titles and descriptions and added clear vertical spacing between the hero panel and the Learning Area, SMT, Assembly and IQC cards."),
     ("v0.2.6", "Replaced full-page navigation links with session-preserving Streamlit navigation buttons in the sidebar and Home module cards, preventing authentication loss when switching modules or tabs."),
@@ -2467,6 +2468,26 @@ def init_quality_store() -> None:
         )
 
 
+def assembly_portable_stored_path(data_type: str, stored_name: str) -> str:
+    """Return the repository-relative location recorded for new Assembly imports."""
+    return (Path("data_store") / "assembly" / data_type / stored_name).as_posix()
+
+
+def resolve_assembly_stored_path(data_type: str, stored_name: str, stored_path: str | None) -> Path | None:
+    """Resolve imported Assembly files without relying on a machine-specific database path."""
+    candidates = [ASSEMBLY_FILE_STORE_DIR / data_type / stored_name]
+    if stored_path:
+        legacy_path = Path(stored_path)
+        candidates.append(legacy_path)
+        if not legacy_path.is_absolute():
+            candidates.append(BASE_DIR / legacy_path)
+
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def load_smart_report_actions(area: str, period_key: str) -> dict[str, dict]:
     import pandas as pd
 
@@ -2798,7 +2819,7 @@ def persist_assembly_source(source, data_type: str, source_method: str) -> dict:
                 data_type,
                 original_name,
                 stored_name,
-                str(stored_path),
+                assembly_portable_stored_path(data_type, stored_name),
                 file_hash,
                 len(data),
                 modified_at,
@@ -2841,7 +2862,7 @@ def stored_assembly_sources() -> tuple[list[Path], list[Path]]:
     with sqlite3.connect(QUALITY_DB_PATH) as conn:
         rows = conn.execute(
             """
-            SELECT data_type, stored_path
+            SELECT data_type, stored_name, stored_path
             FROM assembly_files
             WHERE status = 'imported'
             ORDER BY imported_at, id
@@ -2850,9 +2871,9 @@ def stored_assembly_sources() -> tuple[list[Path], list[Path]]:
 
     defects = []
     inputs = []
-    for data_type, stored_path in rows:
-        path = Path(stored_path)
-        if not path.exists():
+    for data_type, stored_name, stored_path in rows:
+        path = resolve_assembly_stored_path(data_type, stored_name, stored_path)
+        if path is None:
             continue
         if data_type == "defects":
             defects.append(path)
