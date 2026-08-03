@@ -16,7 +16,7 @@ from pathlib import Path
 from tools.trend_rules import analysis_period_days, requested_trend_grain, trend_grain_labels
 
 
-APP_VERSION = "v0.3.1"
+APP_VERSION = "v0.3.2"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -73,6 +73,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.3.2", "Added Re-Download and Re-Calibration to the approved retest exclusion policy for SMT and Assembly, with visible exclusion reasons for audit."),
     ("v0.3.1", "Fixed SMT action-priority cards so missing or non-finite Impact PPM values display as N/A instead of causing a dashboard error."),
     ("v0.3.0", "Added stored-source management for SMT and Assembly: users can review and safely delete one uploaded source file at a time with explicit confirmation."),
     ("v0.2.9", "Made Assembly stored data portable across local and Streamlit deployments: sources resolve from the internal data_store directory and future imports save relative paths."),
@@ -1692,7 +1693,7 @@ DEFAULT_RULES = {
     "phenomenon_column": "Fault Phenomenon",
     "rejudge_column": "Maintenance",
     "additional_rejudge_columns": ["Fault reason", "RepaireRemark"],
-    "rejudge_ok_keywords": ["Re-Judge Ok", "Rejudge OK", "Re-Judge OK", "rejudge ok", "Good machine rejudge ok"],
+    "rejudge_ok_keywords": ["Re-Judge Ok", "Rejudge OK", "Re-Judge OK", "rejudge ok", "Good machine rejudge ok", "Re-Download", "Re-Calibration"],
     "mando_column": "DutyType",
     "mando_keywords": ["ManDo", "Mando", "Man Do", "Man-do", "Man_Do"],
     "assembly_functional_operations": list(ASSEMBLY_FUNCTIONAL_OPERATIONS),
@@ -3163,6 +3164,17 @@ def analyze_skd_quality(defect_source, input_sources: list, rules: dict, source_
     for col in rejudge_columns:
         if col in filtered.columns:
             rejudge_text = rejudge_text + " " + filtered[col].fillna("").astype(str)
+    rejudge_mask = keyword_mask(
+        rejudge_text,
+        ["Re-Judge Ok", "Rejudge OK", "Re-Judge OK", "rejudge ok", "Good machine rejudge ok"],
+    )
+    redownload_mask = keyword_mask(rejudge_text, ["Re-Download"])
+    recalibration_mask = keyword_mask(rejudge_text, ["Re-Calibration"])
+    filtered["ExclusionReason"] = ""
+    filtered.loc[rejudge_mask, "ExclusionReason"] = "Re-Judge OK"
+    filtered.loc[redownload_mask, "ExclusionReason"] = "Re-Download"
+    filtered.loc[recalibration_mask, "ExclusionReason"] = "Re-Calibration"
+    # The existing field name is retained for compatibility; it represents all approved retest exclusions.
     filtered["IsRejudgeOK"] = keyword_mask(rejudge_text, rules["rejudge_ok_keywords"])
     filtered["ConfirmedDefect"] = ~filtered["IsRejudgeOK"]
     filtered["IsManDo"] = filtered["ConfirmedDefect"] & keyword_mask(filtered[mando_col], rules["mando_keywords"])
@@ -3463,6 +3475,7 @@ def make_skd_export(analysis: dict) -> BytesIO:
         "Maintenance",
         "Fault reason",
         "RepaireRemark",
+        "ExclusionReason",
         "IsRejudgeOK",
         "ConfirmedDefect",
         "IsManDo",
@@ -4065,7 +4078,7 @@ def assembly_quality_dashboard(color: str) -> None:
         with cols[1]:
             skd_metric_card("Confirmed defects", fmt_int(totals["confirmed_defects"]), f"PPM {fmt_ppm(totals['confirmed_ppm'])}")
         with cols[2]:
-            skd_metric_card("Rejudge OK / False NG", fmt_int(totals["rejudge_ok"]), fmt_pct(totals["rejudge_rate"]))
+            skd_metric_card("Excluded retest / False NG", fmt_int(totals["rejudge_ok"]), fmt_pct(totals["rejudge_rate"]))
         with cols[3]:
             skd_metric_card("Straight Rate", fmt_pct(totals["straight_rate"]), f"Bad Machine {fmt_int(totals['bad_machine'])}")
 
@@ -4216,7 +4229,7 @@ def assembly_quality_dashboard(color: str) -> None:
                 ]
             edited["rejudge_ok_keywords"] = [
                 item.strip()
-                for item in st.text_area("Rejudge OK keywords", value="\n".join(stored_rules["rejudge_ok_keywords"])).splitlines()
+                for item in st.text_area("Exclusion keywords (Re-Judge / retest)", value="\n".join(stored_rules["rejudge_ok_keywords"])).splitlines()
                 if item.strip()
             ]
             edited["mando_keywords"] = [
@@ -4233,7 +4246,7 @@ def assembly_quality_dashboard(color: str) -> None:
         raw = analysis["raw"].copy()
         selected_model = st.selectbox("Model", ["All", *sorted(raw["Model"].dropna().unique())])
         selected_line = st.selectbox("Line", ["All", *sorted(raw["Line"].dropna().unique())])
-        selected_type = st.selectbox("Record type", ["All", "Confirmed defects", "Rejudge OK", "ManDo only"])
+        selected_type = st.selectbox("Record type", ["All", "Confirmed defects", "Excluded retest", "ManDo only"])
         view = raw
         if selected_model != "All":
             view = view[view["Model"] == selected_model]
@@ -4241,7 +4254,7 @@ def assembly_quality_dashboard(color: str) -> None:
             view = view[view["Line"] == selected_line]
         if selected_type == "Confirmed defects":
             view = view[view["ConfirmedDefect"]]
-        elif selected_type == "Rejudge OK":
+        elif selected_type == "Excluded retest":
             view = view[view["IsRejudgeOK"]]
         elif selected_type == "ManDo only":
             view = view[view["IsManDo"]]
@@ -4260,6 +4273,7 @@ def assembly_quality_dashboard(color: str) -> None:
             "Maintenance",
             "Fault reason",
             "RepaireRemark",
+            "ExclusionReason",
             "IsRejudgeOK",
             "ConfirmedDefect",
             "IsManDo",
@@ -4325,7 +4339,7 @@ def assembly_quality_dashboard(color: str) -> None:
             """
             <div class="card">
                 <h3>SKD Quality Dashboard</h3>
-                <p class="small-muted">Quality analysis dashboard for Assembly SKD data. The logic separates Rejudge OK / False NG from confirmed defects, calculates PPM by month/model, and includes a dedicated ManDo analysis.</p>
+                <p class="small-muted">Quality analysis dashboard for Assembly SKD data. The logic separates approved retest / False NG records from confirmed defects, calculates PPM by month/model, and includes a dedicated ManDo analysis.</p>
                 <p><b>Default source:</b> Jan-Jun/2026 sample data in <span class="small-muted">sample_data/assembly</span>.</p>
             </div>
             """,
@@ -6274,7 +6288,7 @@ def smt_quality_dashboard_v2(color: str) -> None:
         smt_kpi_card("Input coverage", fmt_kpi_pct(view["coverage_rate"]), "Defect records with matching input", "#0D7A45")
     with data_quality[1]:
         rejudge_rate = len(view["rejudge"]) / max(len(view["rejudge"]) + len(view["confirmed"]), 1)
-        smt_kpi_card("Re-Judge rate", fmt_kpi_pct(rejudge_rate), f"{fmt_int(len(view['rejudge']))} records", "#1D5FBF")
+        smt_kpi_card("Excluded retest rate", fmt_kpi_pct(rejudge_rate), f"{fmt_int(len(view['rejudge']))} records", "#1D5FBF")
     with data_quality[2]:
         smt_kpi_card("Exceptions", fmt_int(view["exceptions"]), "Periods blocked from PPM", "#DC2626")
     with data_quality[3]:
@@ -6343,10 +6357,10 @@ def smt_quality_dashboard_v2(color: str) -> None:
                 )
             )
 
-    with st.expander("Re-Judge, repeats and data-quality audit"):
+    with st.expander("Excluded retest, repeats and data-quality audit"):
         audit_cards = st.columns(4)
         with audit_cards[0]:
-            smt_kpi_card("Re-Judge records", fmt_int(len(view["rejudge"])), "False NG / Re-Judge OK", color)
+            smt_kpi_card("Excluded retest records", fmt_int(len(view["rejudge"])), "Re-Judge, Re-Download or Re-Calibration", color)
         with audit_cards[1]:
             smt_kpi_card(
                 "Repeated PCBs",
@@ -6934,7 +6948,7 @@ def assembly_quality_dashboard_v2(color: str) -> None:
         )
     with data_quality[1]:
         rejudge_rate = len(view["rejudge"]) / max(len(view["rejudge"]) + len(view["confirmed"]), 1)
-        smt_kpi_card("Re-Judge rate", fmt_kpi_pct(rejudge_rate), f"{fmt_int(len(view['rejudge']))} records", "#1D5FBF")
+        smt_kpi_card("Excluded retest rate", fmt_kpi_pct(rejudge_rate), f"{fmt_int(len(view['rejudge']))} records", "#1D5FBF")
     with data_quality[2]:
         smt_kpi_card("Exceptions", fmt_int(view["exceptions"]), "Blocked input or PPM periods", "#DC2626")
     with data_quality[3]:
