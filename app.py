@@ -15,7 +15,7 @@ from pathlib import Path
 from tools.trend_rules import analysis_period_days, requested_trend_grain, trend_grain_labels
 
 
-APP_VERSION = "v0.2.9"
+APP_VERSION = "v0.3.0"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -72,6 +72,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.3.0", "Added stored-source management for SMT and Assembly: users can review and safely delete one uploaded source file at a time with explicit confirmation."),
     ("v0.2.9", "Made Assembly stored data portable across local and Streamlit deployments: sources resolve from the internal data_store directory and future imports save relative paths."),
     ("v0.2.8", "Added Smart Report with real SMT and Assembly top-defect suggestions, functional-failure priority, persistent action fields, and WhatsApp-ready reports without modifying source data files."),
     ("v0.2.7", "Centered Home module titles and descriptions and added clear vertical spacing between the hero panel and the Learning Area, SMT, Assembly and IQC cards."),
@@ -2880,6 +2881,145 @@ def stored_assembly_sources() -> tuple[list[Path], list[Path]]:
         elif data_type == "input":
             inputs.append(path)
     return defects, inputs
+
+
+def stored_assembly_file_records() -> list[dict]:
+    """Return stored Assembly source metadata for the managed deletion interface."""
+    init_quality_store()
+    with sqlite3.connect(QUALITY_DB_PATH) as conn:
+        rows = conn.execute(
+            """
+            SELECT id, data_type, original_name, stored_name, file_size,
+                   modified_at, imported_at, source_method
+            FROM assembly_files
+            WHERE status = 'imported'
+            ORDER BY imported_at DESC, id DESC
+            """
+        ).fetchall()
+
+    records = []
+    for record_id, data_type, original_name, stored_name, file_size, modified_at, imported_at, source_method in rows:
+        canonical_path = ASSEMBLY_FILE_STORE_DIR / data_type / stored_name
+        records.append(
+            {
+                "id": int(record_id),
+                "data_type": data_type,
+                "original_name": original_name,
+                "stored_name": stored_name,
+                "file_size": int(file_size),
+                "modified_at": modified_at or "-",
+                "imported_at": imported_at,
+                "source_method": source_method,
+                "available": canonical_path.is_file(),
+            }
+        )
+    return records
+
+
+def delete_assembly_source(record_id: int) -> dict:
+    """Remove one Assembly source record and only its portal-managed physical file."""
+    init_quality_store()
+    conn = sqlite3.connect(QUALITY_DB_PATH)
+    try:
+        row = conn.execute(
+            """
+            SELECT data_type, original_name, stored_name
+            FROM assembly_files
+            WHERE id = ? AND status = 'imported'
+            """,
+            (int(record_id),),
+        ).fetchone()
+        if not row:
+            raise ValueError("The selected Assembly source file was not found.")
+        data_type, original_name, stored_name = row
+        if data_type not in {"defects", "input"} or Path(stored_name).name != stored_name:
+            raise ValueError("The selected Assembly source file is invalid.")
+        conn.execute("DELETE FROM assembly_files WHERE id = ?", (int(record_id),))
+        conn.commit()
+    finally:
+        conn.close()
+
+    # Never follow a legacy absolute path here. Deletion is limited to the portal-managed store.
+    managed_file = ASSEMBLY_FILE_STORE_DIR / data_type / stored_name
+    cleanup_note = ""
+    if managed_file.exists():
+        try:
+            managed_file.unlink()
+        except OSError as exc:
+            cleanup_note = f" The source record was removed, but the stored file could not be cleaned up: {exc}"
+    st.cache_data.clear()
+    return {
+        "data_type": data_type,
+        "original_name": original_name,
+        "cleanup_note": cleanup_note,
+    }
+
+
+def render_assembly_source_manager() -> None:
+    """Render the confirmed, individual Assembly source-file deletion workflow."""
+    import pandas as pd
+
+    records = stored_assembly_file_records()
+    with st.expander("Manage stored files"):
+        st.caption(
+            "Review the portal's stored Assembly source files before deleting one. "
+            "Deletion changes the data used by dashboards and Smart Report and cannot be undone."
+        )
+        if not records:
+            st.info("No Assembly source files are currently stored.")
+            return
+
+        file_types = {"input": "Production input", "defects": "Defects"}
+        table = pd.DataFrame(
+            [
+                {
+                    "Type": file_types.get(record["data_type"], record["data_type"]),
+                    "Source file": record["original_name"],
+                    "Imported at": record["imported_at"],
+                    "Import method": record["source_method"],
+                    "Size": f"{record['file_size'] / 1024 / 1024:.2f} MB",
+                    "Available": "Yes" if record["available"] else "Missing",
+                }
+                for record in records
+            ]
+        )
+        st.dataframe(table, use_container_width=True, hide_index=True, height="content")
+
+        record_by_id = {record["id"]: record for record in records}
+        selected_id = st.selectbox(
+            "Source file to delete",
+            options=list(record_by_id),
+            format_func=lambda record_id: (
+                f"{file_types.get(record_by_id[record_id]['data_type'], record_by_id[record_id]['data_type'])} · "
+                f"{record_by_id[record_id]['original_name']} · imported {record_by_id[record_id]['imported_at']}"
+            ),
+            key="assembly_source_delete_selection",
+        )
+        selected = record_by_id[selected_id]
+        if not selected["available"]:
+            st.warning("The file bytes are already missing, but deleting this record will remove it from the portal data store.")
+        confirmed = st.checkbox(
+            "I understand that this permanently removes the selected Assembly source file from this portal.",
+            key=f"assembly_source_delete_confirm_{selected_id}",
+        )
+        if st.button(
+            "Delete selected source file",
+            type="secondary",
+            disabled=not confirmed,
+            use_container_width=True,
+            key="assembly_source_delete_button",
+        ):
+            try:
+                deleted = delete_assembly_source(selected_id)
+            except (RuntimeError, ValueError) as exc:
+                st.error(str(exc))
+            else:
+                st.session_state.pop("assembly_last_import_results", None)
+                st.success(
+                    f"Deleted Assembly {file_types.get(deleted['data_type'], deleted['data_type']).lower()} "
+                    f"source: {deleted['original_name']}.{deleted['cleanup_note']}"
+                )
+                st.rerun()
 
 
 def select_defect_sources(defects: list[Path]) -> tuple[list[Path], str]:
@@ -6569,6 +6709,7 @@ def _assembly_upload_section_v2(store_status: dict) -> None:
         st.rerun()
     if "assembly_last_import_results" in st.session_state:
         import_results_table(st.session_state["assembly_last_import_results"])
+    render_assembly_source_manager()
 
 
 def assembly_quality_dashboard_v2(color: str) -> None:

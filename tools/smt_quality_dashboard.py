@@ -397,6 +397,104 @@ def persist_smt_source(uploaded, data_type: str) -> dict:
     return {"status": "imported", "file": uploaded.name, "message": "Saved to the local SMT data store."}
 
 
+def smt_source_records() -> list[dict]:
+    """Return stored SMT source files with user-facing metadata."""
+    inputs, defects = stored_smt_sources()
+    records = []
+    for data_type, paths in (("input", inputs), ("defects", defects)):
+        for path in paths:
+            stat = path.stat()
+            records.append(
+                {
+                    "key": f"{data_type}:{path.name}",
+                    "data_type": data_type,
+                    "stored_name": path.name,
+                    "original_name": re.sub(r"^[0-9a-f]{12}_", "", path.name),
+                    "file_size": int(stat.st_size),
+                    "modified_at": pd.Timestamp(stat.st_mtime, unit="s").strftime("%d/%m/%Y %H:%M"),
+                    "modified_sort": float(stat.st_mtime),
+                }
+            )
+    return sorted(records, key=lambda item: item["modified_sort"], reverse=True)
+
+
+def delete_smt_source(data_type: str, stored_name: str) -> dict:
+    """Delete one managed SMT source file without allowing paths outside its data store."""
+    directories = {"input": SMT_INPUT_DIR, "defects": SMT_DEFECT_DIR}
+    if data_type not in directories:
+        raise ValueError("Unsupported SMT source type.")
+    if Path(stored_name).name != stored_name:
+        raise ValueError("Invalid SMT source file.")
+
+    target = directories[data_type] / stored_name
+    if not target.is_file():
+        raise ValueError("The selected SMT source file was not found.")
+    try:
+        target.unlink()
+    except OSError as exc:
+        raise RuntimeError(f"Unable to delete the selected SMT source file: {exc}") from exc
+    st.cache_data.clear()
+    return {"data_type": data_type, "original_name": re.sub(r"^[0-9a-f]{12}_", "", stored_name)}
+
+
+def render_smt_source_manager() -> None:
+    """Render the confirmed, individual source-file deletion workflow."""
+    records = smt_source_records()
+    with st.expander("Manage stored files"):
+        st.caption(
+            "Review the portal's stored SMT source files before deleting one. "
+            "Deletion changes the data used by dashboards and Smart Report and cannot be undone."
+        )
+        if not records:
+            st.info("No SMT source files are currently stored.")
+            return
+
+        file_types = {"input": "Production input", "defects": "Defects"}
+        table = pd.DataFrame(
+            [
+                {
+                    "Type": file_types[record["data_type"]],
+                    "Source file": record["original_name"],
+                    "Last updated": record["modified_at"],
+                    "Size": f"{record['file_size'] / 1024 / 1024:.2f} MB",
+                }
+                for record in records
+            ]
+        )
+        st.dataframe(table, use_container_width=True, hide_index=True, height="content")
+
+        record_by_key = {record["key"]: record for record in records}
+        selected_key = st.selectbox(
+            "Source file to delete",
+            options=list(record_by_key),
+            format_func=lambda key: (
+                f"{file_types[record_by_key[key]['data_type']]} · "
+                f"{record_by_key[key]['original_name']} · {record_by_key[key]['modified_at']}"
+            ),
+            key="smt_source_delete_selection",
+        )
+        selected = record_by_key[selected_key]
+        confirmed = st.checkbox(
+            "I understand that this permanently removes the selected SMT source file from this portal.",
+            key=f"smt_source_delete_confirm_{selected_key}",
+        )
+        if st.button(
+            "Delete selected source file",
+            type="secondary",
+            disabled=not confirmed,
+            use_container_width=True,
+            key="smt_source_delete_button",
+        ):
+            try:
+                deleted = delete_smt_source(selected["data_type"], selected["stored_name"])
+            except (RuntimeError, ValueError) as exc:
+                st.error(str(exc))
+            else:
+                st.session_state.pop("smt_last_import_results", None)
+                st.success(f"Deleted SMT {file_types[deleted['data_type']].lower()} source: {deleted['original_name']}.")
+                st.rerun()
+
+
 def _coverage_mask(
     defects: pd.DataFrame,
     input_rows: pd.DataFrame,
@@ -1041,6 +1139,7 @@ def _upload_section(color: str) -> None:
             hide_index=True,
             height="content",
         )
+    render_smt_source_manager()
     st.info(
         "Shared trend rule: periods shorter than 30 calendar days are daily, 30 to 180 days are weekly, "
         "and longer periods are monthly. Summarized input is distributed across calendar days while preserving "
