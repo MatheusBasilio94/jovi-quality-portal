@@ -1,6 +1,7 @@
 import base64
 import hmac
 import json
+import math
 import os
 import re
 import hashlib
@@ -15,7 +16,7 @@ from pathlib import Path
 from tools.trend_rules import analysis_period_days, requested_trend_grain, trend_grain_labels
 
 
-APP_VERSION = "v0.3.0"
+APP_VERSION = "v0.3.1"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -72,6 +73,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.3.1", "Fixed SMT action-priority cards so missing or non-finite Impact PPM values display as N/A instead of causing a dashboard error."),
     ("v0.3.0", "Added stored-source management for SMT and Assembly: users can review and safely delete one uploaded source file at a time with explicit confirmation."),
     ("v0.2.9", "Made Assembly stored data portable across local and Streamlit deployments: sources resolve from the internal data_store directory and future imports save relative paths."),
     ("v0.2.8", "Added Smart Report with real SMT and Assembly top-defect suggestions, functional-failure priority, persistent action fields, and WhatsApp-ready reports without modifying source data files."),
@@ -3326,7 +3328,11 @@ def fmt_int(value: float) -> str:
 
 
 def fmt_ppm(value: float) -> str:
-    return f"{float(value):,.0f}"
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return "N/A"
+    return f"{numeric_value:,.0f}" if math.isfinite(numeric_value) else "N/A"
 
 
 def fmt_pct(value: float) -> str:
