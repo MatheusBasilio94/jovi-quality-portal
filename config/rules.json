@@ -14,7 +14,9 @@
     "Rejudge OK",
     "Re-Judge OK",
     "rejudge ok",
-    "Good machine rejudge ok"
+    "Good machine rejudge ok",
+    "Re-Download",
+    "Re-Calibration"
   ],
   "mando_column": "DutyType",
   "mando_keywords": [
