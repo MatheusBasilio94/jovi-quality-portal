@@ -70,7 +70,13 @@ def _ensure_bucket(client: Client, bucket: str) -> None:
     """Create the private bucket once when the server has a server-side secret key."""
     try:
         existing = client.storage.list_buckets()
-        existing_ids = {str(item.get("id", "")) for item in existing if isinstance(item, dict)}
+        # storage3 v0.12+ returns ``SyncBucket`` objects, while earlier
+        # releases returned dictionaries. Support both shapes so that a
+        # pre-existing bucket is not mistaken for a missing one.
+        existing_ids = {
+            str(item.get("id", "")) if isinstance(item, dict) else str(getattr(item, "id", ""))
+            for item in existing
+        }
     except Exception as exc:
         raise RuntimeError("Supabase Storage could not be reached.") from exc
     if bucket in existing_ids:
