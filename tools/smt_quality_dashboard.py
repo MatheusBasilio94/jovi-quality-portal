@@ -8,10 +8,17 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+from tools.supabase_store import (
+    cloud_store_is_active,
+    cloud_store_status,
+    delete_object,
+    sync_prefix_from_cloud,
+    upload_bytes,
+)
 from tools.trend_rules import requested_trend_grain
 
 
-TOOL_VERSION = "v1.2.4"
+TOOL_VERSION = "v1.3.0"
 SMT_FAILURE_RULE_VERSION = "2026-07-24.1"
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 SMT_STORE_DIR = PROJECT_DIR / "data_store" / "smt"
@@ -63,6 +70,18 @@ def refresh_chart_period_labels(trend: pd.DataFrame) -> pd.DataFrame:
 def init_smt_store() -> None:
     SMT_INPUT_DIR.mkdir(parents=True, exist_ok=True)
     SMT_DEFECT_DIR.mkdir(parents=True, exist_ok=True)
+    if cloud_store_is_active():
+        sync_prefix_from_cloud("smt/input", SMT_INPUT_DIR)
+        sync_prefix_from_cloud("smt/defects", SMT_DEFECT_DIR)
+
+
+def require_persistent_store_for_smt_writes() -> None:
+    status = cloud_store_status()
+    if bool(status["configured"]) and not bool(status["active"]):
+        raise RuntimeError(
+            "Supabase is configured but the portal data has not been migrated yet. "
+            "Open About > Cloud data storage and complete the migration before adding or deleting data."
+        )
 
 
 def compact_header(value: object) -> str:
@@ -393,6 +412,7 @@ def safe_filename(name: str) -> str:
 
 
 def persist_smt_source(uploaded, data_type: str) -> dict:
+    require_persistent_store_for_smt_writes()
     target_dir = SMT_INPUT_DIR if data_type == "input" else SMT_DEFECT_DIR
     target_dir.mkdir(parents=True, exist_ok=True)
     data = uploaded.getvalue()
@@ -400,9 +420,12 @@ def persist_smt_source(uploaded, data_type: str) -> dict:
     target = target_dir / f"{digest}_{safe_filename(uploaded.name)}"
     if target.exists():
         return {"status": "duplicate", "file": uploaded.name, "message": "Identical file is already stored."}
+    if cloud_store_is_active():
+        upload_bytes(f"smt/{data_type}/{target.name}", data, upsert=True)
     target.write_bytes(data)
     st.cache_data.clear()
-    return {"status": "imported", "file": uploaded.name, "message": "Saved to the local SMT data store."}
+    message = "Saved to Supabase persistent storage." if cloud_store_is_active() else "Saved to the local SMT data store."
+    return {"status": "imported", "file": uploaded.name, "message": message}
 
 
 def smt_source_records() -> list[dict]:
@@ -428,6 +451,7 @@ def smt_source_records() -> list[dict]:
 
 def delete_smt_source(data_type: str, stored_name: str) -> dict:
     """Delete one managed SMT source file without allowing paths outside its data store."""
+    require_persistent_store_for_smt_writes()
     directories = {"input": SMT_INPUT_DIR, "defects": SMT_DEFECT_DIR}
     if data_type not in directories:
         raise ValueError("Unsupported SMT source type.")
@@ -437,6 +461,8 @@ def delete_smt_source(data_type: str, stored_name: str) -> dict:
     target = directories[data_type] / stored_name
     if not target.is_file():
         raise ValueError("The selected SMT source file was not found.")
+    if cloud_store_is_active():
+        delete_object(f"smt/{data_type}/{stored_name}")
     try:
         target.unlink()
     except OSError as exc:
