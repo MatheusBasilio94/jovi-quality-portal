@@ -13,10 +13,21 @@ from io import BytesIO
 from numbers import Number
 from pathlib import Path
 
+from tools.supabase_store import (
+    DATABASE_OBJECT,
+    cloud_store_is_active,
+    cloud_store_status,
+    delete_object,
+    migrate_local_data_store,
+    sync_file_from_cloud,
+    sync_prefix_from_cloud,
+    upload_bytes,
+    upload_local_file,
+)
 from tools.trend_rules import analysis_period_days, requested_trend_grain, trend_grain_labels
 
 
-APP_VERSION = "v0.3.2"
+APP_VERSION = "v0.4.0"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -73,6 +84,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.4.0", "Added optional Supabase persistent storage for uploaded SMT and Assembly source files, OQC/FQC records and Smart Report actions, with a guided one-time migration."),
     ("v0.3.2", "Added Re-Download and Re-Calibration to the approved retest exclusion policy for SMT and Assembly, with visible exclusion reasons for audit."),
     ("v0.3.1", "Fixed SMT action-priority cards so missing or non-finite Impact PPM values display as N/A instead of causing a dashboard error."),
     ("v0.3.0", "Added stored-source management for SMT and Assembly: users can review and safely delete one uploaded source file at a time with explicit confirmation."),
@@ -2399,6 +2411,7 @@ def sample_sources() -> tuple[Path, list[Path]]:
 
 def init_quality_store() -> None:
     DATA_STORE_DIR.mkdir(parents=True, exist_ok=True)
+    sync_file_from_cloud(DATABASE_OBJECT, QUALITY_DB_PATH)
     with sqlite3.connect(QUALITY_DB_PATH) as conn:
         conn.execute(
             """
@@ -2472,6 +2485,28 @@ def init_quality_store() -> None:
         )
 
 
+def require_persistent_store_for_writes() -> None:
+    """Prevent writes to the temporary Streamlit disk after Supabase setup starts."""
+    status = cloud_store_status()
+    if bool(status["configured"]) and not bool(status["active"]):
+        raise RuntimeError(
+            "Supabase is configured but the portal data has not been migrated yet. "
+            "Open About > Cloud data storage and complete the migration before adding or deleting data."
+        )
+
+
+def sync_quality_database_to_cloud() -> None:
+    if cloud_store_is_active():
+        upload_local_file(DATABASE_OBJECT, QUALITY_DB_PATH, upsert=True)
+
+
+def sync_assembly_source_cache() -> None:
+    if not cloud_store_is_active():
+        return
+    sync_prefix_from_cloud("assembly/defects", ASSEMBLY_FILE_STORE_DIR / "defects")
+    sync_prefix_from_cloud("assembly/input", ASSEMBLY_FILE_STORE_DIR / "input")
+
+
 def assembly_portable_stored_path(data_type: str, stored_name: str) -> str:
     """Return the repository-relative location recorded for new Assembly imports."""
     return (Path("data_store") / "assembly" / data_type / stored_name).as_posix()
@@ -2523,6 +2558,7 @@ def load_smart_report_actions(area: str, period_key: str) -> dict[str, dict]:
 
 def save_smart_report_action(area: str, period_key: str, item: dict, action: dict) -> None:
     init_quality_store()
+    require_persistent_store_for_writes()
     with sqlite3.connect(QUALITY_DB_PATH) as conn:
         conn.execute(
             """
@@ -2554,6 +2590,7 @@ def save_smart_report_action(area: str, period_key: str, item: dict, action: dic
                 datetime.now().isoformat(timespec="seconds"),
             ),
         )
+    sync_quality_database_to_cloud()
 
 
 def save_smt_oqc_inspection(
@@ -2565,6 +2602,7 @@ def save_smt_oqc_inspection(
     notes: str,
 ) -> None:
     init_quality_store()
+    require_persistent_store_for_writes()
     if inspected_qty <= 0:
         raise ValueError("Inspected quantity must be greater than zero.")
     if ok_qty < 0 or ng_qty < 0:
@@ -2589,6 +2627,7 @@ def save_smt_oqc_inspection(
                 datetime.now().isoformat(timespec="seconds"),
             ),
         )
+    sync_quality_database_to_cloud()
 
 
 def load_smt_oqc_inspections(start_date: date, end_date: date):
@@ -2625,10 +2664,12 @@ def load_smt_oqc_inspections(start_date: date, end_date: date):
 
 def delete_smt_oqc_inspection(record_id: int) -> None:
     init_quality_store()
+    require_persistent_store_for_writes()
     with sqlite3.connect(QUALITY_DB_PATH) as conn:
         cursor = conn.execute("DELETE FROM smt_oqc_inspections WHERE id = ?", (int(record_id),))
     if cursor.rowcount != 1:
         raise ValueError("The selected SMT OQC inspection record was not found.")
+    sync_quality_database_to_cloud()
 
 
 def save_assembly_oqc_fqc_inspection(
@@ -2643,6 +2684,7 @@ def save_assembly_oqc_fqc_inspection(
     notes: str,
 ) -> None:
     init_quality_store()
+    require_persistent_store_for_writes()
     checks = [
         ("OQC", oqc_inspected_qty, oqc_ok_qty, oqc_ng_qty),
         ("FQC", fqc_inspected_qty, fqc_ok_qty, fqc_ng_qty),
@@ -2678,6 +2720,7 @@ def save_assembly_oqc_fqc_inspection(
                 datetime.now().isoformat(timespec="seconds"),
             ),
         )
+    sync_quality_database_to_cloud()
 
 
 def load_assembly_oqc_fqc_inspections(start_date: date, end_date: date):
@@ -2720,10 +2763,12 @@ def load_assembly_oqc_fqc_inspections(start_date: date, end_date: date):
 
 def delete_assembly_oqc_fqc_inspection(record_id: int) -> None:
     init_quality_store()
+    require_persistent_store_for_writes()
     with sqlite3.connect(QUALITY_DB_PATH) as conn:
         cursor = conn.execute("DELETE FROM assembly_oqc_fqc_inspections WHERE id = ?", (int(record_id),))
     if cursor.rowcount != 1:
         raise ValueError("The selected Assembly OQC/FQC inspection record was not found.")
+    sync_quality_database_to_cloud()
 
 
 def read_source_bytes(source) -> bytes:
@@ -2760,6 +2805,7 @@ def classify_assembly_file(path: Path) -> str | None:
 
 def persist_assembly_source(source, data_type: str, source_method: str) -> dict:
     init_quality_store()
+    require_persistent_store_for_writes()
     if data_type not in {"defects", "input"}:
         raise RuntimeError(f"Unsupported Assembly data type: {data_type}")
 
@@ -2810,6 +2856,8 @@ def persist_assembly_source(source, data_type: str, source_method: str) -> dict:
                 "message": f"Already imported as {existing[0]} on {existing[1]}.",
             }
 
+        if cloud_store_is_active():
+            upload_bytes(f"assembly/{data_type}/{stored_name}", data, upsert=True)
         stored_path.write_bytes(data)
         conn.execute(
             """
@@ -2831,12 +2879,13 @@ def persist_assembly_source(source, data_type: str, source_method: str) -> dict:
                 source_method,
             ),
         )
+    sync_quality_database_to_cloud()
 
     return {
         "status": "imported",
         "data_type": data_type,
         "name": original_name,
-        "message": "Imported to the local data store.",
+        "message": "Imported to Supabase persistent storage." if cloud_store_is_active() else "Imported to the local data store.",
     }
 
 
@@ -2863,6 +2912,7 @@ def import_assembly_monitored_folder() -> list[dict]:
 
 def stored_assembly_sources() -> tuple[list[Path], list[Path]]:
     init_quality_store()
+    sync_assembly_source_cache()
     with sqlite3.connect(QUALITY_DB_PATH) as conn:
         rows = conn.execute(
             """
@@ -2889,6 +2939,7 @@ def stored_assembly_sources() -> tuple[list[Path], list[Path]]:
 def stored_assembly_file_records() -> list[dict]:
     """Return stored Assembly source metadata for the managed deletion interface."""
     init_quality_store()
+    sync_assembly_source_cache()
     with sqlite3.connect(QUALITY_DB_PATH) as conn:
         rows = conn.execute(
             """
@@ -2922,6 +2973,7 @@ def stored_assembly_file_records() -> list[dict]:
 def delete_assembly_source(record_id: int) -> dict:
     """Remove one Assembly source record and only its portal-managed physical file."""
     init_quality_store()
+    require_persistent_store_for_writes()
     conn = sqlite3.connect(QUALITY_DB_PATH)
     try:
         row = conn.execute(
@@ -2941,10 +2993,16 @@ def delete_assembly_source(record_id: int) -> dict:
         conn.commit()
     finally:
         conn.close()
+    sync_quality_database_to_cloud()
 
     # Never follow a legacy absolute path here. Deletion is limited to the portal-managed store.
     managed_file = ASSEMBLY_FILE_STORE_DIR / data_type / stored_name
     cleanup_note = ""
+    if cloud_store_is_active():
+        try:
+            delete_object(f"assembly/{data_type}/{stored_name}")
+        except RuntimeError as exc:
+            cleanup_note = f" The source record was removed, but Supabase could not clean up the stored file: {exc}"
     if managed_file.exists():
         try:
             managed_file.unlink()
@@ -3044,6 +3102,7 @@ def select_defect_sources(defects: list[Path]) -> tuple[list[Path], str]:
 
 def assembly_store_status() -> dict:
     init_quality_store()
+    sync_assembly_source_cache()
     with sqlite3.connect(QUALITY_DB_PATH) as conn:
         rows = conn.execute(
             """
@@ -7297,6 +7356,58 @@ def iqc_page() -> None:
     overview_page("IQC", MODULES["IQC"]["color"])
 
 
+def render_cloud_storage_panel() -> None:
+    status = cloud_store_status()
+    files = [path for path in DATA_STORE_DIR.rglob("*") if path.is_file()] if DATA_STORE_DIR.is_dir() else []
+    local_mb = sum(path.stat().st_size for path in files) / 1024 / 1024
+
+    st.markdown("<h3 class='section-title'>Cloud data storage</h3>", unsafe_allow_html=True)
+    with st.expander("Supabase persistent storage", expanded=not bool(status["active"])):
+        st.caption(
+            "Supabase keeps uploaded Excel files, OQC/FQC records and Smart Report actions outside the temporary "
+            "Streamlit filesystem. The current local data store is only used as a working cache."
+        )
+        st.write(f"**Status:** {status['mode']}")
+        st.caption(str(status["message"]))
+        st.caption(f"Current local migration set: {len(files):,} files · {local_mb:.2f} MB")
+
+        if not bool(status["configured"]):
+            st.info(
+                "Add SUPABASE_URL and SUPABASE_SECRET_KEY in Streamlit Community Cloud: "
+                "App settings > Secrets. A safe example is included in config/supabase.secrets.example.toml."
+            )
+            return
+
+        if str(status["mode"]) == "Configuration error":
+            st.error("Supabase could not be reached. Verify the URL and server-side secret key in Streamlit Secrets.")
+            return
+
+        if bool(status["active"]):
+            st.success("Persistent Supabase storage is active. New uploads and record updates are saved to the cloud.")
+            return
+
+        confirmed = st.checkbox(
+            "I confirm that the current local data store is the approved baseline to migrate to Supabase.",
+            key="supabase_initial_migration_confirm",
+        )
+        if st.button(
+            "Migrate current portal data to Supabase",
+            type="primary",
+            disabled=not confirmed,
+            use_container_width=True,
+            key="supabase_initial_migration_button",
+        ):
+            try:
+                init_quality_store()
+                result = migrate_local_data_store(DATA_STORE_DIR)
+            except RuntimeError as exc:
+                st.error(str(exc))
+            else:
+                st.cache_data.clear()
+                st.success(f"Migration complete: {result['files']:,} files saved to Supabase ({result['bytes'] / 1024 / 1024:.2f} MB).")
+                st.rerun()
+
+
 def about_page() -> None:
     st.markdown("<h1 class='section-title'>About</h1>", unsafe_allow_html=True)
     st.markdown(
@@ -7309,6 +7420,8 @@ def about_page() -> None:
         """,
         unsafe_allow_html=True,
     )
+    st.write("")
+    render_cloud_storage_panel()
     st.write("")
     st.markdown("<h3 class='section-title'>Version History</h3>", unsafe_allow_html=True)
     for version, desc in VERSION_HISTORY:
