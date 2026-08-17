@@ -10,6 +10,7 @@ filesystem.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,7 @@ except ImportError:  # pragma: no cover - exercised by Streamlit after requireme
 
 DEFAULT_BUCKET = "jovi-quality-data"
 DATABASE_OBJECT = "state/jovi_quality.db"
+SYNC_MANIFEST_FILENAME = ".supabase_sync_manifest.json"
 
 
 def _setting(name: str, default: str = "") -> str:
@@ -90,10 +92,17 @@ def _ensure_bucket(client: Client, bucket: str) -> None:
         ) from exc
 
 
+@st.cache_resource(show_spinner=False)
+def _bucket_store(url: str, key: str, bucket: str) -> Any:
+    """Keep the checked bucket client across Streamlit reruns."""
+    client = _client(url, key)
+    _ensure_bucket(client, bucket)
+    return client.storage.from_(bucket)
+
+
 def _storage() -> tuple[Any, dict[str, str]]:
-    client, config = _get_client()
-    _ensure_bucket(client, config["bucket"])
-    return client.storage.from_(config["bucket"]), config
+    _, config = _get_client()
+    return _bucket_store(config["url"], config["key"], config["bucket"]), config
 
 
 def _clean_object_path(path: str) -> str:
@@ -110,6 +119,42 @@ def _safe_local_target(directory: Path, name: str) -> Path:
     if target.parent.resolve() != directory.resolve():
         raise ValueError("Invalid local target path.")
     return target
+
+
+def _sync_manifest_path(local_path: Path) -> Path:
+    return local_path.parent / SYNC_MANIFEST_FILENAME
+
+
+def _read_sync_manifest(local_path: Path) -> dict[str, str]:
+    try:
+        data = json.loads(_sync_manifest_path(local_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return {}
+    return {str(key): str(value) for key, value in data.items()} if isinstance(data, dict) else {}
+
+
+def _write_sync_manifest(local_path: Path, manifest: dict[str, str]) -> None:
+    manifest_path = _sync_manifest_path(local_path)
+    try:
+        manifest_path.write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
+    except OSError:
+        # A missing manifest only causes a future safe re-download; it must not
+        # prevent the portal from using the durable cloud copy.
+        return
+
+
+def _object_fingerprint(row: dict) -> str:
+    """Return stable remote metadata used to avoid downloading unchanged files."""
+    metadata = row.get("metadata", {})
+    metadata = metadata if isinstance(metadata, dict) else {}
+    marker = {
+        "id": row.get("id", ""),
+        "updated_at": row.get("updated_at", row.get("created_at", "")),
+        "etag": metadata.get("eTag", metadata.get("etag", "")),
+        "last_modified": metadata.get("lastModified", metadata.get("last_modified", "")),
+        "size": metadata.get("size", row.get("size", "")),
+    }
+    return json.dumps(marker, sort_keys=True, default=str)
 
 
 def _list_objects(prefix: str) -> list[dict]:
@@ -193,41 +238,74 @@ def delete_object(path: str) -> None:
         raise RuntimeError("Supabase could not delete the selected portal data file.") from exc
 
 
-def sync_file_from_cloud(remote_path: str, local_path: Path) -> bool:
-    """Download a durable file if it exists. Returns whether a remote copy was found."""
+def sync_file_from_cloud(remote_path: str, local_path: Path, *, force: bool = False) -> bool:
+    """Sync one remote file, downloading it only when its metadata changed."""
     if not cloud_store_is_active():
         return False
-    data = download_bytes(remote_path)
-    if data is None:
+    clean = _clean_object_path(remote_path)
+    parent, _, name = clean.rpartition("/")
+    if not parent:
+        return False
+    remote_row = next((row for row in _list_objects(parent) if str(row.get("name")) == name), None)
+    if remote_row is None:
         return False
     local_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest = _read_sync_manifest(local_path)
+    fingerprint = _object_fingerprint(remote_row)
+    if not force and local_path.is_file() and manifest.get(clean) == fingerprint:
+        return True
+    store, _ = _storage()
+    try:
+        data = bytes(store.download(clean))
+    except Exception as exc:
+        raise RuntimeError("Supabase could not retrieve the portal data file.") from exc
     if not local_path.is_file() or local_path.read_bytes() != data:
         local_path.write_bytes(data)
+    manifest[clean] = fingerprint
+    _write_sync_manifest(local_path, manifest)
     return True
 
 
-def sync_prefix_from_cloud(prefix: str, local_directory: Path, *, prune: bool = True) -> list[Path]:
-    """Mirror one flat source-file folder from Supabase into the app's temporary cache."""
+def sync_prefix_from_cloud(
+    prefix: str,
+    local_directory: Path,
+    *,
+    prune: bool = True,
+    force: bool = False,
+) -> list[Path]:
+    """Mirror one source folder, downloading only new or changed cloud objects."""
     if not cloud_store_is_active():
         return []
     local_directory.mkdir(parents=True, exist_ok=True)
     clean_prefix = _clean_object_path(prefix)
     remote_rows = _list_objects(clean_prefix)
     remote_names = {str(row.get("name")) for row in remote_rows}
+    manifest = _read_sync_manifest(local_directory)
+    next_manifest: dict[str, str] = {}
+    store, _ = _storage()
     paths: list[Path] = []
-    for name in sorted(remote_names):
+    for row in sorted(remote_rows, key=lambda item: str(item.get("name", ""))):
+        name = str(row.get("name"))
         target = _safe_local_target(local_directory, name)
-        data = download_bytes(f"{clean_prefix}/{name}")
-        if data is None:
-            continue
-        if not target.is_file() or target.read_bytes() != data:
-            target.write_bytes(data)
+        remote_path = f"{clean_prefix}/{name}"
+        fingerprint = _object_fingerprint(row)
+        if force or not target.is_file() or manifest.get(remote_path) != fingerprint:
+            try:
+                data = bytes(store.download(remote_path))
+            except Exception as exc:
+                raise RuntimeError("Supabase could not retrieve the portal data file.") from exc
+            if not target.is_file() or target.read_bytes() != data:
+                target.write_bytes(data)
+        next_manifest[remote_path] = fingerprint
         paths.append(target)
 
     if prune:
         for local_path in local_directory.iterdir():
+            if local_path.name == SYNC_MANIFEST_FILENAME:
+                continue
             if local_path.is_file() and local_path.name not in remote_names:
                 local_path.unlink()
+    _write_sync_manifest(local_directory, next_manifest)
     return paths
 
 
@@ -250,7 +328,12 @@ def migrate_local_data_store(data_store_dir: Path) -> dict[str, int]:
 
     source_files = [
         path for path in data_store_dir.rglob("*")
-        if path.is_file() and path != database_path and "__pycache__" not in path.parts
+        if (
+            path.is_file()
+            and path != database_path
+            and path.name != SYNC_MANIFEST_FILENAME
+            and "__pycache__" not in path.parts
+        )
     ]
     uploaded_bytes = 0
     for path in source_files:

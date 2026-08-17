@@ -15,6 +15,7 @@ from pathlib import Path
 
 from tools.supabase_store import (
     DATABASE_OBJECT,
+    SYNC_MANIFEST_FILENAME,
     cloud_store_is_active,
     cloud_store_status,
     delete_object,
@@ -27,7 +28,7 @@ from tools.supabase_store import (
 from tools.trend_rules import analysis_period_days, requested_trend_grain, trend_grain_labels
 
 
-APP_VERSION = "v0.4.0"
+APP_VERSION = "v0.4.1"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -84,6 +85,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.4.1", "Added selective Supabase cache synchronization and a manual full cloud refresh, reducing repeated downloads while keeping a user-controlled complete refresh."),
     ("v0.4.0", "Added optional Supabase persistent storage for uploaded SMT and Assembly source files, OQC/FQC records and Smart Report actions, with a guided one-time migration."),
     ("v0.3.2", "Added Re-Download and Re-Calibration to the approved retest exclusion policy for SMT and Assembly, with visible exclusion reasons for audit."),
     ("v0.3.1", "Fixed SMT action-priority cards so missing or non-finite Impact PPM values display as N/A instead of causing a dashboard error."),
@@ -2505,6 +2507,25 @@ def sync_assembly_source_cache() -> None:
         return
     sync_prefix_from_cloud("assembly/defects", ASSEMBLY_FILE_STORE_DIR / "defects")
     sync_prefix_from_cloud("assembly/input", ASSEMBLY_FILE_STORE_DIR / "input")
+
+
+def full_cloud_refresh() -> dict[str, int]:
+    """Rebuild the temporary portal cache from every current Supabase object."""
+    if not cloud_store_is_active():
+        raise RuntimeError("Supabase persistent storage is not active.")
+
+    from tools import smt_quality_dashboard
+
+    refreshed = []
+    if sync_file_from_cloud(DATABASE_OBJECT, QUALITY_DB_PATH, force=True):
+        refreshed.append(QUALITY_DB_PATH)
+    init_quality_store()
+    refreshed.extend(sync_prefix_from_cloud("smt/input", smt_quality_dashboard.SMT_INPUT_DIR, force=True))
+    refreshed.extend(sync_prefix_from_cloud("smt/defects", smt_quality_dashboard.SMT_DEFECT_DIR, force=True))
+    refreshed.extend(sync_prefix_from_cloud("assembly/input", ASSEMBLY_FILE_STORE_DIR / "input", force=True))
+    refreshed.extend(sync_prefix_from_cloud("assembly/defects", ASSEMBLY_FILE_STORE_DIR / "defects", force=True))
+    st.cache_data.clear()
+    return {"files": len(refreshed), "bytes": sum(path.stat().st_size for path in refreshed if path.is_file())}
 
 
 def assembly_portable_stored_path(data_type: str, stored_name: str) -> str:
@@ -7358,7 +7379,10 @@ def iqc_page() -> None:
 
 def render_cloud_storage_panel() -> None:
     status = cloud_store_status()
-    files = [path for path in DATA_STORE_DIR.rglob("*") if path.is_file()] if DATA_STORE_DIR.is_dir() else []
+    files = [
+        path for path in DATA_STORE_DIR.rglob("*")
+        if path.is_file() and path.name != SYNC_MANIFEST_FILENAME
+    ] if DATA_STORE_DIR.is_dir() else []
     local_mb = sum(path.stat().st_size for path in files) / 1024 / 1024
 
     st.markdown("<h3 class='section-title'>Cloud data storage</h3>", unsafe_allow_html=True)
@@ -7384,6 +7408,24 @@ def render_cloud_storage_panel() -> None:
 
         if bool(status["active"]):
             st.success("Persistent Supabase storage is active. New uploads and record updates are saved to the cloud.")
+            st.caption("Automatic sync downloads only new or changed cloud files. Use the full refresh below when you want to rebuild the complete local cache.")
+            last_refresh = st.session_state.get("supabase_full_refresh_at")
+            if last_refresh:
+                st.caption(f"Last full refresh in this session: {last_refresh}")
+            if st.button(
+                "Full cloud refresh",
+                help="Downloads every current portal file from Supabase. This may take a few minutes and never deletes cloud data.",
+                use_container_width=True,
+                key="supabase_full_cloud_refresh_button",
+            ):
+                try:
+                    with st.spinner("Refreshing every portal file from Supabase..."):
+                        result = full_cloud_refresh()
+                except RuntimeError as exc:
+                    st.error(str(exc))
+                else:
+                    st.session_state["supabase_full_refresh_at"] = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                    st.success(f"Full cloud refresh complete: {result['files']:,} files refreshed ({result['bytes'] / 1024 / 1024:.2f} MB).")
             return
 
         confirmed = st.checkbox(
