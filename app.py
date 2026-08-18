@@ -28,7 +28,7 @@ from tools.supabase_store import (
 from tools.trend_rules import analysis_period_days, requested_trend_grain, trend_grain_labels
 
 
-APP_VERSION = "v0.4.1"
+APP_VERSION = "v0.4.2"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -71,7 +71,7 @@ st.set_page_config(
     page_title="Jovi Quality Center",
     page_icon="JOVI",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 MODULES = {
@@ -85,6 +85,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.4.2", "Refreshed the portal interface with Deep Navy navigation, standardized cobalt headings, persistent date selections, faster period presets, and a unified visual treatment for filter controls."),
     ("v0.4.1", "Added selective Supabase cache synchronization and a manual full cloud refresh, reducing repeated downloads while keeping a user-controlled complete refresh."),
     ("v0.4.0", "Added optional Supabase persistent storage for uploaded SMT and Assembly source files, OQC/FQC records and Smart Report actions, with a guided one-time migration."),
     ("v0.3.2", "Added Re-Download and Re-Calibration to the approved retest exclusion policy for SMT and Assembly, with visible exclusion reasons for audit."),
@@ -176,15 +177,15 @@ def apply_global_css() -> None:
         """
         <style>
         :root {
-            --navy: #061B36;
-            --navy-2: #08284F;
-            --blue: #1D5FBF;
-            --blue-2: #2F80ED;
-            --text: #0B1F3A;
-            --muted: #17243A;
-            --border: #D9E1EF;
+            --navy: #061A3A;
+            --navy-2: #0B2D61;
+            --blue: #2563EB;
+            --blue-2: #1D4ED8;
+            --text: #071B38;
+            --muted: #405775;
+            --border: #C9D8EC;
             --card: #FFFFFF;
-            --bg: #F4F7FB;
+            --bg: #F1F5FB;
         }
 
         html, body, [class*="css"] {
@@ -192,13 +193,25 @@ def apply_global_css() -> None:
         }
 
         .stApp {
-            background: var(--bg) !important;
+            background: linear-gradient(180deg, #EAF1FA 0%, var(--bg) 28%, #F7F9FC 100%) !important;
             color: var(--text) !important;
         }
 
+        header[data-testid="stHeader"],
+        [data-testid="stToolbar"],
+        [data-testid="stStatusWidget"],
+        #MainMenu {
+            display: none !important;
+        }
+
         [data-testid="stMainBlockContainer"] {
-            padding-top: 3.25rem !important;
-            padding-bottom: 0.8rem !important;
+            max-width: none !important;
+            padding: 0.8rem 1.35rem 0.8rem 1.35rem !important;
+        }
+
+        section[data-testid="stSidebar"],
+        [data-testid="stSidebarCollapsedControl"] {
+            display: none !important;
         }
 
         section[data-testid="stSidebar"] {
@@ -418,6 +431,258 @@ def apply_global_css() -> None:
             white-space: nowrap;
         }
 
+        .st-key-top_navigation {
+            position: sticky;
+            top: 0.5rem;
+            z-index: 100;
+            background: linear-gradient(105deg, #061A3A 0%, #0B2D61 100%);
+            border: 1px solid rgba(96, 165, 250, 0.34);
+            border-radius: 0.9rem;
+            padding: 0.42rem 0.55rem;
+            margin-bottom: -0.38rem;
+            box-shadow: 0 12px 28px rgba(4, 20, 48, 0.24);
+            backdrop-filter: blur(10px);
+        }
+        .st-key-top_navigation [data-testid="stHorizontalBlock"] {
+            align-items: center;
+        }
+        .st-key-top_navigation [data-testid="stColumn"]:first-child,
+        .st-key-context_navigation [data-testid="stColumn"]:first-child {
+            align-self: stretch;
+            display: flex;
+            align-items: center;
+        }
+        .st-key-top_navigation [data-testid="stColumn"]:first-child [data-testid="stElementContainer"],
+        .st-key-context_navigation [data-testid="stColumn"]:first-child [data-testid="stElementContainer"],
+        .st-key-top_navigation [data-testid="stColumn"]:first-child [data-testid="stMarkdown"],
+        .st-key-context_navigation [data-testid="stColumn"]:first-child [data-testid="stMarkdown"] {
+            width: 100%;
+            margin: 0 !important;
+        }
+        .topnav-brand {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            gap: 0.03rem;
+            min-height: 36px;
+            padding: 0.08rem 0.38rem;
+            box-sizing: border-box;
+            white-space: nowrap;
+        }
+        .topnav-brand strong {
+            color: #FFFFFF;
+            font-size: 0.94rem;
+            line-height: 1;
+            letter-spacing: 0.035em;
+        }
+        .topnav-brand strong span { color: #72AEFF; }
+        .topnav-brand small {
+            color: #C4D7F4;
+            font-size: 0.58rem;
+            font-weight: 900;
+            letter-spacing: 0.10em;
+        }
+        div[class*="st-key-top_nav_module_"] button {
+            min-height: 36px;
+            width: 100%;
+            padding: 0.34rem 0.45rem;
+            border-radius: 0.55rem;
+            border: 1px solid transparent;
+            background: transparent;
+            color: #D9E7FB;
+            font-size: 0.76rem;
+            font-weight: 800;
+            white-space: nowrap;
+        }
+        div[class*="st-key-top_nav_module_"] button:hover {
+            background: rgba(96, 165, 250, 0.15);
+            border-color: rgba(147, 197, 253, 0.38);
+            color: #FFFFFF;
+        }
+        div[class*="st-key-top_nav_module_"] button[kind="primary"],
+        div[class*="st-key-top_nav_module_"] button[data-testid="stBaseButton-primary"] {
+            background: linear-gradient(135deg, #3B82F6, #2563EB);
+            border-color: rgba(191, 219, 254, 0.60);
+            box-shadow: 0 6px 14px rgba(3, 35, 91, 0.34);
+            color: #FFFFFF;
+        }
+        .st-key-context_navigation {
+            display: flex;
+            align-items: center;
+            gap: 0.7rem;
+            min-height: 48px;
+            padding: 0.38rem 0.55rem;
+            margin: 0 0 0.62rem 0;
+            background: rgba(255, 255, 255, 0.93);
+            border: 1px solid var(--border);
+            border-radius: 0.72rem;
+            box-shadow: 0 5px 16px rgba(18, 48, 89, 0.07);
+        }
+        .st-key-context_navigation [data-testid="stHorizontalBlock"] {
+            align-items: center;
+        }
+        .context-label {
+            display: flex;
+            align-items: center;
+            color: #5C7190;
+            font-size: 0.67rem;
+            font-weight: 900;
+            letter-spacing: 0.08em;
+            min-height: 34px;
+            white-space: nowrap;
+        }
+        .context-label b { color: #08234A; }
+        div[class*="st-key-top_nav_tab_"] button {
+            min-height: 34px;
+            width: 100%;
+            padding: 0.3rem 0.58rem;
+            border-radius: 0.48rem;
+            border: 1px solid #DCE5F1;
+            background: #FFFFFF;
+            color: #42556F;
+            font-size: 0.73rem;
+            font-weight: 800;
+            white-space: nowrap;
+        }
+        div[class*="st-key-top_nav_tab_"] button:hover {
+            background: #F0F6FF;
+            border-color: #A8C8EE;
+        }
+        div[class*="st-key-top_nav_tab_"] button[kind="primary"],
+        div[class*="st-key-top_nav_tab_"] button[data-testid="stBaseButton-primary"] {
+            border-color: #8EB9F3;
+            background: #E2EEFF;
+            color: #164D9B;
+        }
+        .st-key-top_navigation [data-testid="stPopover"] button {
+            min-height: 36px;
+            border-radius: 0.55rem;
+            border-color: rgba(191, 219, 254, 0.45);
+            background: rgba(255, 255, 255, 0.08);
+            color: #E4EFFF;
+            font-size: 0.73rem;
+            font-weight: 800;
+        }
+        div[class*="st-key-smt_quality_v2_filter_panel"],
+        div[class*="st-key-assembly_quality_v2_filter_panel"] {
+            background: transparent;
+            border: 0;
+            padding: 0;
+            margin: 0.25rem 0 0.9rem 0;
+            box-shadow: none;
+        }
+        div[class*="st-key-smt_quality_v2_filter_panel"] [data-testid="stSelectbox"] label,
+        div[class*="st-key-assembly_quality_v2_filter_panel"] [data-testid="stSelectbox"] label,
+        div[class*="st-key-smt_quality_v2_filter_panel"] [data-testid="stDateInput"] label,
+        div[class*="st-key-assembly_quality_v2_filter_panel"] [data-testid="stDateInput"] label {
+            color: #082957 !important;
+            font-size: 0.84rem !important;
+            font-weight: 900 !important;
+            letter-spacing: 0.01em;
+        }
+        div[class*="st-key-smt_quality_v2_filter_panel"] [data-testid="stSelectbox"] > div > div,
+        div[class*="st-key-assembly_quality_v2_filter_panel"] [data-testid="stSelectbox"] > div > div,
+        div[class*="st-key-smt_quality_v2_filter_panel"] [data-testid="stDateInput"] > div > div,
+        div[class*="st-key-assembly_quality_v2_filter_panel"] [data-testid="stDateInput"] > div > div {
+            background: linear-gradient(135deg, #2F80ED 0%, #1D5FBF 100%) !important;
+            border-color: #4B8DEF !important;
+            box-shadow: 0 4px 12px rgba(8, 45, 97, 0.18);
+        }
+        div[class*="st-key-smt_quality_v2_filter_panel"] [data-testid="stSelectbox"] [data-baseweb="select"] *,
+        div[class*="st-key-assembly_quality_v2_filter_panel"] [data-testid="stSelectbox"] [data-baseweb="select"] *,
+        div[class*="st-key-smt_quality_v2_filter_panel"] [data-testid="stSelectbox"] > div > div *,
+        div[class*="st-key-assembly_quality_v2_filter_panel"] [data-testid="stSelectbox"] > div > div *,
+        div[class*="st-key-smt_quality_v2_filter_panel"] [data-testid="stDateInput"] input,
+        div[class*="st-key-assembly_quality_v2_filter_panel"] [data-testid="stDateInput"] input {
+            color: #F8FBFF !important;
+        }
+        div[class*="st-key-smt_quality_v2_filter_panel"] [data-testid="stSelectbox"] svg,
+        div[class*="st-key-assembly_quality_v2_filter_panel"] [data-testid="stSelectbox"] svg,
+        div[class*="st-key-smt_quality_v2_filter_panel"] [data-testid="stDateInput"] svg,
+        div[class*="st-key-assembly_quality_v2_filter_panel"] [data-testid="stDateInput"] svg {
+            fill: #BFD8FF !important;
+            color: #BFD8FF !important;
+        }
+        div[class*="st-key-smt_quality_v2_filter_panel"] [data-testid="stSelectbox"] > div > div:hover,
+        div[class*="st-key-assembly_quality_v2_filter_panel"] [data-testid="stSelectbox"] > div > div:hover,
+        div[class*="st-key-smt_quality_v2_filter_panel"] [data-testid="stDateInput"] > div > div:hover,
+        div[class*="st-key-assembly_quality_v2_filter_panel"] [data-testid="stDateInput"] > div > div:hover {
+            border-color: #93C5FD !important;
+            box-shadow: 0 5px 14px rgba(37, 99, 235, 0.28);
+        }
+        div[class*="st-key-analysis_period_"] {
+            max-width: 760px;
+            margin: 0 0 0.45rem 0;
+        }
+        div[class*="st-key-analysis_period_"] [data-testid="stHorizontalBlock"] {
+            align-items: end;
+        }
+        div[class*="st-key-analysis_period_"] [data-testid="stSelectbox"] label,
+        div[class*="st-key-analysis_period_"] [data-testid="stDateInput"] label {
+            color: #52657F;
+            font-size: 0.72rem;
+            font-weight: 800;
+            display: block;
+            text-align: center;
+        }
+        div[class*="st-key-analysis_period_"] [data-testid="stSelectbox"] input,
+        div[class*="st-key-analysis_period_"] [data-testid="stSelectbox"] [data-baseweb="select"],
+        div[class*="st-key-analysis_period_"] [data-testid="stSelectbox"] [data-baseweb="select"] > div,
+        div[class*="st-key-analysis_period_"] [data-testid="stSelectbox"] [data-baseweb="select"] [role="combobox"],
+        div[class*="st-key-analysis_period_"] [data-testid="stDateInput"] input {
+            text-align: center !important;
+        }
+        div[class*="st-key-analysis_period_"] [data-testid="stSelectbox"] [data-baseweb="select"] > div,
+        div[class*="st-key-analysis_period_"] [data-testid="stSelectbox"] [data-baseweb="select"] [role="combobox"] {
+            justify-content: center !important;
+            padding-left: 0 !important;
+        }
+        div[class*="st-key-analysis_period_"] [data-testid="stSelectbox"] [data-baseweb="select"] > div > div:first-child,
+        div[class*="st-key-analysis_period_"] [data-testid="stSelectbox"] [data-baseweb="select"] [role="combobox"] > div:first-child,
+        div[class*="st-key-analysis_period_"] [data-testid="stSelectbox"] [data-baseweb="select"] [role="combobox"] > div:first-child > div {
+            flex: 1 1 auto;
+            width: 100%;
+            text-align: center !important;
+        }
+        [data-testid="stSelectbox"] label,
+        [data-testid="stMultiSelect"] label,
+        [data-testid="stDateInput"] label {
+            color: #082957 !important;
+            font-size: 0.84rem !important;
+            font-weight: 900 !important;
+            letter-spacing: 0.01em;
+        }
+        [data-testid="stSelectbox"] > div > div,
+        [data-testid="stMultiSelect"] > div > div,
+        [data-testid="stDateInput"] > div > div {
+            background: linear-gradient(135deg, #2F80ED 0%, #1D5FBF 100%) !important;
+            border-color: #4B8DEF !important;
+            box-shadow: 0 4px 12px rgba(8, 45, 97, 0.18);
+        }
+        [data-testid="stSelectbox"] > div > div *,
+        [data-testid="stMultiSelect"] > div > div *,
+        [data-testid="stDateInput"] input {
+            color: #F8FBFF !important;
+        }
+        [data-testid="stSelectbox"] svg,
+        [data-testid="stMultiSelect"] svg,
+        [data-testid="stDateInput"] svg {
+            fill: #BFD8FF !important;
+            color: #BFD8FF !important;
+        }
+        [data-testid="stSelectbox"] > div > div:hover,
+        [data-testid="stMultiSelect"] > div > div:hover,
+        [data-testid="stDateInput"] > div > div:hover {
+            border-color: #93C5FD !important;
+            box-shadow: 0 5px 14px rgba(37, 99, 235, 0.28);
+        }
+        @media (max-width: 900px) {
+            [data-testid="stMainBlockContainer"] { padding-left: 0.7rem !important; padding-right: 0.7rem !important; }
+            .topnav-brand small { display: none; }
+            div[class*="st-key-top_nav_module_"] button { font-size: 0.66rem; padding-left: 0.22rem; padding-right: 0.22rem; }
+            div[class*="st-key-top_nav_tab_"] button { font-size: 0.66rem; padding-left: 0.28rem; padding-right: 0.28rem; }
+        }
+
         .hero {
             text-align: center;
             background: #FFFFFF;
@@ -589,7 +854,7 @@ def apply_global_css() -> None:
             }
         }
         .section-title {
-            color: #071F41;
+            color: #2563EB !important;
             font-weight: 900;
             margin: 0.4rem 0 0.9rem 0;
         }
@@ -689,9 +954,11 @@ def apply_global_css() -> None:
             box-shadow: 0 8px 22px rgba(15, 35, 65, 0.08);
             min-height: 7.9rem;
             box-sizing: border-box;
+            text-align: center;
         }
         .metric-label { color: #0B1F3A; font-size: 0.78rem; font-weight: 900; text-transform: uppercase; }
         .metric-value { color: #061B36; font-size: 1.65rem; font-weight: 900; margin-top: 0.15rem; }
+        .dashboard-kpi-chart-gap { height: 0.9rem; }
         div[data-testid="stPlotlyChart"] {
             background: #FFFFFF;
             border: 1px solid #C8D3E3;
@@ -1545,64 +1812,66 @@ def set_navigation(module: str, tab: str = "") -> None:
     st.query_params.from_dict(query_values)
 
 
-def sidebar() -> None:
-    with st.sidebar:
-        st.markdown(
-            """
-            <div class="sidebar-logo">
-                <div class="jovi">JOVI</div>
-                <div class="subtitle">QUALITY CENTER</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        for module, cfg in MODULES.items():
-            is_active_module = st.session_state.module == module
-            first_tab = cfg["tabs"][0] if cfg["tabs"] else ""
-            st.button(
-                module,
-                key=f"nav_module_{navigation_key(module)}",
-                type="primary" if is_active_module else "secondary",
-                use_container_width=True,
-                on_click=set_navigation,
-                args=(module, first_tab),
+def top_navigation() -> None:
+    """Render the full-width primary navigation without using Streamlit's sidebar."""
+    nav_items = [
+        ("Home", "Home", 0.58),
+        ("Learning Area", "Learning", 0.84),
+        ("SMT", "SMT", 0.48),
+        ("Assembly", "Assembly", 0.74),
+        ("IQC", "IQC", 0.46),
+        ("Smart Report", "Smart Report", 0.98),
+    ]
+    with st.container(key="top_navigation"):
+        columns = st.columns([1.42] + [item[2] for item in nav_items] + [0.56], gap="small")
+        with columns[0]:
+            st.markdown(
+                "<div class='topnav-brand'><strong><span>JOVI</span> QUALITY CENTER</strong><small>QUALITY INTELLIGENCE PORTAL</small></div>",
+                unsafe_allow_html=True,
             )
-            if is_active_module and cfg["tabs"]:
-                for tab in cfg["tabs"]:
-                    is_active_tab = is_active_module and st.session_state.tab == tab
-                    st.button(
-                        tab,
-                        key=f"nav_tab_{navigation_key(module)}_{navigation_key(tab)}",
-                        type="primary" if is_active_tab else "secondary",
-                        use_container_width=True,
-                        on_click=set_navigation,
-                        args=(module, tab),
-                    )
-
-        st.markdown(
-            f"""
-            <div class="sidebar-bottom">
-                <div>{APP_VERSION}</div>
-                <div class="sidebar-user">Signed in as {escape(str(st.session_state.get("authenticated_user", LOGIN_USERNAME)))}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        if st.button("Sign out", key="sidebar_logout", use_container_width=True):
-            logout()
+        for column, (module, label, _) in zip(columns[1:-1], nav_items):
+            with column:
+                cfg = MODULES[module]
+                st.button(
+                    label,
+                    key=f"top_nav_module_{navigation_key(module)}",
+                    type="primary" if st.session_state.module == module else "secondary",
+                    use_container_width=True,
+                    on_click=set_navigation,
+                    args=(module, cfg["tabs"][0] if cfg["tabs"] else ""),
+                )
+        with columns[-1]:
+            with st.popover("More", use_container_width=True):
+                st.caption(f"{APP_VERSION} · Signed in as {st.session_state.get('authenticated_user', LOGIN_USERNAME)}")
+                st.button("About", key="top_nav_about", use_container_width=True, on_click=set_navigation, args=("About", ""))
+                if st.button("Sign out", key="top_nav_logout", use_container_width=True):
+                    logout()
 
 
-def topbar() -> None:
-    st.markdown(
-        f"""
-        <div class="topbar">
-            <div class="title"><span class="brand">JOVI</span>&nbsp;&nbsp;QUALITY CENTER</div>
-            <div class="meta">{APP_VERSION}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+def context_navigation() -> None:
+    """Show the pages available in the active workspace directly below the primary navigation."""
+    module = st.session_state.module
+    tabs = MODULES[module]["tabs"]
+    if not tabs:
+        return
+    tab_labels = {
+        "BOM Comparison Tool - SMT": "BOM Comparison",
+        "BOM Comparison Tool - Assembly": "BOM Comparison",
+    }
+    with st.container(key="context_navigation"):
+        columns = st.columns([1.15] + [1] * len(tabs), gap="small")
+        with columns[0]:
+            st.markdown(f"<div class='context-label'><b>{escape(module)}</b> WORKSPACE</div>", unsafe_allow_html=True)
+        for column, tab in zip(columns[1:], tabs):
+            with column:
+                st.button(
+                    tab_labels.get(tab, tab),
+                    key=f"top_nav_tab_{navigation_key(module)}_{navigation_key(tab)}",
+                    type="primary" if st.session_state.tab == tab else "secondary",
+                    use_container_width=True,
+                    on_click=set_navigation,
+                    args=(module, tab),
+                )
 
 
 def footer() -> None:
@@ -1840,6 +2109,124 @@ def analysis_period_bounds(rules: dict):
         start, end = end, start
     end = end + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
     return start, end
+
+
+ANALYSIS_PERIOD_OPTIONS = ("Today", "Last 7 days", "This month", "Previous month", "YTD")
+
+
+def _as_date(value) -> date:
+    return value.date() if isinstance(value, datetime) else value
+
+
+def _preset_period_range(preset: str, minimum_date: date, maximum_date: date) -> tuple[date, date]:
+    anchor = min(date.today(), maximum_date)
+    if preset == "Today":
+        start = end = anchor
+    elif preset == "Last 7 days":
+        start, end = anchor - timedelta(days=6), anchor
+    elif preset == "Last 30 days":
+        start, end = anchor - timedelta(days=29), anchor
+    elif preset == "This month":
+        start, end = anchor.replace(day=1), anchor
+    elif preset == "Previous month":
+        current_month_start = anchor.replace(day=1)
+        end = current_month_start - timedelta(days=1)
+        start = end.replace(day=1)
+    else:  # YTD uses the complete available data range.
+        start, end = minimum_date, maximum_date
+    return max(start, minimum_date), min(end, maximum_date)
+
+
+def _apply_period_preset(
+    preset_key: str,
+    range_key: str,
+    remembered_range_key: str,
+    minimum_date: date,
+    maximum_date: date,
+) -> None:
+    preset = st.session_state.get(preset_key, "YTD")
+    selected_range = _preset_period_range(preset, minimum_date, maximum_date)
+    st.session_state[range_key] = selected_range
+    st.session_state[remembered_range_key] = selected_range
+
+
+def _remember_period_range(range_key: str, remembered_range_key: str) -> None:
+    selected_range = st.session_state.get(range_key)
+    if isinstance(selected_range, (tuple, list)) and len(selected_range) >= 2:
+        start_date, end_date = _as_date(selected_range[0]), _as_date(selected_range[1])
+        st.session_state[remembered_range_key] = (
+            min(start_date, end_date),
+            max(start_date, end_date),
+        )
+
+
+def analysis_period_control(
+    key: str,
+    minimum_value,
+    maximum_value,
+    *,
+    default_start=None,
+    default_end=None,
+) -> tuple[date, date]:
+    """Render the shared compact period menu used by KPI and quality dashboards."""
+    minimum_date = _as_date(minimum_value)
+    maximum_date = _as_date(maximum_value)
+    if maximum_date < minimum_date:
+        minimum_date, maximum_date = maximum_date, minimum_date
+    default_start = _as_date(default_start) if default_start is not None else minimum_date
+    default_end = _as_date(default_end) if default_end is not None else maximum_date
+    default_start = min(max(default_start, minimum_date), maximum_date)
+    default_end = min(max(default_end, minimum_date), maximum_date)
+    if default_end < default_start:
+        default_start, default_end = default_end, default_start
+
+    preset_key = f"{key}_preset"
+    range_key = f"{key}_range"
+    remembered_range_key = f"{key}_remembered_range"
+    if st.session_state.get(preset_key) not in ANALYSIS_PERIOD_OPTIONS:
+        st.session_state[preset_key] = "YTD"
+    remembered_range = st.session_state.get(remembered_range_key)
+    if not isinstance(remembered_range, (tuple, list)) or len(remembered_range) < 2:
+        remembered_range = st.session_state.get(range_key)
+    if isinstance(remembered_range, (tuple, list)) and len(remembered_range) >= 2:
+        remembered_start = min(max(_as_date(remembered_range[0]), minimum_date), maximum_date)
+        remembered_end = min(max(_as_date(remembered_range[1]), minimum_date), maximum_date)
+        initial_range = (min(remembered_start, remembered_end), max(remembered_start, remembered_end))
+    else:
+        initial_range = (default_start, default_end)
+    st.session_state[remembered_range_key] = initial_range
+    if range_key not in st.session_state:
+        st.session_state[range_key] = initial_range
+
+    with st.container(key=f"analysis_period_{navigation_key(key)}"):
+        preset_col, range_col, _ = st.columns([0.48, 0.82, 0.95], gap="small")
+        with preset_col:
+            st.selectbox(
+                "Quick selection",
+                ANALYSIS_PERIOD_OPTIONS,
+                key=preset_key,
+                on_change=_apply_period_preset,
+                args=(preset_key, range_key, remembered_range_key, minimum_date, maximum_date),
+            )
+        with range_col:
+            selected_period = st.date_input(
+                "Analysis period",
+                min_value=minimum_date,
+                max_value=maximum_date,
+                format="DD/MM/YYYY",
+                key=range_key,
+                on_change=_remember_period_range,
+                args=(range_key, remembered_range_key),
+            )
+
+    if isinstance(selected_period, (tuple, list)) and len(selected_period) >= 2:
+        start_date, end_date = selected_period[0], selected_period[1]
+    elif isinstance(selected_period, (tuple, list)) and len(selected_period) == 1:
+        start_date = end_date = selected_period[0]
+    else:
+        start_date = end_date = selected_period
+    start_date, end_date = _as_date(start_date), _as_date(end_date)
+    return (end_date, start_date) if end_date < start_date else (start_date, end_date)
 
 
 def production_input_granularity(production) -> dict:
@@ -3935,35 +4322,17 @@ def assembly_period_selector(rules: dict, color: str) -> dict:
         """,
         unsafe_allow_html=True,
     )
-    control_col, note_col = st.columns([1.05, 1.95])
-    with control_col:
-        selected_period = st.date_input(
-            "Date range",
-            value=(start_default, end_default),
-            format="DD/MM/YYYY",
-            key="assembly_analysis_period",
-        )
-
-    if isinstance(selected_period, (tuple, list)):
-        if len(selected_period) >= 2:
-            start_date, end_date = selected_period[0], selected_period[1]
-        elif len(selected_period) == 1:
-            start_date = end_date = selected_period[0]
-        else:
-            start_date, end_date = start_default, end_default
-    else:
-        start_date = end_date = selected_period
-
-    if not isinstance(start_date, date) or not isinstance(end_date, date):
-        start_date, end_date = start_default, end_default
-    if end_date < start_date:
-        start_date, end_date = end_date, start_date
-
-    with note_col:
-        st.caption(
-            f"Active filter: {start_date.strftime('%d/%m/%Y')} to {end_date.strftime('%d/%m/%Y')}. "
-            "The period is read from file data columns, not from file names."
-        )
+    start_date, end_date = analysis_period_control(
+        "assembly_analysis_period",
+        start_default,
+        end_default,
+        default_start=start_default,
+        default_end=end_default,
+    )
+    st.caption(
+        f"Active filter: {start_date.strftime('%d/%m/%Y')} to {end_date.strftime('%d/%m/%Y')}. "
+        "The period is read from file data columns, not from file names."
+    )
 
     active_rules = rules.copy()
     active_rules["date_start"] = start_date.isoformat()
@@ -5265,23 +5634,13 @@ def smt_kpi_track_page(color: str) -> None:
         return
     input_signatures = tuple(smt_quality_dashboard.path_signature(path) for path in input_paths)
     minimum_date, maximum_date = smt_quality_dashboard.input_bounds(input_signatures)
-    date_columns = st.columns(2)
-    with date_columns[0]:
-        start_date = st.date_input(
-            "KPI start date",
-            value=minimum_date.date(),
-            min_value=minimum_date.date(),
-            max_value=maximum_date.date(),
-            key="smt_kpi_start_date",
-        )
-    with date_columns[1]:
-        end_date = st.date_input(
-            "KPI end date",
-            value=maximum_date.date(),
-            min_value=minimum_date.date(),
-            max_value=maximum_date.date(),
-            key="smt_kpi_end_date",
-        )
+    start_date, end_date = analysis_period_control(
+        "smt_kpi_period",
+        minimum_date.date(),
+        maximum_date.date(),
+        default_start=minimum_date.date(),
+        default_end=maximum_date.date(),
+    )
     if end_date < start_date:
         st.error("KPI end date must be on or after the start date.")
         return
@@ -5599,23 +5958,13 @@ def assembly_kpi_track_page(color: str) -> None:
         st.error(f"Unable to read Assembly input dates: {exc}")
         return
 
-    date_columns = st.columns(2)
-    with date_columns[0]:
-        start_date = st.date_input(
-            "KPI start date",
-            value=minimum_date,
-            min_value=minimum_date,
-            max_value=maximum_date,
-            key="assembly_kpi_start_date",
-        )
-    with date_columns[1]:
-        end_date = st.date_input(
-            "KPI end date",
-            value=maximum_date,
-            min_value=minimum_date,
-            max_value=maximum_date,
-            key="assembly_kpi_end_date",
-        )
+    start_date, end_date = analysis_period_control(
+        "assembly_kpi_period",
+        minimum_date,
+        maximum_date,
+        default_start=minimum_date,
+        default_end=maximum_date,
+    )
     if end_date < start_date:
         st.error("KPI end date must be on or after the start date.")
         return
@@ -6217,24 +6566,15 @@ def smt_quality_dashboard_v2(color: str) -> None:
     defect_signatures = tuple(smt_quality_dashboard.path_signature(path) for path in defect_paths)
     minimum_date, maximum_date = smt_quality_dashboard.input_bounds(input_signatures)
 
-    filter_columns = st.columns([1.45, 1, 1, 1])
-    with filter_columns[0]:
-        selected_period = st.date_input(
-            "Date range",
-            value=(minimum_date.date(), maximum_date.date()),
-            min_value=minimum_date.date(),
-            max_value=maximum_date.date(),
-            format="DD/MM/YYYY",
-            key="smt_quality_v2_period",
+    filter_panel = st.container(key="smt_quality_v2_filter_panel")
+    with filter_panel:
+        start_date, end_date = analysis_period_control(
+            "smt_quality_v2_period",
+            minimum_date.date(),
+            maximum_date.date(),
+            default_start=minimum_date.date(),
+            default_end=maximum_date.date(),
         )
-    if isinstance(selected_period, (tuple, list)) and len(selected_period) >= 2:
-        start_date, end_date = selected_period[0], selected_period[1]
-    elif isinstance(selected_period, (tuple, list)) and len(selected_period) == 1:
-        start_date = end_date = selected_period[0]
-    else:
-        start_date = end_date = selected_period
-    if end_date < start_date:
-        start_date, end_date = end_date, start_date
 
     try:
         analysis = smt_quality_dashboard.analyze_smt_quality_paths(
@@ -6255,14 +6595,16 @@ def smt_quality_dashboard_v2(color: str) -> None:
     model_options = ["All", *sorted(set(analysis["selected_input"]["Model"].dropna().astype(str)))]
     station_options = ["All", *sorted(set(raw["Operation"].dropna().astype(str)))]
     failure_options = ["All", "Functional Failure", "Appearance Failure", "Unclassified"]
-    with filter_columns[1]:
-        model = st.selectbox("Model", model_options, key="smt_quality_v2_model")
-    with filter_columns[2]:
-        station = st.selectbox("Process / Station", station_options, key="smt_quality_v2_station")
-    with filter_columns[3]:
-        failure_type = st.selectbox(
-            "Failure type", failure_options, key="smt_quality_v2_failure_type"
-        )
+    with filter_panel:
+        filter_columns = st.columns(3)
+        with filter_columns[0]:
+            model = st.selectbox("Model", model_options, key="smt_quality_v2_model")
+        with filter_columns[1]:
+            station = st.selectbox("Process / Station", station_options, key="smt_quality_v2_station")
+        with filter_columns[2]:
+            failure_type = st.selectbox(
+                "Failure type", failure_options, key="smt_quality_v2_failure_type"
+            )
 
     view = _build_smt_dashboard_view(analysis, model, station, failure_type)
     grain_label = trend_grain_labels(requested_trend_grain(start_date, end_date))[0]
@@ -6306,6 +6648,7 @@ def smt_quality_dashboard_v2(color: str) -> None:
             f"F/A only · B = both ({fmt_int(view['both_type_pcbs'])} PCBs)",
             color,
         )
+    st.markdown("<div class='dashboard-kpi-chart-gap'></div>", unsafe_allow_html=True)
     left, right = st.columns(2)
     with left:
         show_chart(
@@ -6836,24 +7179,15 @@ def assembly_quality_dashboard_v2(color: str) -> None:
 
     selected_defects, defect_source_note = select_defect_sources(stored_defects)
     minimum_date, maximum_date = assembly_input_bounds(stored_inputs)
-    filter_columns = st.columns([1.35, 0.9, 1.1, 1, 0.9])
-    with filter_columns[0]:
-        selected_period = st.date_input(
-            "Date range",
-            value=(minimum_date, maximum_date),
-            min_value=minimum_date,
-            max_value=maximum_date,
-            format="DD/MM/YYYY",
-            key="assembly_quality_v2_period",
+    filter_panel = st.container(key="assembly_quality_v2_filter_panel")
+    with filter_panel:
+        start_date, end_date = analysis_period_control(
+            "assembly_quality_v2_period",
+            minimum_date,
+            maximum_date,
+            default_start=minimum_date,
+            default_end=maximum_date,
         )
-    if isinstance(selected_period, (tuple, list)) and len(selected_period) >= 2:
-        start_date, end_date = selected_period[0], selected_period[1]
-    elif isinstance(selected_period, (tuple, list)) and len(selected_period) == 1:
-        start_date = end_date = selected_period[0]
-    else:
-        start_date = end_date = selected_period
-    if end_date < start_date:
-        start_date, end_date = end_date, start_date
 
     rules = stored_rules.copy()
     rules["date_start"] = start_date.isoformat()
@@ -6884,20 +7218,22 @@ def assembly_quality_dashboard_v2(color: str) -> None:
     station_options = ["All", *sorted(set(raw["TestOperation"].dropna().astype(str)))]
     failure_options = ["All", "Functional Failure", "Appearance Failure", "Unclassified"]
     duty_options = ["All", *sorted(set(raw["DutyCategory"].dropna().astype(str)))]
-    with filter_columns[1]:
-        model = st.selectbox("Model", model_options, key="assembly_quality_v2_model")
-    with filter_columns[2]:
-        station = st.selectbox(
-            "Process / Station", station_options, key="assembly_quality_v2_station"
-        )
-    with filter_columns[3]:
-        failure_type = st.selectbox(
-            "Failure type", failure_options, key="assembly_quality_v2_failure"
-        )
-    with filter_columns[4]:
-        duty_category = st.selectbox(
-            "DutyType", duty_options, key="assembly_quality_v2_duty"
-        )
+    with filter_panel:
+        filter_columns = st.columns(4)
+        with filter_columns[0]:
+            model = st.selectbox("Model", model_options, key="assembly_quality_v2_model")
+        with filter_columns[1]:
+            station = st.selectbox(
+                "Process / Station", station_options, key="assembly_quality_v2_station"
+            )
+        with filter_columns[2]:
+            failure_type = st.selectbox(
+                "Failure type", failure_options, key="assembly_quality_v2_failure"
+            )
+        with filter_columns[3]:
+            duty_category = st.selectbox(
+                "DutyType", duty_options, key="assembly_quality_v2_duty"
+            )
 
     view = _build_assembly_dashboard_view(
         analysis, rules, model, station, failure_type, duty_category
@@ -6937,6 +7273,7 @@ def assembly_quality_dashboard_v2(color: str) -> None:
             color,
         )
 
+    st.markdown("<div class='dashboard-kpi-chart-gap'></div>", unsafe_allow_html=True)
     left, right = st.columns(2)
     with left:
         show_chart(
@@ -7505,7 +7842,7 @@ if not st.session_state.get("authenticated", False):
 sync_navigation_from_query()
 apply_global_css()
 install_chart_copy_controls()
-sidebar()
-topbar()
+top_navigation()
+context_navigation()
 render_page()
 footer()
