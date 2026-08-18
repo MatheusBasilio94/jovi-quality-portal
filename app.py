@@ -32,7 +32,7 @@ from tools.supabase_store import (
 from tools.trend_rules import analysis_period_days, requested_trend_grain, trend_grain_labels
 
 
-APP_VERSION = "v0.4.4"
+APP_VERSION = "v0.4.5"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -89,6 +89,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.4.5", "Aligned the SMT confirmed-defect rules with MES FPY validation: Retest OK remarks, AOI last-NG records and repeat repairs are now excluded with auditable reasons."),
     ("v0.4.4", "Added version-aware Supabase synchronization: the portal checks one compact data revision on each load and refreshes all affected files immediately when uploads or records change."),
     ("v0.4.3", "Added dashboard performance diagnostics and changed the initial analysis period to the latest available month, helping identify and reduce loading bottlenecks."),
     ("v0.4.2", "Refreshed the portal interface with Deep Navy navigation, standardized cobalt headings, persistent date selections, faster period presets, and a unified visual treatment for filter controls."),

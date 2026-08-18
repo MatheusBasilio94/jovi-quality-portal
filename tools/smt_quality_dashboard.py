@@ -20,8 +20,8 @@ from tools.supabase_store import (
 from tools.trend_rules import requested_trend_grain
 
 
-TOOL_VERSION = "v1.3.0"
-SMT_FAILURE_RULE_VERSION = "2026-07-24.1"
+TOOL_VERSION = "v1.3.1"
+SMT_FAILURE_RULE_VERSION = "2026-08-18.1"
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 SMT_STORE_DIR = PROJECT_DIR / "data_store" / "smt"
 SMT_INPUT_DIR = SMT_STORE_DIR / "input"
@@ -291,6 +291,7 @@ def read_defect_bytes(data: bytes, filename: str) -> tuple[pd.DataFrame, dict]:
         "RepairDate": ["repairdate", "repair date"],
         "Repairer": ["repairer"],
         "RepairTimes": ["repairtimes", "repair times"],
+        "LastNGOpcode": ["last ng opcode", "lastngopcode", "last ng op code"],
         "BackflowOP": ["backflowop", "backflow op"],
         "ItemCode": ["itemcode", "item code"],
         "ItemDesc": ["itemdesc", "item desc"],
@@ -304,7 +305,7 @@ def read_defect_bytes(data: bytes, filename: str) -> tuple[pd.DataFrame, dict]:
     result["PCB"] = result["PCB"].map(normalize_code)
     result["Barcode"] = result["Barcode"].map(normalize_code)
     result["Model"] = result["Model"].map(normalize_model)
-    for column in ["Line", "Operation", "Phenomenon", "FaultReason", "RepairRemark", "DutyType", "Maintenance", "Location", "FaultArea", "TestPosition", "Repairer", "BackflowOP", "ItemCode", "ItemDesc", "Supplier", "PatchLine"]:
+    for column in ["Line", "Operation", "Phenomenon", "FaultReason", "RepairRemark", "DutyType", "Maintenance", "Location", "FaultArea", "TestPosition", "Repairer", "LastNGOpcode", "BackflowOP", "ItemCode", "ItemDesc", "Supplier", "PatchLine"]:
         result[column] = result[column].map(clean_text)
     result["FailureType"] = result["Operation"].map(classify_smt_failure_type)
     for column in ["TestTime", "EntryTime", "RepairDate", "PatchTime"]:
@@ -315,12 +316,27 @@ def read_defect_bytes(data: bytes, filename: str) -> tuple[pd.DataFrame, dict]:
     rejudge_mask = maintenance.str.contains(r"re\s*[-_]?\s*judge\s*ok", regex=True, na=False)
     redownload_mask = maintenance.str.contains(r"re\s*[-_]?\s*download", regex=True, na=False)
     recalibration_mask = maintenance.str.contains(r"re\s*[-_]?\s*calibration", regex=True, na=False)
+    retest_ok_mask = result["RepairRemark"].str.contains(r"re\s*[-_]?\s*test\s*ok", case=False, regex=True, na=False)
+    last_ng_opcode = result["LastNGOpcode"].str.lower().str.replace(r"[^a-z0-9]+", "", regex=True)
+    aoi_last_ng_mask = last_ng_opcode.eq("aoichecking")
+    repair_times = pd.to_numeric(result["RepairTimes"], errors="coerce")
+    repeat_repair_mask = repair_times.gt(1)
     result["ExclusionReason"] = ""
     result.loc[rejudge_mask, "ExclusionReason"] = "Re-Judge OK"
     result.loc[redownload_mask, "ExclusionReason"] = "Re-Download"
     result.loc[recalibration_mask, "ExclusionReason"] = "Re-Calibration"
-    # The existing field name is retained for compatibility; it represents all approved retest exclusions.
-    result["IsRejudgeOK"] = rejudge_mask | redownload_mask | recalibration_mask
+    result.loc[retest_ok_mask, "ExclusionReason"] = "Retest OK"
+    result.loc[aoi_last_ng_mask, "ExclusionReason"] = "Last NG Opcode: AOI-Checking"
+    result.loc[repeat_repair_mask, "ExclusionReason"] = "Repeat repair"
+    # The existing field name is retained for compatibility; it represents every MES-confirmed exclusion.
+    result["IsRejudgeOK"] = (
+        rejudge_mask
+        | redownload_mask
+        | recalibration_mask
+        | retest_ok_mask
+        | aoi_last_ng_mask
+        | repeat_repair_mask
+    )
     result["ValidDefect"] = result["PCB"].ne("") & result["Model"].ne("") & result["TestTime"].notna()
     result["ConfirmedRecord"] = result["ValidDefect"] & ~result["IsRejudgeOK"]
     audit = {
@@ -332,6 +348,9 @@ def read_defect_bytes(data: bytes, filename: str) -> tuple[pd.DataFrame, dict]:
         "MissingRepairDate": int(result["RepairDate"].isna().sum()),
         "UnknownReason": int(result["FaultReason"].str.lower().isin({"", "unknownothers", "unknown"}).sum()),
         "UnknownLocation": int(result["Location"].str.lower().isin({"", "unknown"}).sum()),
+        "RetestOK": int(retest_ok_mask.sum()),
+        "LastNGAOI": int(aoi_last_ng_mask.sum()),
+        "RepeatRepair": int(repeat_repair_mask.sum()),
     }
     return result, audit
 
@@ -1198,7 +1217,7 @@ def _upload_section(color: str) -> None:
 def render_smt_quality_dashboard(color: str) -> None:
     init_smt_store()
     st.markdown(f"<h1 class='section-title' style='color:{color};'>SMT · Quality Dashboard</h1>", unsafe_allow_html=True)
-    sections = ["Overview", "Failure Types", "Models", "Defects / Pareto", "Process", "Excluded retest / Repeats", "Data Quality", "Upload Data", "Details", "About"]
+    sections = ["Overview", "Failure Types", "Models", "Defects / Pareto", "Process", "Excluded MES rules / Repeats", "Data Quality", "Upload Data", "Details", "About"]
     active_section = st.radio("SMT dashboard section", sections, horizontal=True, label_visibility="collapsed", key="smt_quality_dashboard_section")
     if active_section == "Upload Data":
         _upload_section(color)
@@ -1237,7 +1256,7 @@ def render_smt_quality_dashboard(color: str) -> None:
     quality = analysis["quality"]
     period_note = f"{start_date.strftime('%d/%m/%Y')} to {end_date.strftime('%d/%m/%Y')}"
     st.caption(f"Source: {len(input_paths)} stored input files · {len(defect_paths)} consolidated defect file(s) · dashboard tool {TOOL_VERSION}")
-    st.caption("Rule: TestTime defines the defect period; PCB is unique inside the selected scope; Re-Judge OK, Re-Download and Re-Calibration in Maintenance are excluded from confirmed defects.")
+    st.caption("MES-aligned rule: confirmed defects exclude Re-Judge OK, Re-Download, Re-Calibration, Retest OK, Last NG Opcode = AOI-Checking, and repeat repairs (RepairTimes > 1).")
     if quality["CoverageGaps"]:
         st.warning("Input coverage gap(s): " + ", ".join(quality["CoverageGaps"]) + ". PPM excludes defects without matching input coverage by date and model.")
     if quality["InputOverlapConflicts"]:
@@ -1254,7 +1273,7 @@ def render_smt_quality_dashboard(color: str) -> None:
         with columns[2]:
             metric_card("Confirmed PPM", fmt_ppm(totals["ConfirmedPPM"]), "Confirmed PCB / input × 1,000,000", color)
         with columns[3]:
-            metric_card("Excluded retest", fmt_int(totals["RejudgeOKRecords"]), fmt_pct(totals["RejudgeRate"]), color)
+            metric_card("Excluded MES rules", fmt_int(totals["RejudgeOKRecords"]), fmt_pct(totals["RejudgeRate"]), color)
         columns = st.columns(4)
         with columns[0]:
             metric_card("Covered defect records", fmt_int(totals["CoveredDefectRecords"]), "Date and model matched", color)
@@ -1379,17 +1398,17 @@ def render_smt_quality_dashboard(color: str) -> None:
         st.markdown("#### Responsibility / duty type")
         show_table(analysis["duty_summary"])
 
-    if active_section == "Excluded retest / Repeats":
+    if active_section == "Excluded MES rules / Repeats":
         columns = st.columns(3)
         with columns[0]:
-            metric_card("Excluded retest records", fmt_int(totals["RejudgeOKRecords"]), period_note, color)
+            metric_card("Excluded MES records", fmt_int(totals["RejudgeOKRecords"]), period_note, color)
         with columns[1]:
-            metric_card("Excluded retest PCBs", fmt_int(totals["RejudgeOKPCBs"]), "Unique PCB", color)
+            metric_card("Excluded MES PCBs", fmt_int(totals["RejudgeOKPCBs"]), "Unique PCB", color)
         with columns[2]:
             metric_card("Repeated PCBs", fmt_int(totals["RepeatedPCBs"]), "All covered records", color)
         left, right = st.columns(2)
         with left:
-            st.plotly_chart(bar_chart(analysis["rejudge_pareto"], "Phenomenon", "DefectRecords", "Excluded retest phenomena", color), use_container_width=True, config={"displayModeBar": False})
+            st.plotly_chart(bar_chart(analysis["rejudge_pareto"], "Phenomenon", "DefectRecords", "Excluded MES phenomena", color), use_container_width=True, config={"displayModeBar": False})
         with right:
             show_table(analysis["rejudge_pareto"])
         repeat_columns = ["PCB", "Model", "TestTime", "Operation", "FailureType", "Phenomenon", "Maintenance", "OccurrencesInPeriod"]
@@ -1419,7 +1438,7 @@ def render_smt_quality_dashboard(color: str) -> None:
         st.markdown("#### Coverage")
         coverage_view = analysis["selected_input"].groupby(["BeginDate", "EndDateExclusive", "Granularity"], as_index=False).agg(Input=("Input", "sum"), Models=("Model", "nunique"), Files=("SourceFile", "nunique"))
         show_table(coverage_view)
-        st.caption(f"Unknown/blank fault reason: {fmt_int(defect_audit['UnknownReason'])} · Unknown/blank component location: {fmt_int(defect_audit['UnknownLocation'])} · Invalid TestTime: {fmt_int(defect_audit['InvalidTestTime'])}.")
+        st.caption(f"Unknown/blank fault reason: {fmt_int(defect_audit['UnknownReason'])} · Unknown/blank component location: {fmt_int(defect_audit['UnknownLocation'])} · Invalid TestTime: {fmt_int(defect_audit['InvalidTestTime'])} · Retest OK: {fmt_int(defect_audit['RetestOK'])} · Last NG AOI: {fmt_int(defect_audit['LastNGAOI'])} · Repeat repair: {fmt_int(defect_audit['RepeatRepair'])}.")
         if not quality["UncoveredDefects"].empty:
             st.markdown("#### Defects outside matching input coverage")
             uncovered_columns = ["PCB", "Model", "TestTime", "Operation", "FailureType", "Phenomenon", "Maintenance"]
@@ -1431,7 +1450,7 @@ def render_smt_quality_dashboard(color: str) -> None:
         selected_model = st.selectbox("Model", model_options, key="smt_detail_model")
         record_type = st.selectbox(
             "Record type",
-            ["All", "Confirmed", "Functional Failure", "Appearance Failure", "Unclassified Station", "Excluded retest", "Without input coverage"],
+            ["All", "Confirmed", "Functional Failure", "Appearance Failure", "Unclassified Station", "Excluded MES rule", "Without input coverage"],
             key="smt_detail_type",
         )
         view = raw
@@ -1445,11 +1464,11 @@ def render_smt_quality_dashboard(color: str) -> None:
             view = view[view["HasInputCoverage"] & ~view["IsRejudgeOK"] & view["FailureType"].eq("Appearance Failure")]
         elif record_type == "Unclassified Station":
             view = view[view["HasInputCoverage"] & ~view["IsRejudgeOK"] & view["FailureType"].eq("Unclassified")]
-        elif record_type == "Excluded retest":
+        elif record_type == "Excluded MES rule":
             view = view[view["HasInputCoverage"] & view["IsRejudgeOK"]]
         elif record_type == "Without input coverage":
             view = view[~view["HasInputCoverage"]]
-        visible_columns = ["PCB", "Barcode", "TestTime", "Model", "Line", "Operation", "FailureType", "Phenomenon", "FaultReason", "DutyType", "Maintenance", "ExclusionReason", "Location", "RepairDate", "Repairer", "HasInputCoverage", "IsRejudgeOK"]
+        visible_columns = ["PCB", "Barcode", "TestTime", "Model", "Line", "Operation", "LastNGOpcode", "FailureType", "Phenomenon", "FaultReason", "DutyType", "Maintenance", "RepairRemark", "RepairTimes", "ExclusionReason", "Location", "RepairDate", "Repairer", "HasInputCoverage", "IsRejudgeOK"]
         visible = view[[column for column in visible_columns if column in view.columns]].copy()
         st.caption(f"{fmt_int(len(visible))} records match the filters.")
         page_size = 200
@@ -1474,7 +1493,7 @@ def render_smt_quality_dashboard(color: str) -> None:
             <div class='card'>
                 <h3>SMT Quality Dashboard {TOOL_VERSION}</h3>
                 <p class='small-muted'>Real SMT quality analysis using summarized production input and cumulative defect records. Trend granularity follows the shared portal rule, and any summarized input distribution preserves the exact source-period total.</p>
-                <p><b>Confirmed defect rule:</b> valid PCB record whose Maintenance is not Re-Judge OK, Re-Download or Re-Calibration.</p>
+                <p><b>MES-aligned confirmed defect rule:</b> valid PCB record excluding Re-Judge OK, Re-Download, Re-Calibration, Retest OK, Last NG Opcode = AOI-Checking, and repeat repairs (RepairTimes &gt; 1).</p>
                 <p><b>PPM rule:</b> unique confirmed PCB / SMT input × 1,000,000.</p>
                 <p><b>SMT failure type rule:</b> Functional Failure = {", ".join(SMT_FUNCTIONAL_STATIONS)}. Appearance Failure = {", ".join(SMT_APPEARANCE_STATIONS)}. Other stations remain Unclassified.</p>
                 <p><b>Scope:</b> this station rule applies only to SMT. Assembly will use separate criteria.</p>
