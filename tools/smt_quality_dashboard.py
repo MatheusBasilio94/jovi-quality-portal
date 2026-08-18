@@ -9,9 +9,11 @@ import pandas as pd
 import streamlit as st
 
 from tools.supabase_store import (
+    bump_cloud_data_version,
     cloud_store_is_active,
     cloud_store_status,
     delete_object,
+    ensure_cloud_data_version,
     sync_prefix_from_cloud,
     upload_bytes,
 )
@@ -70,9 +72,15 @@ def refresh_chart_period_labels(trend: pd.DataFrame) -> pd.DataFrame:
 def init_smt_store() -> None:
     SMT_INPUT_DIR.mkdir(parents=True, exist_ok=True)
     SMT_DEFECT_DIR.mkdir(parents=True, exist_ok=True)
-    if cloud_store_is_active():
-        sync_prefix_from_cloud("smt/input", SMT_INPUT_DIR)
-        sync_prefix_from_cloud("smt/defects", SMT_DEFECT_DIR)
+    cloud_active = cloud_store_is_active()
+    if cloud_active:
+        data_version = ensure_cloud_data_version()
+        sync_prefix_from_cloud(
+            "smt/input", SMT_INPUT_DIR, data_version=data_version, cloud_active=True
+        )
+        sync_prefix_from_cloud(
+            "smt/defects", SMT_DEFECT_DIR, data_version=data_version, cloud_active=True
+        )
 
 
 def require_persistent_store_for_smt_writes() -> None:
@@ -420,11 +428,14 @@ def persist_smt_source(uploaded, data_type: str) -> dict:
     target = target_dir / f"{digest}_{safe_filename(uploaded.name)}"
     if target.exists():
         return {"status": "duplicate", "file": uploaded.name, "message": "Identical file is already stored."}
-    if cloud_store_is_active():
+    cloud_active = cloud_store_is_active()
+    if cloud_active:
         upload_bytes(f"smt/{data_type}/{target.name}", data, upsert=True)
     target.write_bytes(data)
+    if cloud_active:
+        bump_cloud_data_version("SMT source upload")
     st.cache_data.clear()
-    message = "Saved to Supabase persistent storage." if cloud_store_is_active() else "Saved to the local SMT data store."
+    message = "Saved to Supabase persistent storage." if cloud_active else "Saved to the local SMT data store."
     return {"status": "imported", "file": uploaded.name, "message": message}
 
 
@@ -461,12 +472,15 @@ def delete_smt_source(data_type: str, stored_name: str) -> dict:
     target = directories[data_type] / stored_name
     if not target.is_file():
         raise ValueError("The selected SMT source file was not found.")
-    if cloud_store_is_active():
+    cloud_active = cloud_store_is_active()
+    if cloud_active:
         delete_object(f"smt/{data_type}/{stored_name}")
     try:
         target.unlink()
     except OSError as exc:
         raise RuntimeError(f"Unable to delete the selected SMT source file: {exc}") from exc
+    if cloud_active:
+        bump_cloud_data_version("SMT source deletion")
     st.cache_data.clear()
     return {"data_type": data_type, "original_name": re.sub(r"^[0-9a-f]{12}_", "", stored_name)}
 

@@ -16,10 +16,13 @@ from time import perf_counter
 
 from tools.supabase_store import (
     DATABASE_OBJECT,
+    DATA_VERSION_FILENAME,
     SYNC_MANIFEST_FILENAME,
+    bump_cloud_data_version,
     cloud_store_is_active,
     cloud_store_status,
     delete_object,
+    ensure_cloud_data_version,
     migrate_local_data_store,
     sync_file_from_cloud,
     sync_prefix_from_cloud,
@@ -29,7 +32,7 @@ from tools.supabase_store import (
 from tools.trend_rules import analysis_period_days, requested_trend_grain, trend_grain_labels
 
 
-APP_VERSION = "v0.4.3"
+APP_VERSION = "v0.4.4"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -86,6 +89,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.4.4", "Added version-aware Supabase synchronization: the portal checks one compact data revision on each load and refreshes all affected files immediately when uploads or records change."),
     ("v0.4.3", "Added dashboard performance diagnostics and changed the initial analysis period to the latest available month, helping identify and reduce loading bottlenecks."),
     ("v0.4.2", "Refreshed the portal interface with Deep Navy navigation, standardized cobalt headings, persistent date selections, faster period presets, and a unified visual treatment for filter controls."),
     ("v0.4.1", "Added selective Supabase cache synchronization and a manual full cloud refresh, reducing repeated downloads while keeping a user-controlled complete refresh."),
@@ -2805,9 +2809,16 @@ def sample_sources() -> tuple[Path, list[Path]]:
     return defect_file, input_files
 
 
-def init_quality_store() -> None:
+def init_quality_store() -> tuple[bool, str]:
     DATA_STORE_DIR.mkdir(parents=True, exist_ok=True)
-    sync_file_from_cloud(DATABASE_OBJECT, QUALITY_DB_PATH)
+    cloud_active = cloud_store_is_active()
+    data_version = ensure_cloud_data_version() if cloud_active else ""
+    sync_file_from_cloud(
+        DATABASE_OBJECT,
+        QUALITY_DB_PATH,
+        data_version=data_version,
+        cloud_active=cloud_active,
+    )
     with sqlite3.connect(QUALITY_DB_PATH) as conn:
         conn.execute(
             """
@@ -2879,6 +2890,7 @@ def init_quality_store() -> None:
             )
             """
         )
+    return cloud_active, data_version
 
 
 def require_persistent_store_for_writes() -> None:
@@ -2891,16 +2903,31 @@ def require_persistent_store_for_writes() -> None:
         )
 
 
-def sync_quality_database_to_cloud() -> None:
+def sync_quality_database_to_cloud(*, bump_version: bool = True) -> None:
     if cloud_store_is_active():
         upload_local_file(DATABASE_OBJECT, QUALITY_DB_PATH, upsert=True)
+        if bump_version:
+            bump_cloud_data_version("portal database update")
 
 
-def sync_assembly_source_cache() -> None:
-    if not cloud_store_is_active():
+def sync_assembly_source_cache(cloud_active: bool | None = None, data_version: str = "") -> None:
+    if cloud_active is None:
+        cloud_active = cloud_store_is_active()
+    if not cloud_active:
         return
-    sync_prefix_from_cloud("assembly/defects", ASSEMBLY_FILE_STORE_DIR / "defects")
-    sync_prefix_from_cloud("assembly/input", ASSEMBLY_FILE_STORE_DIR / "input")
+    data_version = data_version or ensure_cloud_data_version()
+    sync_prefix_from_cloud(
+        "assembly/defects",
+        ASSEMBLY_FILE_STORE_DIR / "defects",
+        data_version=data_version,
+        cloud_active=True,
+    )
+    sync_prefix_from_cloud(
+        "assembly/input",
+        ASSEMBLY_FILE_STORE_DIR / "input",
+        data_version=data_version,
+        cloud_active=True,
+    )
 
 
 def full_cloud_refresh() -> dict[str, int]:
@@ -2910,14 +2937,21 @@ def full_cloud_refresh() -> dict[str, int]:
 
     from tools import smt_quality_dashboard
 
+    data_version = ensure_cloud_data_version()
     refreshed = []
-    if sync_file_from_cloud(DATABASE_OBJECT, QUALITY_DB_PATH, force=True):
+    if sync_file_from_cloud(
+        DATABASE_OBJECT,
+        QUALITY_DB_PATH,
+        force=True,
+        data_version=data_version,
+        cloud_active=True,
+    ):
         refreshed.append(QUALITY_DB_PATH)
     init_quality_store()
-    refreshed.extend(sync_prefix_from_cloud("smt/input", smt_quality_dashboard.SMT_INPUT_DIR, force=True))
-    refreshed.extend(sync_prefix_from_cloud("smt/defects", smt_quality_dashboard.SMT_DEFECT_DIR, force=True))
-    refreshed.extend(sync_prefix_from_cloud("assembly/input", ASSEMBLY_FILE_STORE_DIR / "input", force=True))
-    refreshed.extend(sync_prefix_from_cloud("assembly/defects", ASSEMBLY_FILE_STORE_DIR / "defects", force=True))
+    refreshed.extend(sync_prefix_from_cloud("smt/input", smt_quality_dashboard.SMT_INPUT_DIR, force=True, data_version=data_version, cloud_active=True))
+    refreshed.extend(sync_prefix_from_cloud("smt/defects", smt_quality_dashboard.SMT_DEFECT_DIR, force=True, data_version=data_version, cloud_active=True))
+    refreshed.extend(sync_prefix_from_cloud("assembly/input", ASSEMBLY_FILE_STORE_DIR / "input", force=True, data_version=data_version, cloud_active=True))
+    refreshed.extend(sync_prefix_from_cloud("assembly/defects", ASSEMBLY_FILE_STORE_DIR / "defects", force=True, data_version=data_version, cloud_active=True))
     st.cache_data.clear()
     return {"files": len(refreshed), "bytes": sum(path.stat().st_size for path in refreshed if path.is_file())}
 
@@ -3398,8 +3432,8 @@ def import_assembly_monitored_folder() -> list[dict]:
 
 
 def stored_assembly_sources() -> tuple[list[Path], list[Path]]:
-    init_quality_store()
-    sync_assembly_source_cache()
+    cloud_active, data_version = init_quality_store()
+    sync_assembly_source_cache(cloud_active, data_version)
     with sqlite3.connect(QUALITY_DB_PATH) as conn:
         rows = conn.execute(
             """
@@ -3425,8 +3459,8 @@ def stored_assembly_sources() -> tuple[list[Path], list[Path]]:
 
 def stored_assembly_file_records() -> list[dict]:
     """Return stored Assembly source metadata for the managed deletion interface."""
-    init_quality_store()
-    sync_assembly_source_cache()
+    cloud_active, data_version = init_quality_store()
+    sync_assembly_source_cache(cloud_active, data_version)
     with sqlite3.connect(QUALITY_DB_PATH) as conn:
         rows = conn.execute(
             """
@@ -3480,12 +3514,13 @@ def delete_assembly_source(record_id: int) -> dict:
         conn.commit()
     finally:
         conn.close()
-    sync_quality_database_to_cloud()
+    sync_quality_database_to_cloud(bump_version=False)
 
     # Never follow a legacy absolute path here. Deletion is limited to the portal-managed store.
     managed_file = ASSEMBLY_FILE_STORE_DIR / data_type / stored_name
     cleanup_note = ""
-    if cloud_store_is_active():
+    cloud_active = cloud_store_is_active()
+    if cloud_active:
         try:
             delete_object(f"assembly/{data_type}/{stored_name}")
         except RuntimeError as exc:
@@ -3495,6 +3530,8 @@ def delete_assembly_source(record_id: int) -> dict:
             managed_file.unlink()
         except OSError as exc:
             cleanup_note = f" The source record was removed, but the stored file could not be cleaned up: {exc}"
+    if cloud_active:
+        bump_cloud_data_version("Assembly source deletion")
     st.cache_data.clear()
     return {
         "data_type": data_type,
@@ -3587,9 +3624,10 @@ def select_defect_sources(defects: list[Path]) -> tuple[list[Path], str]:
     return defects, "All stored defects files"
 
 
-def assembly_store_status() -> dict:
-    init_quality_store()
-    sync_assembly_source_cache()
+def assembly_store_status(*, sync: bool = True) -> dict:
+    if sync:
+        cloud_active, data_version = init_quality_store()
+        sync_assembly_source_cache(cloud_active, data_version)
     with sqlite3.connect(QUALITY_DB_PATH) as conn:
         rows = conn.execute(
             """
@@ -6631,7 +6669,6 @@ def smt_quality_dashboard_v2(color: str) -> None:
 
     page_started = perf_counter()
     source_started = perf_counter()
-    smt_quality_dashboard.init_smt_store()
     st.markdown(
         f"<h1 class='section-title' style='color:{color};'>SMT · Quality Dashboard</h1>",
         unsafe_allow_html=True,
@@ -7261,8 +7298,8 @@ def assembly_quality_dashboard_v2(color: str) -> None:
         st.session_state["assembly_auto_import_checked"] = True
         if any(result["status"] == "imported" for result in results):
             st.session_state["assembly_last_import_results"] = results
-    store_status = assembly_store_status()
     stored_defects, stored_inputs = stored_assembly_sources()
+    store_status = assembly_store_status(sync=False)
     source_seconds = perf_counter() - source_started
     st.markdown(
         f"<h1 class='section-title' style='color:{color};'>Assembly · Quality Dashboard</h1>",
@@ -7827,7 +7864,7 @@ def render_cloud_storage_panel() -> None:
     status = cloud_store_status()
     files = [
         path for path in DATA_STORE_DIR.rglob("*")
-        if path.is_file() and path.name != SYNC_MANIFEST_FILENAME
+        if path.is_file() and path.name not in {SYNC_MANIFEST_FILENAME, DATA_VERSION_FILENAME}
     ] if DATA_STORE_DIR.is_dir() else []
     local_mb = sum(path.stat().st_size for path in files) / 1024 / 1024
 
