@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import streamlit as st
 
@@ -26,7 +28,9 @@ except ImportError:  # pragma: no cover - exercised by Streamlit after requireme
 
 DEFAULT_BUCKET = "jovi-quality-data"
 DATABASE_OBJECT = "state/jovi_quality.db"
+DATA_VERSION_OBJECT = "state/data_version.json"
 SYNC_MANIFEST_FILENAME = ".supabase_sync_manifest.json"
+DATA_VERSION_FILENAME = ".supabase_data_version"
 
 
 def _setting(name: str, default: str = "") -> str:
@@ -125,6 +129,27 @@ def _sync_manifest_path(local_path: Path) -> Path:
     return local_path.parent / SYNC_MANIFEST_FILENAME
 
 
+def _data_version_path(local_path: Path) -> Path:
+    return (local_path if local_path.is_dir() else local_path.parent) / DATA_VERSION_FILENAME
+
+
+def _read_local_data_version(local_path: Path) -> str:
+    try:
+        return _data_version_path(local_path).read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def _write_local_data_version(local_path: Path, version: str) -> None:
+    if not version:
+        return
+    try:
+        _data_version_path(local_path).write_text(version, encoding="utf-8")
+    except OSError:
+        # A missing marker only causes a safe metadata recheck on the next load.
+        return
+
+
 def _read_sync_manifest(local_path: Path) -> dict[str, str]:
     try:
         data = json.loads(_sync_manifest_path(local_path).read_text(encoding="utf-8"))
@@ -205,6 +230,51 @@ def cloud_store_is_active() -> bool:
     return bool(cloud_store_status()["active"])
 
 
+def cloud_data_version() -> str:
+    """Read the compact revision marker without listing every stored source file."""
+    if not supabase_is_configured():
+        return ""
+    store, _ = _storage()
+    try:
+        raw = bytes(store.download(DATA_VERSION_OBJECT))
+    except Exception:
+        return ""
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError, TypeError):
+        return ""
+    return str(payload.get("version", "")).strip() if isinstance(payload, dict) else ""
+
+
+def bump_cloud_data_version(reason: str = "data update") -> str:
+    """Publish a new revision after a successful portal data write."""
+    store, _ = _storage()
+    version = f"{datetime.now(timezone.utc).isoformat(timespec='microseconds')}:{uuid4().hex}"
+    payload = json.dumps(
+        {"version": version, "reason": str(reason), "updated_at": datetime.now(timezone.utc).isoformat()},
+        sort_keys=True,
+    ).encode("utf-8")
+    try:
+        store.upload(
+            path=DATA_VERSION_OBJECT,
+            file=payload,
+            file_options={"content-type": "application/json", "upsert": "true"},
+        )
+    except Exception as exc:
+        raise RuntimeError("Supabase could not publish the portal data revision.") from exc
+    return version
+
+
+def ensure_cloud_data_version() -> str:
+    """Create the revision marker once for pre-existing migrated portal data."""
+    version = cloud_data_version()
+    if version:
+        return version
+    if remote_object_exists(DATABASE_OBJECT):
+        return bump_cloud_data_version("initialize data revision")
+    return ""
+
+
 def upload_bytes(path: str, data: bytes, *, upsert: bool = True) -> None:
     store, _ = _storage()
     try:
@@ -238,10 +308,22 @@ def delete_object(path: str) -> None:
         raise RuntimeError("Supabase could not delete the selected portal data file.") from exc
 
 
-def sync_file_from_cloud(remote_path: str, local_path: Path, *, force: bool = False) -> bool:
+def sync_file_from_cloud(
+    remote_path: str,
+    local_path: Path,
+    *,
+    force: bool = False,
+    data_version: str = "",
+    cloud_active: bool | None = None,
+) -> bool:
     """Sync one remote file, downloading it only when its metadata changed."""
-    if not cloud_store_is_active():
+    if cloud_active is None:
+        cloud_active = cloud_store_is_active()
+    if not cloud_active:
         return False
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    if data_version and not force and local_path.is_file() and _read_local_data_version(local_path) == data_version:
+        return True
     clean = _clean_object_path(remote_path)
     parent, _, name = clean.rpartition("/")
     if not parent:
@@ -249,10 +331,10 @@ def sync_file_from_cloud(remote_path: str, local_path: Path, *, force: bool = Fa
     remote_row = next((row for row in _list_objects(parent) if str(row.get("name")) == name), None)
     if remote_row is None:
         return False
-    local_path.parent.mkdir(parents=True, exist_ok=True)
     manifest = _read_sync_manifest(local_path)
     fingerprint = _object_fingerprint(remote_row)
     if not force and local_path.is_file() and manifest.get(clean) == fingerprint:
+        _write_local_data_version(local_path, data_version)
         return True
     store, _ = _storage()
     try:
@@ -263,6 +345,7 @@ def sync_file_from_cloud(remote_path: str, local_path: Path, *, force: bool = Fa
         local_path.write_bytes(data)
     manifest[clean] = fingerprint
     _write_sync_manifest(local_path, manifest)
+    _write_local_data_version(local_path, data_version)
     return True
 
 
@@ -272,11 +355,21 @@ def sync_prefix_from_cloud(
     *,
     prune: bool = True,
     force: bool = False,
+    data_version: str = "",
+    cloud_active: bool | None = None,
 ) -> list[Path]:
     """Mirror one source folder, downloading only new or changed cloud objects."""
-    if not cloud_store_is_active():
+    if cloud_active is None:
+        cloud_active = cloud_store_is_active()
+    if not cloud_active:
         return []
     local_directory.mkdir(parents=True, exist_ok=True)
+    if data_version and not force and _read_local_data_version(local_directory) == data_version:
+        return sorted(
+            path
+            for path in local_directory.iterdir()
+            if path.is_file() and path.name not in {SYNC_MANIFEST_FILENAME, DATA_VERSION_FILENAME}
+        )
     clean_prefix = _clean_object_path(prefix)
     remote_rows = _list_objects(clean_prefix)
     remote_names = {str(row.get("name")) for row in remote_rows}
@@ -301,11 +394,12 @@ def sync_prefix_from_cloud(
 
     if prune:
         for local_path in local_directory.iterdir():
-            if local_path.name == SYNC_MANIFEST_FILENAME:
+            if local_path.name in {SYNC_MANIFEST_FILENAME, DATA_VERSION_FILENAME}:
                 continue
             if local_path.is_file() and local_path.name not in remote_names:
                 local_path.unlink()
     _write_sync_manifest(local_directory, next_manifest)
+    _write_local_data_version(local_directory, data_version)
     return paths
 
 
@@ -331,7 +425,7 @@ def migrate_local_data_store(data_store_dir: Path) -> dict[str, int]:
         if (
             path.is_file()
             and path != database_path
-            and path.name != SYNC_MANIFEST_FILENAME
+            and path.name not in {SYNC_MANIFEST_FILENAME, DATA_VERSION_FILENAME}
             and "__pycache__" not in path.parts
         )
     ]
@@ -343,4 +437,5 @@ def migrate_local_data_store(data_store_dir: Path) -> dict[str, int]:
         uploaded_bytes += len(data)
 
     upload_local_file(DATABASE_OBJECT, database_path, upsert=True)
+    bump_cloud_data_version("initial data migration")
     return {"files": len(source_files) + 1, "bytes": uploaded_bytes + database_path.stat().st_size}
