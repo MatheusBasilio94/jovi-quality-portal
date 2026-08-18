@@ -12,6 +12,7 @@ from html import escape
 from io import BytesIO
 from numbers import Number
 from pathlib import Path
+from time import perf_counter
 
 from tools.supabase_store import (
     DATABASE_OBJECT,
@@ -28,7 +29,7 @@ from tools.supabase_store import (
 from tools.trend_rules import analysis_period_days, requested_trend_grain, trend_grain_labels
 
 
-APP_VERSION = "v0.4.2"
+APP_VERSION = "v0.4.3"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -85,6 +86,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.4.3", "Added dashboard performance diagnostics and changed the initial analysis period to the latest available month, helping identify and reduce loading bottlenecks."),
     ("v0.4.2", "Refreshed the portal interface with Deep Navy navigation, standardized cobalt headings, persistent date selections, faster period presets, and a unified visual treatment for filter controls."),
     ("v0.4.1", "Added selective Supabase cache synchronization and a manual full cloud refresh, reducing repeated downloads while keeping a user-controlled complete refresh."),
     ("v0.4.0", "Added optional Supabase persistent storage for uploaded SMT and Assembly source files, OQC/FQC records and Smart Report actions, with a guided one-time migration."),
@@ -2179,12 +2181,17 @@ def analysis_period_control(
     default_end = min(max(default_end, minimum_date), maximum_date)
     if default_end < default_start:
         default_start, default_end = default_end, default_start
+    full_data_range_requested = (default_start, default_end) == (minimum_date, maximum_date)
+    if full_data_range_requested:
+        default_start, default_end = _preset_period_range(
+            "This month", minimum_date, maximum_date
+        )
 
     preset_key = f"{key}_preset"
     range_key = f"{key}_range"
     remembered_range_key = f"{key}_remembered_range"
     if st.session_state.get(preset_key) not in ANALYSIS_PERIOD_OPTIONS:
-        st.session_state[preset_key] = "YTD"
+        st.session_state[preset_key] = "This month" if full_data_range_requested else "YTD"
     remembered_range = st.session_state.get(remembered_range_key)
     if not isinstance(remembered_range, (tuple, list)) or len(remembered_range) < 2:
         remembered_range = st.session_state.get(range_key)
@@ -2913,6 +2920,78 @@ def full_cloud_refresh() -> dict[str, int]:
     refreshed.extend(sync_prefix_from_cloud("assembly/defects", ASSEMBLY_FILE_STORE_DIR / "defects", force=True))
     st.cache_data.clear()
     return {"files": len(refreshed), "bytes": sum(path.stat().st_size for path in refreshed if path.is_file())}
+
+
+PERFORMANCE_DIAGNOSTICS_KEY = "portal_dashboard_performance"
+
+
+def record_dashboard_performance(
+    dashboard: str,
+    start_date: date,
+    end_date: date,
+    source_seconds: float,
+    analysis_seconds: float,
+    total_seconds: float,
+    source_files: int,
+) -> None:
+    """Keep the latest real dashboard timings in the current administrator session."""
+    total_seconds = max(float(total_seconds), 0.0)
+    source_seconds = max(float(source_seconds), 0.0)
+    analysis_seconds = max(float(analysis_seconds), 0.0)
+    st.session_state[PERFORMANCE_DIAGNOSTICS_KEY] = {
+        **st.session_state.get(PERFORMANCE_DIAGNOSTICS_KEY, {}),
+        dashboard: {
+            "period": f"{start_date.strftime('%d/%m/%Y')} – {end_date.strftime('%d/%m/%Y')}",
+            "source_seconds": source_seconds,
+            "analysis_seconds": analysis_seconds,
+            "composition_seconds": max(total_seconds - source_seconds - analysis_seconds, 0.0),
+            "total_seconds": total_seconds,
+            "source_files": int(source_files),
+            "measured_at": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+        },
+    }
+
+
+def render_performance_diagnostics_panel() -> None:
+    """Show timing from real dashboard loads without storing operational data."""
+    import pandas as pd
+
+    measurements = st.session_state.get(PERFORMANCE_DIAGNOSTICS_KEY, {})
+    st.markdown("<h3 class='section-title'>Performance diagnostics</h3>", unsafe_allow_html=True)
+    with st.expander("Latest dashboard load measurements", expanded=bool(measurements)):
+        st.caption(
+            "Measurements are captured from real dashboard openings in this browser session. "
+            "They do not alter cloud files, cached sources, or production data."
+        )
+        if not measurements:
+            st.info("Open the SMT or Assembly Quality Dashboard once, then return here to review its loading breakdown.")
+            return
+
+        rows = []
+        for dashboard in ("SMT Quality Dashboard", "Assembly Quality Dashboard"):
+            result = measurements.get(dashboard)
+            if not result:
+                continue
+            rows.append(
+                {
+                    "Dashboard": dashboard,
+                    "Analysis period": result["period"],
+                    "Sources": f"{result['source_files']:,} file(s)",
+                    "Cloud sync & source discovery": f"{result['source_seconds']:.2f} s",
+                    "Data reading & analysis": f"{result['analysis_seconds']:.2f} s",
+                    "Dashboard composition": f"{result['composition_seconds']:.2f} s",
+                    "Total server processing": f"{result['total_seconds']:.2f} s",
+                    "Measured at": result["measured_at"],
+                }
+            )
+        if rows:
+            styled_table(pd.DataFrame(rows), max_rows=4, table_class="compact-dashboard-table")
+        st.caption(
+            "Cloud sync includes checking Supabase for new or changed files. Dashboard composition covers filters, KPI cards and chart preparation; browser/network rendering time is not included."
+        )
+        if st.button("Clear performance measurements", key="clear_performance_diagnostics"):
+            st.session_state.pop(PERFORMANCE_DIAGNOSTICS_KEY, None)
+            st.rerun()
 
 
 def assembly_portable_stored_path(data_type: str, stored_name: str) -> str:
@@ -6550,12 +6629,15 @@ def smt_quality_dashboard_v2(color: str) -> None:
     import pandas as pd
     from tools import dashboard_charts, smt_quality_dashboard
 
+    page_started = perf_counter()
+    source_started = perf_counter()
     smt_quality_dashboard.init_smt_store()
     st.markdown(
         f"<h1 class='section-title' style='color:{color};'>SMT · Quality Dashboard</h1>",
         unsafe_allow_html=True,
     )
     input_paths, defect_paths = smt_quality_dashboard.stored_smt_sources()
+    source_seconds = perf_counter() - source_started
     if not input_paths or not defect_paths:
         st.warning("SMT stored data is incomplete. Add at least one input file and one defect file.")
         with st.expander("Upload SMT data", expanded=True):
@@ -6576,6 +6658,7 @@ def smt_quality_dashboard_v2(color: str) -> None:
             default_end=maximum_date.date(),
         )
 
+    analysis_started = perf_counter()
     try:
         analysis = smt_quality_dashboard.analyze_smt_quality_paths(
             input_signatures,
@@ -6591,6 +6674,7 @@ def smt_quality_dashboard_v2(color: str) -> None:
         **analysis,
         "trend": smt_quality_dashboard.refresh_chart_period_labels(analysis["trend"]),
     }
+    analysis_seconds = perf_counter() - analysis_started
     raw = analysis["raw"]
     model_options = ["All", *sorted(set(analysis["selected_input"]["Model"].dropna().astype(str)))]
     station_options = ["All", *sorted(set(raw["Operation"].dropna().astype(str)))]
@@ -6842,6 +6926,16 @@ def smt_quality_dashboard_v2(color: str) -> None:
 
     with st.expander("Upload SMT data"):
         smt_quality_dashboard._upload_section(color)
+
+    record_dashboard_performance(
+        "SMT Quality Dashboard",
+        start_date,
+        end_date,
+        source_seconds,
+        analysis_seconds,
+        perf_counter() - page_started,
+        len(input_paths) + len(defect_paths),
+    )
 
 
 def _assembly_duty_category(value: object) -> str:
@@ -7159,6 +7253,8 @@ def assembly_quality_dashboard_v2(color: str) -> None:
     import pandas as pd
     from tools import dashboard_charts
 
+    page_started = perf_counter()
+    source_started = perf_counter()
     stored_rules = load_rules()
     if not st.session_state.get("assembly_auto_import_checked", False):
         results = import_assembly_monitored_folder()
@@ -7167,6 +7263,7 @@ def assembly_quality_dashboard_v2(color: str) -> None:
             st.session_state["assembly_last_import_results"] = results
     store_status = assembly_store_status()
     stored_defects, stored_inputs = stored_assembly_sources()
+    source_seconds = perf_counter() - source_started
     st.markdown(
         f"<h1 class='section-title' style='color:{color};'>Assembly · Quality Dashboard</h1>",
         unsafe_allow_html=True,
@@ -7192,6 +7289,7 @@ def assembly_quality_dashboard_v2(color: str) -> None:
     rules = stored_rules.copy()
     rules["date_start"] = start_date.isoformat()
     rules["date_end"] = end_date.isoformat()
+    analysis_started = perf_counter()
     try:
         analysis = analyze_skd_quality_cached(
             selected_defects,
@@ -7202,6 +7300,7 @@ def assembly_quality_dashboard_v2(color: str) -> None:
     except Exception as exc:
         st.error(f"Unable to calculate the Assembly dashboard: {exc}")
         return
+    analysis_seconds = perf_counter() - analysis_started
 
     raw = analysis["raw"].copy()
     raw["FailureType"] = "Unclassified"
@@ -7498,6 +7597,16 @@ def assembly_quality_dashboard_v2(color: str) -> None:
 
     with st.expander("Upload Assembly data"):
         _assembly_upload_section_v2(store_status)
+
+    record_dashboard_performance(
+        "Assembly Quality Dashboard",
+        start_date,
+        end_date,
+        source_seconds,
+        analysis_seconds,
+        perf_counter() - page_started,
+        len(stored_defects) + len(stored_inputs),
+    )
 
 
 def kpi_track_page(module: str, color: str) -> None:
@@ -7801,6 +7910,8 @@ def about_page() -> None:
     )
     st.write("")
     render_cloud_storage_panel()
+    st.write("")
+    render_performance_diagnostics_panel()
     st.write("")
     st.markdown("<h3 class='section-title'>Version History</h3>", unsafe_allow_html=True)
     for version, desc in VERSION_HISTORY:
