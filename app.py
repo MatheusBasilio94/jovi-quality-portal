@@ -32,7 +32,7 @@ from tools.supabase_store import (
 from tools.trend_rules import analysis_period_days, requested_trend_grain, trend_grain_labels
 
 
-APP_VERSION = "v0.4.5"
+APP_VERSION = "v0.4.6"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -49,6 +49,15 @@ QUALITY_DB_PATH = DATA_STORE_DIR / "jovi_quality.db"
 ASSEMBLY_FILE_STORE_DIR = DATA_STORE_DIR / "assembly"
 ASSEMBLY_MONITORED_DIR = BASE_DIR / "auto_import" / "assembly"
 ASSEMBLY_SMT_DUTY_TYPES = ("SMT", "SMT equipment", "SMT Mando", "SMT Process", "SMT Test")
+ASSEMBLY_MES_EXCLUSION_KEYWORDS = (
+    "Re-Judge Ok",
+    "Rejudge OK",
+    "Re-Judge OK",
+    "rejudge ok",
+    "Good machine rejudge ok",
+    "Re-Download",
+    "Re-Calibration",
+)
 ASSEMBLY_FUNCTIONAL_OPERATIONS = (
     "Aging-Software-Testing", "Antenna_Non_Signaling_2", "Audio-Testing", "Audio_Testing_4",
     "Auto-MMI-Testing1", "Auto-MMI-Testing2", "Auto-MMI-Testing3", "CCT_sensor_Calibration",
@@ -89,6 +98,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.4.6", "Applied MES-specific defect policies by area: SMT now excludes SMT Mando records from standard FPY, while Assembly retains only its validated rejudge dispositions. Assembly Functional and Appearance KPIs now count confirmed defect records rather than collapsing multiple valid occurrences into one PCB."),
     ("v0.4.5", "Aligned the SMT confirmed-defect rules with MES FPY validation: Retest OK remarks, AOI last-NG records and repeat repairs are now excluded with auditable reasons."),
     ("v0.4.4", "Added version-aware Supabase synchronization: the portal checks one compact data revision on each load and refreshes all affected files immediately when uploads or records change."),
     ("v0.4.3", "Added dashboard performance diagnostics and changed the initial analysis period to the latest available month, helping identify and reduce loading bottlenecks."),
@@ -3744,6 +3754,8 @@ def analyze_skd_quality(defect_source, input_sources: list, rules: dict, source_
     filtered["Line"] = filtered[line_col].fillna("Unknown").astype(str).str.strip()
     filtered["Phenomenon"] = filtered[phenomenon_col].fillna("Unknown").astype(str).str.strip()
 
+    # Assembly FPY has a distinct judgment policy. It excludes approved rejudge
+    # dispositions only; unlike SMT, it retains Retest OK remarks and repeat repairs.
     rejudge_columns = [rules["rejudge_column"], *rules.get("additional_rejudge_columns", [])]
     rejudge_text = pd.Series("", index=filtered.index, dtype="object")
     for col in rejudge_columns:
@@ -3760,7 +3772,7 @@ def analyze_skd_quality(defect_source, input_sources: list, rules: dict, source_
     filtered.loc[redownload_mask, "ExclusionReason"] = "Re-Download"
     filtered.loc[recalibration_mask, "ExclusionReason"] = "Re-Calibration"
     # The existing field name is retained for compatibility; it represents all approved retest exclusions.
-    filtered["IsRejudgeOK"] = keyword_mask(rejudge_text, rules["rejudge_ok_keywords"])
+    filtered["IsRejudgeOK"] = keyword_mask(rejudge_text, list(ASSEMBLY_MES_EXCLUSION_KEYWORDS))
     filtered["ConfirmedDefect"] = ~filtered["IsRejudgeOK"]
     filtered["IsManDo"] = filtered["ConfirmedDefect"] & keyword_mask(filtered[mando_col], rules["mando_keywords"])
     trend, trend_settings = build_skd_trend(production_detail, filtered, start, end)
@@ -5672,11 +5684,16 @@ def calculate_assembly_kpi_metrics(start_date: date, end_date: date) -> dict:
     functional_mando = functional[keyword_mask(functional[duty_column], ["Mando", "Man-do", "Man Do", "Man_Do"])].copy()
     produced = int(analysis["totals"]["produced"])
 
+    def confirmed_record_count(frame) -> int:
+        """MES Functional/Appearance quantities count valid defect occurrences, not unique PCBs."""
+        return int(len(frame))
+
     def unique_pcb_count(frame) -> int:
+        """The dedicated Mando PPM remains a PCB-based KPI until its MES definition is separately reconciled."""
         return int(frame["PCB"].replace("", pd.NA).dropna().nunique()) if not frame.empty else 0
 
-    functional_pcbs = unique_pcb_count(functional)
-    appearance_pcbs = unique_pcb_count(appearance)
+    functional_records = confirmed_record_count(functional)
+    appearance_records = confirmed_record_count(appearance)
     functional_mando_pcbs = unique_pcb_count(functional_mando)
 
     trend_settings = analysis["trend_settings"]
@@ -5685,19 +5702,25 @@ def calculate_assembly_kpi_metrics(start_date: date, end_date: date) -> dict:
         lambda value: format_trend_period(value, trend_settings["grain"])
     )
 
+    def period_record_counts(frame, column_name: str):
+        period_frame = add_trend_period(frame, "_Date", trend_settings)
+        if period_frame.empty:
+            return pd.DataFrame(columns=["PeriodDate", column_name])
+        return period_frame.groupby("PeriodDate", as_index=False).agg(**{column_name: ("Item", "size")})
+
     def period_pcb_counts(frame, column_name: str):
         period_frame = add_trend_period(frame, "_Date", trend_settings)
         if period_frame.empty:
             return pd.DataFrame(columns=["PeriodDate", column_name])
         return period_frame.groupby("PeriodDate", as_index=False).agg(**{column_name: ("PCB", "nunique")})
 
-    trend = trend.merge(period_pcb_counts(functional, "FunctionalNGPCBs"), on="PeriodDate", how="left")
-    trend = trend.merge(period_pcb_counts(appearance, "AppearanceNGPCBs"), on="PeriodDate", how="left")
+    trend = trend.merge(period_record_counts(functional, "FunctionalNGRecords"), on="PeriodDate", how="left")
+    trend = trend.merge(period_record_counts(appearance, "AppearanceNGRecords"), on="PeriodDate", how="left")
     trend = trend.merge(period_pcb_counts(functional_mando, "FunctionMandoPCBs"), on="PeriodDate", how="left")
-    for column in ["FunctionalNGPCBs", "AppearanceNGPCBs", "FunctionMandoPCBs"]:
+    for column in ["FunctionalNGRecords", "AppearanceNGRecords", "FunctionMandoPCBs"]:
         trend[column] = trend[column].fillna(0).astype(int)
-    trend["FunctionPassRate"] = (trend["Produced"] - trend["FunctionalNGPCBs"]) / trend["Produced"].replace(0, pd.NA)
-    trend["AppearanceTotalPassRate"] = (trend["Produced"] - trend["AppearanceNGPCBs"]) / trend["Produced"].replace(0, pd.NA)
+    trend["FunctionPassRate"] = (trend["Produced"] - trend["FunctionalNGRecords"]) / trend["Produced"].replace(0, pd.NA)
+    trend["AppearanceTotalPassRate"] = (trend["Produced"] - trend["AppearanceNGRecords"]) / trend["Produced"].replace(0, pd.NA)
     trend["FunctionMandoPPM"] = trend["FunctionMandoPCBs"] / trend["Produced"].replace(0, pd.NA) * 1_000_000
 
     return {
@@ -5709,11 +5732,11 @@ def calculate_assembly_kpi_metrics(start_date: date, end_date: date) -> dict:
             set(operations) - functional_operations - appearance_operations
         ),
         "produced": produced,
-        "functional_pcbs": functional_pcbs,
-        "appearance_pcbs": appearance_pcbs,
+        "functional_records": functional_records,
+        "appearance_records": appearance_records,
         "functional_mando_pcbs": functional_mando_pcbs,
-        "function_pass_rate": (produced - functional_pcbs) / produced if produced and functional_operations else None,
-        "appearance_pass_rate": (produced - appearance_pcbs) / produced if produced and appearance_operations else None,
+        "function_pass_rate": (produced - functional_records) / produced if produced and functional_operations else None,
+        "appearance_pass_rate": (produced - appearance_records) / produced if produced and appearance_operations else None,
         "function_mando_ppm": functional_mando_pcbs / produced * 1_000_000 if produced and functional_operations else None,
         "trend": trend.sort_values("PeriodDate"),
         "trend_settings": trend_settings,
@@ -6150,14 +6173,14 @@ def assembly_kpi_track_page(color: str) -> None:
         smt_kpi_card(
             "Function Pass Rate",
             fmt_kpi_pct(metrics["function_pass_rate"]),
-            f"{fmt_int(metrics['functional_pcbs'])} functional NG PCBs · {fmt_int(metrics['produced'])} input" if functional_ready else "Awaiting station classification",
+            f"{fmt_int(metrics['functional_records'])} functional NG records · {fmt_int(metrics['produced'])} input" if functional_ready else "Awaiting station classification",
             color,
         )
     with cards[1]:
         smt_kpi_card(
             "Appearance Total Pass Rate",
             fmt_kpi_pct(metrics["appearance_pass_rate"]),
-            f"{fmt_int(metrics['appearance_pcbs'])} appearance NG PCBs · {fmt_int(metrics['produced'])} input" if appearance_ready else "Awaiting station classification",
+            f"{fmt_int(metrics['appearance_records'])} appearance NG records · {fmt_int(metrics['produced'])} input" if appearance_ready else "Awaiting station classification",
             color,
         )
     with cards[2]:
@@ -6179,23 +6202,23 @@ def assembly_kpi_track_page(color: str) -> None:
         {
             "KPI": "Function Pass Rate",
             "Calculation basis": (
-                f"{fmt_int(metrics['functional_pcbs'])} functional NG PCBs | "
+                f"{fmt_int(metrics['functional_records'])} functional NG records | "
                 f"{fmt_int(metrics['produced'])} Assembly input"
                 if functional_ready
                 else "Functional classification pending"
             ),
-            "Formula": "(Input − unique functional NG PCB) / Input × 100",
+            "Formula": "(Input − functional NG records) / Input × 100",
             "Result": fmt_kpi_pct(metrics["function_pass_rate"]),
         },
         {
             "KPI": "Appearance Total Pass Rate",
             "Calculation basis": (
-                f"{fmt_int(metrics['appearance_pcbs'])} appearance NG PCBs | "
+                f"{fmt_int(metrics['appearance_records'])} appearance NG records | "
                 f"{fmt_int(metrics['produced'])} Assembly input"
                 if appearance_ready
                 else "Appearance classification pending"
             ),
-            "Formula": "(Input − unique appearance NG PCB) / Input × 100",
+            "Formula": "(Input − appearance NG records) / Input × 100",
             "Result": fmt_kpi_pct(metrics["appearance_pass_rate"]),
         },
         {
