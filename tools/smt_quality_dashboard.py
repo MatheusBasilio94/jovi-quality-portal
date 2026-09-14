@@ -644,6 +644,23 @@ def distribute_smt_input_to_days(input_rows: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(daily_rows)
 
 
+def clipped_trend_period_bounds(
+    trend_period: pd.Period,
+    trend_grain: str,
+    selected_start: pd.Timestamp,
+    selected_end_exclusive: pd.Timestamp,
+) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """Keep boundary trend periods inside the user-selected date range."""
+    raw_begin = trend_period.start_time
+    if trend_grain == "day":
+        raw_end = raw_begin + pd.Timedelta(days=1)
+    elif trend_grain == "week":
+        raw_end = raw_begin + pd.Timedelta(days=7)
+    else:
+        raw_end = raw_begin + pd.offsets.MonthBegin(1)
+    return max(raw_begin, selected_start), min(raw_end, selected_end_exclusive)
+
+
 def select_smt_input_period(
     input_rows: pd.DataFrame,
     start: pd.Timestamp,
@@ -788,13 +805,9 @@ def analyze_smt_quality_paths(
     trend_input = distribute_smt_input_to_days(selected_input) if input_distributed else selected_input.copy()
     trend_input["TrendPeriod"] = trend_input["BeginDate"].dt.to_period(trend_frequency)
     for trend_period, period_input in trend_input.groupby("TrendPeriod", sort=True):
-        begin = trend_period.start_time
-        if trend_grain == "day":
-            end = begin + pd.Timedelta(days=1)
-        elif trend_grain == "week":
-            end = begin + pd.Timedelta(days=7)
-        else:
-            end = begin + pd.offsets.MonthBegin(1)
+        begin, end = clipped_trend_period_bounds(
+            trend_period, trend_grain, start, end_exclusive
+        )
         period_label = begin.strftime("%m/%y") if trend_grain == "month" else begin.strftime("%d/%m")
         period_defects = covered_defects[
             covered_defects["KPIDate"].ge(begin)
