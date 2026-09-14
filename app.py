@@ -33,7 +33,7 @@ from tools.trend_rules import analysis_period_days, requested_trend_grain, trend
 from tools import assembly_kpi_v2
 
 
-APP_VERSION = "v0.5.6"
+APP_VERSION = "v0.5.7"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -87,6 +87,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.7", "Added retry with fresh Supabase Storage connections when listing cloud folders after a paused project resumes."),
     ("v0.5.6", "Hardened Supabase Storage synchronization after project wake-up by ignoring internal empty-folder entries, extending Storage timeouts and retrying transient downloads."),
     ("v0.5.5", "Started a clean online data baseline in an isolated persistent-storage namespace. Previous production files are not loaded by this version."),
     ("v0.5.4", "Unified every Assembly view around the validated daily-input, FPY-detail and repair-detail rules; Quality Dashboard and Smart Report now use the same KPI calculation engine as KPI Track."),

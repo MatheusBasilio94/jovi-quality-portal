@@ -203,11 +203,23 @@ def _object_fingerprint(row: dict) -> str:
 
 
 def _list_objects(prefix: str) -> list[dict]:
-    store, _ = _storage()
-    try:
-        rows = store.list(_remote_object_path(prefix), {"limit": 1000, "offset": 0})
-    except Exception as exc:
-        raise RuntimeError("Supabase Storage could not list the portal data files.") from exc
+    last_error: Exception | None = None
+    rows: list[Any] = []
+    for attempt in range(3):
+        try:
+            store, _ = _storage()
+            rows = store.list(_remote_object_path(prefix), {"limit": 1000, "offset": 0})
+            break
+        except Exception as exc:
+            last_error = exc
+            if attempt + 1 < 3:
+                try:
+                    _bucket_store.clear()
+                except AttributeError:
+                    pass
+                time.sleep(0.5 * (attempt + 1))
+    else:
+        raise RuntimeError("Supabase Storage could not list the portal data files.") from last_error
     return [
         row
         for row in rows
@@ -229,6 +241,11 @@ def _download_with_retry(store: Any, path: str, *, attempts: int = 3) -> bytes:
         except Exception as exc:  # Network clients expose several timeout subclasses.
             last_error = exc
             if attempt + 1 < attempts:
+                try:
+                    _bucket_store.clear()
+                    store, _ = _storage()
+                except (AttributeError, RuntimeError):
+                    pass
                 time.sleep(0.5 * (attempt + 1))
     raise RuntimeError("Supabase could not retrieve the portal data file.") from last_error
 
