@@ -1,0 +1,9 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.streamlit/secrets.toml
+
+# Production data is uploaded at runtime and stored in the private cloud store.
+# Never include MES exports or the working SQLite database in a deployment.
+data_store/
+sample_data/

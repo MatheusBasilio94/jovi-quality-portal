@@ -1,6 +1,7 @@
 import hashlib
+import json
 import re
-from datetime import timedelta
+from datetime import timedelta, datetime, timezone
 from html import escape
 from io import BytesIO
 from pathlib import Path
@@ -18,14 +19,17 @@ from tools.supabase_store import (
     upload_bytes,
 )
 from tools.trend_rules import requested_trend_grain
+from tools.smt_fpy_sources import read_detail, validate_pair, active_pairs
 
 
-TOOL_VERSION = "v1.3.2"
-SMT_FAILURE_RULE_VERSION = "2026-08-24.1"
+TOOL_VERSION = "v2.0.0"
+SMT_FAILURE_RULE_VERSION = "mes-fpy-authoritative-entry-date-2026-09-11.1"
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 SMT_STORE_DIR = PROJECT_DIR / "data_store" / "smt"
-SMT_INPUT_DIR = SMT_STORE_DIR / "input"
-SMT_DEFECT_DIR = SMT_STORE_DIR / "defects"
+SMT_INPUT_DIR = SMT_STORE_DIR / "fpy" / "input"
+SMT_DEFECT_DIR = SMT_STORE_DIR / "fpy" / "detail"
+SMT_REPAIR_DIR = SMT_STORE_DIR / "repair"
+SMT_PAIR_DIR = SMT_STORE_DIR / "fpy" / "pairs"
 
 MODEL_ALIASES = ["model", "pn", "part number", "product model"]
 INPUT_ALIASES = ["input", "produced", "production", "qty"]
@@ -72,15 +76,21 @@ def refresh_chart_period_labels(trend: pd.DataFrame) -> pd.DataFrame:
 def init_smt_store() -> None:
     SMT_INPUT_DIR.mkdir(parents=True, exist_ok=True)
     SMT_DEFECT_DIR.mkdir(parents=True, exist_ok=True)
+    SMT_REPAIR_DIR.mkdir(parents=True, exist_ok=True)
+    SMT_PAIR_DIR.mkdir(parents=True, exist_ok=True)
     cloud_active = cloud_store_is_active()
     if cloud_active:
         data_version = ensure_cloud_data_version()
         sync_prefix_from_cloud(
-            "smt/input", SMT_INPUT_DIR, data_version=data_version, cloud_active=True
+            "smt/fpy/input", SMT_INPUT_DIR, data_version=data_version, cloud_active=True
         )
         sync_prefix_from_cloud(
-            "smt/defects", SMT_DEFECT_DIR, data_version=data_version, cloud_active=True
+            "smt/fpy/detail", SMT_DEFECT_DIR, data_version=data_version, cloud_active=True
         )
+        sync_prefix_from_cloud(
+            "smt/repair", SMT_REPAIR_DIR, data_version=data_version, cloud_active=True
+        )
+        sync_prefix_from_cloud("smt/fpy/pairs", SMT_PAIR_DIR, data_version=data_version, cloud_active=True)
 
 
 def require_persistent_store_for_smt_writes() -> None:
@@ -186,6 +196,7 @@ def _standardize_input_sheet(frame: pd.DataFrame, source_file: str, sheet_type: 
     required = {
         "model": model_column,
         "Input": input_column,
+        "BadMachine": bad_column,
         "BeginDate": begin_column,
         "EndDate": end_column,
     }
@@ -196,16 +207,18 @@ def _standardize_input_sheet(frame: pd.DataFrame, source_file: str, sheet_type: 
     result = pd.DataFrame(index=frame.index)
     result["Model"] = frame[model_column].map(normalize_model)
     result["Input"] = parse_number_series(frame[input_column])
-    result["BadMachine"] = parse_number_series(frame[bad_column]).fillna(0) if bad_column else 0.0
+    result["BadMachine"] = parse_number_series(frame[bad_column])
     result["BeginDate"] = parse_date_series(frame[begin_column])
     raw_end = parse_date_series(frame[end_column])
-    result["EndDateExclusive"] = raw_end.where(raw_end > result["BeginDate"], result["BeginDate"] + pd.Timedelta(days=1))
+    # MES summary EndDate includes the final reporting day.
+    result["EndDateExclusive"] = raw_end + pd.Timedelta(days=1)
     result["Line"] = frame[line_column].map(clean_text) if line_column else ""
     result["SourceFile"] = source_file
     result["SourceRow"] = frame.index + 2
     invalid_model = result["Model"].eq("")
-    invalid_input = result["Input"].isna() | result["Input"].lt(0)
-    invalid_dates = result["BeginDate"].isna() | result["EndDateExclusive"].isna()
+    invalid_input = result["Input"].isna() | result["Input"].lt(0) | result["Input"].mod(1).ne(0)
+    invalid_input |= result["BadMachine"].isna() | result["BadMachine"].lt(0) | result["BadMachine"].mod(1).ne(0)
+    invalid_dates = result["BeginDate"].isna() | result["EndDateExclusive"].isna() | result["EndDateExclusive"].le(result["BeginDate"])
     valid = result[~invalid_model & ~invalid_input & ~invalid_dates].copy()
     valid["Input"] = valid["Input"].round().astype(int)
     valid["BadMachine"] = valid["BadMachine"].round().astype(int)
@@ -232,10 +245,18 @@ def read_summary_input_bytes(data: bytes, filename: str) -> tuple[pd.DataFrame, 
         raise RuntimeError(f"{filename}: unable to read ModelData/OrgDisplay: {exc}") from exc
     model, model_audit = _standardize_input_sheet(model_raw, filename, "model")
     org, org_audit = _standardize_input_sheet(org_raw, filename, "org")
+    if model_audit["raw_rows"] != model_audit["valid_rows"] or org_audit["raw_rows"] != org_audit["valid_rows"]:
+        raise RuntimeError(f"{filename}: ModelData or OrgDisplay contains invalid rows.")
+    if (model["EndDateExclusive"] - pd.Timedelta(days=1)).ne(model["BeginDate"]).any():
+        raise RuntimeError(f"{filename}: the new FPY flow accepts daily input files only.")
+    if model.duplicated(["Model", "BeginDate", "EndDateExclusive"]).any():
+        raise RuntimeError(f"{filename}: ModelData contains duplicate model rows for the same day.")
     model_input = int(model["Input"].sum())
     org_input = int(org["Input"].sum())
     model_bad = int(model["BadMachine"].sum())
     org_bad = int(org["BadMachine"].sum())
+    if model_input != org_input or model_bad != org_bad:
+        raise RuntimeError(f"{filename}: ModelData and OrgDisplay totals do not reconcile.")
     audit = {
         "SourceFile": filename,
         "ModelRows": model_audit["valid_rows"],
@@ -246,7 +267,7 @@ def read_summary_input_bytes(data: bytes, filename: str) -> tuple[pd.DataFrame, 
         "OrgBadMachine": org_bad,
         "OrgReconciles": model_input == org_input and model_bad == org_bad,
         "BadGreaterThanInputRows": model_audit["bad_greater_than_input"],
-        "InvalidRows": model_audit["raw_rows"] - model_audit["valid_rows"],
+        "InvalidRows": model_audit["raw_rows"] - model_audit["valid_rows"] + org_audit["raw_rows"] - org_audit["valid_rows"],
     }
     return model, org, audit
 
@@ -266,10 +287,7 @@ def _series_from_alias(frame: pd.DataFrame, aliases: list[str], default: object 
 
 @st.cache_data(show_spinner=False)
 def read_defect_bytes(data: bytes, filename: str) -> tuple[pd.DataFrame, dict]:
-    try:
-        frame = pd.read_excel(BytesIO(data), sheet_name="QueryData", dtype=object)
-    except Exception as exc:
-        raise RuntimeError(f"{filename}: unable to read QueryData: {exc}") from exc
+    frame, mes_audit = read_detail(data, filename)
     frame.columns = [str(column).strip() for column in frame.columns]
     aliases = {
         "Item": ["item"],
@@ -310,6 +328,7 @@ def read_defect_bytes(data: bytes, filename: str) -> tuple[pd.DataFrame, dict]:
     result["FailureType"] = result["Operation"].map(classify_smt_failure_type)
     for column in ["TestTime", "EntryTime", "RepairDate", "PatchTime"]:
         result[column] = parse_date_series(result[column]) if column != "TestTime" else _parse_timestamp_series(result[column])
+    result["KPIDate"] = result["EntryTime"]
     result["SourceFile"] = filename
     result["SourceRow"] = frame.index + 2
     maintenance = result["Maintenance"].str.lower().str.replace(r"\s+", " ", regex=True)
@@ -323,26 +342,17 @@ def read_defect_bytes(data: bytes, filename: str) -> tuple[pd.DataFrame, dict]:
     repeat_repair_mask = repair_times.gt(1)
     duty_type = result["DutyType"].str.lower().str.replace(r"[^a-z0-9]+", "", regex=True)
     smt_mando_mask = duty_type.eq("smtmando")
+    # The FPY Detail sheet is already the MES-approved defect population. These
+    # source attributes remain auditable, but the portal must not filter them a
+    # second time. Repair data is used only to enrich final responsibility.
     result["ExclusionReason"] = ""
-    result.loc[rejudge_mask, "ExclusionReason"] = "Re-Judge OK"
-    result.loc[redownload_mask, "ExclusionReason"] = "Re-Download"
-    result.loc[recalibration_mask, "ExclusionReason"] = "Re-Calibration"
-    result.loc[retest_ok_mask, "ExclusionReason"] = "Retest OK"
-    result.loc[aoi_last_ng_mask, "ExclusionReason"] = "Last NG Opcode: AOI-Checking"
-    result.loc[repeat_repair_mask, "ExclusionReason"] = "Repeat repair"
-    result.loc[smt_mando_mask, "ExclusionReason"] = "DutyType: SMT Mando"
-    # The existing field name is retained for compatibility; it represents every MES-confirmed exclusion.
-    result["IsRejudgeOK"] = (
-        rejudge_mask
-        | redownload_mask
-        | recalibration_mask
-        | retest_ok_mask
-        | aoi_last_ng_mask
-        | repeat_repair_mask
-        | smt_mando_mask
+    result["IsRejudgeOK"] = False
+    result["ValidDefect"] = (
+        result["PCB"].ne("")
+        & result["Model"].ne("")
+        & result["KPIDate"].notna()
     )
-    result["ValidDefect"] = result["PCB"].ne("") & result["Model"].ne("") & result["TestTime"].notna()
-    result["ConfirmedRecord"] = result["ValidDefect"] & ~result["IsRejudgeOK"]
+    result["ConfirmedRecord"] = result["ValidDefect"]
     audit = {
         "RawRows": int(len(frame)),
         "ValidRows": int(result["ValidDefect"].sum()),
@@ -420,21 +430,29 @@ def path_signature(path: Path) -> tuple[str, int, int]:
 def stored_smt_sources() -> tuple[list[Path], list[Path]]:
     init_smt_store()
     input_files = sorted([path for path in SMT_INPUT_DIR.iterdir() if path.suffix.lower() in {".xls", ".xlsx"}])
-    defect_files = sorted([path for path in SMT_DEFECT_DIR.iterdir() if path.suffix.lower() == ".xlsx"])
+    defect_files = sorted([path for path in SMT_DEFECT_DIR.iterdir() if path.suffix.lower() in {".xls", ".xlsx"}])
     return input_files, defect_files
 
 
-def smt_store_status() -> dict:
+def stored_smt_sources_v2() -> dict[str, list[Path]]:
+    """Return the three independent SMT source groups used by the portal."""
     inputs, defects = stored_smt_sources()
-    files = [*inputs, *defects]
+    repairs = sorted([path for path in SMT_REPAIR_DIR.iterdir() if path.suffix.lower() in {".xls", ".xlsx"}])
+    return {"input": inputs, "defects": defects, "repair": repairs}
+
+
+def smt_store_status() -> dict:
+    sources = stored_smt_sources_v2()
+    files = [*sources["input"], *sources["defects"], *sources["repair"]]
     latest = max((path.stat().st_mtime for path in files), default=None)
     latest_text = pd.Timestamp(latest, unit="s").strftime("%d/%m/%Y %H:%M") if latest else "-"
     return {
-        "inputs": len(inputs),
-        "defects": len(defects),
+        "inputs": len(sources["input"]),
+        "defects": len(sources["defects"]),
+        "repair": len(sources["repair"]),
         "bytes": sum(path.stat().st_size for path in files),
         "latest": latest_text,
-        "ready": bool(inputs and defects),
+        "ready": bool(sources["input"] and sources["defects"] and sources["repair"]),
     }
 
 
@@ -445,7 +463,11 @@ def safe_filename(name: str) -> str:
 
 def persist_smt_source(uploaded, data_type: str) -> dict:
     require_persistent_store_for_smt_writes()
-    target_dir = SMT_INPUT_DIR if data_type == "input" else SMT_DEFECT_DIR
+    directories = {"input": SMT_INPUT_DIR, "defects": SMT_DEFECT_DIR, "repair": SMT_REPAIR_DIR}
+    cloud_prefixes = {"input": "smt/fpy/input", "defects": "smt/fpy/detail", "repair": "smt/repair"}
+    if data_type not in directories:
+        raise ValueError("Unsupported SMT source type.")
+    target_dir = directories[data_type]
     target_dir.mkdir(parents=True, exist_ok=True)
     data = uploaded.getvalue()
     digest = hashlib.sha256(data).hexdigest()[:12]
@@ -454,7 +476,7 @@ def persist_smt_source(uploaded, data_type: str) -> dict:
         return {"status": "duplicate", "file": uploaded.name, "message": "Identical file is already stored."}
     cloud_active = cloud_store_is_active()
     if cloud_active:
-        upload_bytes(f"smt/{data_type}/{target.name}", data, upsert=True)
+        upload_bytes(f"{cloud_prefixes[data_type]}/{target.name}", data, upsert=True)
     target.write_bytes(data)
     if cloud_active:
         bump_cloud_data_version("SMT source upload")
@@ -465,9 +487,9 @@ def persist_smt_source(uploaded, data_type: str) -> dict:
 
 def smt_source_records() -> list[dict]:
     """Return stored SMT source files with user-facing metadata."""
-    inputs, defects = stored_smt_sources()
+    sources = stored_smt_sources_v2()
     records = []
-    for data_type, paths in (("input", inputs), ("defects", defects)):
+    for data_type, paths in sources.items():
         for path in paths:
             stat = path.stat()
             records.append(
@@ -487,7 +509,8 @@ def smt_source_records() -> list[dict]:
 def delete_smt_source(data_type: str, stored_name: str) -> dict:
     """Delete one managed SMT source file without allowing paths outside its data store."""
     require_persistent_store_for_smt_writes()
-    directories = {"input": SMT_INPUT_DIR, "defects": SMT_DEFECT_DIR}
+    directories = {"input": SMT_INPUT_DIR, "defects": SMT_DEFECT_DIR, "repair": SMT_REPAIR_DIR}
+    cloud_prefixes = {"input": "smt/fpy/input", "defects": "smt/fpy/detail", "repair": "smt/repair"}
     if data_type not in directories:
         raise ValueError("Unsupported SMT source type.")
     if Path(stored_name).name != stored_name:
@@ -498,7 +521,7 @@ def delete_smt_source(data_type: str, stored_name: str) -> dict:
         raise ValueError("The selected SMT source file was not found.")
     cloud_active = cloud_store_is_active()
     if cloud_active:
-        delete_object(f"smt/{data_type}/{stored_name}")
+        delete_object(f"{cloud_prefixes[data_type]}/{stored_name}")
     try:
         target.unlink()
     except OSError as exc:
@@ -521,7 +544,7 @@ def render_smt_source_manager() -> None:
             st.info("No SMT source files are currently stored.")
             return
 
-        file_types = {"input": "Production input", "defects": "Defects"}
+        file_types = {"input": "FPY Input", "defects": "FPY Defects", "repair": "Repair Defects"}
         table = pd.DataFrame(
             [
                 {
@@ -582,7 +605,7 @@ def _coverage_mask(
             continue
         model_mask = pd.Series(False, index=model_rows.index)
         for begin, end in group[["BeginDate", "EndDateExclusive"]].drop_duplicates().itertuples(index=False, name=None):
-            model_mask |= model_rows["TestTime"].ge(begin) & model_rows["TestTime"].lt(end)
+            model_mask |= model_rows["KPIDate"].ge(begin) & model_rows["KPIDate"].lt(end)
         mask.loc[model_mask.index] |= model_mask
     if allow_period_pooling:
         period_input_by_model = input_rows.groupby("Model")["Input"].sum()
@@ -740,19 +763,11 @@ def analyze_smt_quality_paths(
         input_model, start, end_exclusive
     )
     selected_org, _ = select_smt_input_period(input_org, start, end_exclusive)
-    calendar_defects = defects[defects["TestTime"].ge(start) & defects["TestTime"].lt(end_exclusive)].copy()
+    calendar_defects = defects[defects["KPIDate"].ge(start) & defects["KPIDate"].lt(end_exclusive)].copy()
     exact_coverage = _coverage_mask(calendar_defects, selected_input)
-    allow_period_pooling = int((end_exclusive - start).days) > 1
     calendar_defects["HasExactInputCoverage"] = exact_coverage
-    calendar_defects["HasInputCoverage"] = _coverage_mask(
-        calendar_defects,
-        selected_input,
-        allow_period_pooling=allow_period_pooling,
-    )
-    calendar_defects["UsesPeriodPooledInput"] = (
-        calendar_defects["HasInputCoverage"]
-        & ~calendar_defects["HasExactInputCoverage"]
-    )
+    calendar_defects["HasInputCoverage"] = exact_coverage
+    calendar_defects["UsesPeriodPooledInput"] = False
     covered_defects = calendar_defects[calendar_defects["HasInputCoverage"]].copy()
     confirmed = covered_defects[~covered_defects["IsRejudgeOK"]].copy()
     rejudge = covered_defects[covered_defects["IsRejudgeOK"]].copy()
@@ -782,8 +797,8 @@ def analyze_smt_quality_paths(
             end = begin + pd.offsets.MonthBegin(1)
         period_label = begin.strftime("%m/%y") if trend_grain == "month" else begin.strftime("%d/%m")
         period_defects = covered_defects[
-            covered_defects["TestTime"].ge(begin)
-            & covered_defects["TestTime"].lt(end)
+            covered_defects["KPIDate"].ge(begin)
+            & covered_defects["KPIDate"].lt(end)
         ]
         period_confirmed = period_defects[~period_defects["IsRejudgeOK"]]
         produced = int(period_input["Input"].sum())
@@ -1184,25 +1199,48 @@ def bar_chart(frame: pd.DataFrame, category: str, value: str, title: str, color:
 def _upload_section(color: str) -> None:
     status = smt_store_status()
     st.markdown("### Upload Data")
-    st.caption("Accepted input: summarized SMT workbooks with ModelData and OrgDisplay. Accepted defects: QueryData .xlsx export.")
+    st.caption("Carregue inputs FPY diariamente. Para defeitos FPY e reparo, use sempre o snapshot MTD/YTD mais recente.")
     columns = st.columns(4)
     with columns[0]:
-        metric_card("Input files", fmt_int(status["inputs"]), "Local store", color)
+        metric_card("FPY Input", fmt_int(status["inputs"]), "Arquivos diários", color)
     with columns[1]:
-        metric_card("Defect files", fmt_int(status["defects"]), "Latest cumulative file is used", color)
+        metric_card("FPY Defects", fmt_int(status["defects"]), "Snapshots MTD/YTD", color)
     with columns[2]:
-        metric_card("Stored size", f"{status['bytes'] / 1024 / 1024:.2f} MB", "Local files", color)
+        metric_card("Repair Defects", fmt_int(status["repair"]), "Snapshots MTD/YTD", color)
     with columns[3]:
-        metric_card("Latest update", status["latest"], "Local store", color)
-    uploaded_inputs = st.file_uploader("SMT input files", type=["xls", "xlsx"], accept_multiple_files=True, key="smt_summary_inputs_upload")
-    uploaded_defect = st.file_uploader("SMT cumulative defect file", type=["xlsx"], key="smt_defect_upload")
-    if uploaded_inputs or uploaded_defect:
-        if st.button("Save files to the local SMT data store", use_container_width=True):
-            results = [persist_smt_source(uploaded, "input") for uploaded in uploaded_inputs]
+        metric_card("Stored size", f"{status['bytes'] / 1024 / 1024:.2f} MB", status["latest"], color)
+    uploaded_inputs = st.file_uploader(
+        "Input FPY — SMT", type=["xls", "xlsx"], accept_multiple_files=True, key="smt_summary_inputs_upload"
+    )
+    uploaded_defect = st.file_uploader(
+        "Defeitos FPY — SMT (MTD/YTD)", type=["xls", "xlsx"], key="smt_defect_upload"
+    )
+    uploaded_repair = st.file_uploader(
+        "Defeitos de reparo — SMT (MTD/YTD)", type=["xls", "xlsx"], key="smt_repair_upload"
+    )
+    if st.button(
+        "Salvar arquivos de SMT",
+        use_container_width=True,
+        disabled=not (uploaded_inputs or uploaded_defect or uploaded_repair),
+    ):
+        from tools import assembly_kpi_v2
+
+        results = []
+        try:
+            for uploaded in uploaded_inputs or []:
+                read_summary_input_bytes(uploaded.getvalue(), uploaded.name)
+                results.append(persist_smt_source(uploaded, "input"))
             if uploaded_defect:
+                read_detail(uploaded_defect.getvalue(), uploaded_defect.name)
                 results.append(persist_smt_source(uploaded_defect, "defects"))
+            if uploaded_repair:
+                assembly_kpi_v2.read_repair(uploaded_repair)
+                results.append(persist_smt_source(uploaded_repair, "repair"))
+        except Exception as exc:
+            st.error(str(exc))
+        else:
             st.session_state["smt_last_import_results"] = results
-            st.success("SMT files processed.")
+            st.success("Arquivos de SMT processados.")
             st.rerun()
     if "smt_last_import_results" in st.session_state:
         st.dataframe(
@@ -1213,9 +1251,8 @@ def _upload_section(color: str) -> None:
         )
     render_smt_source_manager()
     st.info(
-        "Shared trend rule: periods shorter than 30 calendar days are daily, 30 to 180 days are weekly, "
-        "and longer periods are monthly. Summarized input is distributed across calendar days while preserving "
-        "the exact source-period total."
+        "Os três grupos ficam armazenados separadamente por área e tipo de fonte. "
+        "Os snapshots cumulativos mais recentes substituem a visão usada nos cálculos."
     )
 
 

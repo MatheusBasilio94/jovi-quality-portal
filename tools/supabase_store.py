@@ -27,6 +27,10 @@ except ImportError:  # pragma: no cover - exercised by Streamlit after requireme
 
 
 DEFAULT_BUCKET = "jovi-quality-data"
+# Version 2 starts from an isolated cloud namespace. The previous production
+# objects remain archived in the same private bucket but cannot enter new KPI
+# calculations.
+REMOTE_NAMESPACE = "quality-center-v2"
 DATABASE_OBJECT = "state/jovi_quality.db"
 DATA_VERSION_OBJECT = "state/data_version.json"
 SYNC_MANIFEST_FILENAME = ".supabase_sync_manifest.json"
@@ -116,6 +120,10 @@ def _clean_object_path(path: str) -> str:
     return clean
 
 
+def _remote_object_path(path: str) -> str:
+    return f"{REMOTE_NAMESPACE}/{_clean_object_path(path)}"
+
+
 def _safe_local_target(directory: Path, name: str) -> Path:
     if Path(name).name != name:
         raise ValueError("Invalid remote file name.")
@@ -185,7 +193,7 @@ def _object_fingerprint(row: dict) -> str:
 def _list_objects(prefix: str) -> list[dict]:
     store, _ = _storage()
     try:
-        rows = store.list(_clean_object_path(prefix), {"limit": 1000, "offset": 0})
+        rows = store.list(_remote_object_path(prefix), {"limit": 1000, "offset": 0})
     except Exception as exc:
         raise RuntimeError("Supabase Storage could not list the portal data files.") from exc
     return [row for row in rows if isinstance(row, dict) and str(row.get("name", "")).strip()]
@@ -236,7 +244,7 @@ def cloud_data_version() -> str:
         return ""
     store, _ = _storage()
     try:
-        raw = bytes(store.download(DATA_VERSION_OBJECT))
+        raw = bytes(store.download(_remote_object_path(DATA_VERSION_OBJECT)))
     except Exception:
         return ""
     try:
@@ -256,7 +264,7 @@ def bump_cloud_data_version(reason: str = "data update") -> str:
     ).encode("utf-8")
     try:
         store.upload(
-            path=DATA_VERSION_OBJECT,
+            path=_remote_object_path(DATA_VERSION_OBJECT),
             file=payload,
             file_options={"content-type": "application/json", "upsert": "true"},
         )
@@ -279,7 +287,7 @@ def upload_bytes(path: str, data: bytes, *, upsert: bool = True) -> None:
     store, _ = _storage()
     try:
         store.upload(
-            path=_clean_object_path(path),
+            path=_remote_object_path(path),
             file=data,
             file_options={"content-type": "application/octet-stream", "upsert": "true" if upsert else "false"},
         )
@@ -292,7 +300,7 @@ def download_bytes(path: str) -> bytes | None:
         return None
     store, _ = _storage()
     try:
-        return bytes(store.download(_clean_object_path(path)))
+        return bytes(store.download(_remote_object_path(path)))
     except Exception as exc:
         raise RuntimeError("Supabase could not retrieve the portal data file.") from exc
 
@@ -303,7 +311,7 @@ def delete_object(path: str) -> None:
         return
     store, _ = _storage()
     try:
-        store.remove([clean])
+        store.remove([_remote_object_path(clean)])
     except Exception as exc:
         raise RuntimeError("Supabase could not delete the selected portal data file.") from exc
 
@@ -338,7 +346,7 @@ def sync_file_from_cloud(
         return True
     store, _ = _storage()
     try:
-        data = bytes(store.download(clean))
+        data = bytes(store.download(_remote_object_path(clean)))
     except Exception as exc:
         raise RuntimeError("Supabase could not retrieve the portal data file.") from exc
     if not local_path.is_file() or local_path.read_bytes() != data:
@@ -384,7 +392,7 @@ def sync_prefix_from_cloud(
         fingerprint = _object_fingerprint(row)
         if force or not target.is_file() or manifest.get(remote_path) != fingerprint:
             try:
-                data = bytes(store.download(remote_path))
+                data = bytes(store.download(_remote_object_path(remote_path)))
             except Exception as exc:
                 raise RuntimeError("Supabase could not retrieve the portal data file.") from exc
             if not target.is_file() or target.read_bytes() != data:

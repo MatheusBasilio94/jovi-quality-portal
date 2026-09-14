@@ -30,9 +30,10 @@ from tools.supabase_store import (
     upload_local_file,
 )
 from tools.trend_rules import analysis_period_days, requested_trend_grain, trend_grain_labels
+from tools import assembly_kpi_v2
 
 
-APP_VERSION = "v0.4.6"
+APP_VERSION = "v0.5.5"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -48,7 +49,7 @@ DATA_STORE_DIR = BASE_DIR / "data_store"
 QUALITY_DB_PATH = DATA_STORE_DIR / "jovi_quality.db"
 ASSEMBLY_FILE_STORE_DIR = DATA_STORE_DIR / "assembly"
 ASSEMBLY_MONITORED_DIR = BASE_DIR / "auto_import" / "assembly"
-ASSEMBLY_SMT_DUTY_TYPES = ("SMT", "SMT equipment", "SMT Mando", "SMT Process", "SMT Test")
+ASSEMBLY_SMT_DUTY_TYPES = ("SMT equipment", "SMT Mando", "SMT Process", "SMT Test")
 ASSEMBLY_MES_EXCLUSION_KEYWORDS = (
     "Re-Judge Ok",
     "Rejudge OK",
@@ -58,20 +59,8 @@ ASSEMBLY_MES_EXCLUSION_KEYWORDS = (
     "Re-Download",
     "Re-Calibration",
 )
-ASSEMBLY_FUNCTIONAL_OPERATIONS = (
-    "Aging-Software-Testing", "Antenna_Non_Signaling_2", "Audio-Testing", "Audio_Testing_4",
-    "Auto-MMI-Testing1", "Auto-MMI-Testing2", "Auto-MMI-Testing3", "CCT_sensor_Calibration",
-    "Camera", "Camera-12", "Camera-auxiliary-tester", "Camera-function-QC-appearance", "Camera17",
-    "Camera_4", "Camera_5", "Camera_6", "Current", "Function-test-station1", "Functional-QC-Appearance",
-    "GPS-WiFi-Testing-2", "MMI_auxiliary_test_bit", "Motor_CalTest_Station", "OIS_static_test1",
-    "Order-Linking", "Photosensor_test_Dark", "Pressure-Software-Testing", "Pressure-Testing", "RSE_Station",
-    "Ring_light_Test", "SARFunctionTest2", "SIMCard_Auto_Test", "UltrasonicTest1", "Wired_Charging_Automatic",
-)
-ASSEMBLY_APPEARANCE_OPERATIONS = (
-    "ANATEL_sticker_detection_station_1", "Appearance-QC",
-    "Assembly semi-finished appearance defective traceability position",
-    "Assembly_semi-finished_product_appearance_testing", "BatteryCover_Character_Recognize",
-)
+ASSEMBLY_FUNCTIONAL_OPERATIONS = assembly_kpi_v2.FUNCTIONAL_OPERATIONS
+ASSEMBLY_APPEARANCE_OPERATIONS = assembly_kpi_v2.APPEARANCE_OPERATIONS
 HOME_ASSET_DIR = BASE_DIR / "assets" / "home"
 HOME_MODULE_IMAGES = {
     "Learning Area": "learning_area.png",
@@ -90,14 +79,20 @@ st.set_page_config(
 MODULES = {
     "Home": {"color": "#1D5FBF", "tabs": []},
     "Learning Area": {"color": "#1D5FBF", "tabs": ["Overview", "Procedures", "Process Map", "KPI's"]},
-    "SMT": {"color": "#0D7A45", "tabs": ["KPI Track", "Quality Dashboard", "BOM Comparison Tool - SMT"]},
-    "Assembly": {"color": "#6532C8", "tabs": ["KPI Track", "Quality Dashboard", "BOM Comparison Tool - Assembly"]},
+    "SMT": {"color": "#0D7A45", "tabs": ["KPI Track", "Quality Dashboard", "BOM Comparison Tool - SMT", "Data Upload"]},
+    "Assembly": {"color": "#6532C8", "tabs": ["KPI Track", "Quality Dashboard", "BOM Comparison Tool - Assembly", "Data Upload"]},
     "IQC": {"color": "#B45309", "tabs": ["Overview"]},
     "Smart Report": {"color": "#0F766E", "tabs": []},
     "About": {"color": "#1D5FBF", "tabs": []},
 }
 
 VERSION_HISTORY = [
+    ("v0.5.5", "Started a clean online data baseline in an isolated persistent-storage namespace. Previous production files are not loaded by this version."),
+    ("v0.5.4", "Unified every Assembly view around the validated daily-input, FPY-detail and repair-detail rules; Quality Dashboard and Smart Report now use the same KPI calculation engine as KPI Track."),
+    ("v0.5.3", "Aligned SMT Function Pass Rate and Process NG Rate with the authoritative FPY detail: defects are assigned by BadMachEntryTime and every FPY-listed PCB is counted without reapplying legacy repair or DutyType exclusions."),
+    ("v0.5.2", "Moved SMT and Assembly source-file ingestion into a dedicated Data Upload page beside BOM Comparison, leaving KPI Track and Quality Dashboard focused on analysis."),
+    ("v0.5.1", "Standardized data ingestion for both SMT and Assembly with three independent upload groups: daily FPY input, cumulative FPY defects and cumulative repair defects, including workbook validation and separate storage by area and source type."),
+    ("v0.5.0", "Rebuilt Assembly KPI ingestion around validated MES sources: daily input, cumulative total defects and cumulative repair. Functional, appearance and Function Mando use unique PCBs in the selected scope, fixed operation groups and final repair responsibility, while OQC × FQC remains manual."),
     ("v0.4.6", "Applied MES-specific defect policies by area: SMT now excludes SMT Mando records from standard FPY, while Assembly retains only its validated rejudge dispositions. Assembly Functional and Appearance KPIs now count confirmed defect records rather than collapsing multiple valid occurrences into one PCB."),
     ("v0.4.5", "Aligned the SMT confirmed-defect rules with MES FPY validation: Retest OK remarks, AOI last-NG records and repeat repairs are now excluded with auditable reasons."),
     ("v0.4.4", "Added version-aware Supabase synchronization: the portal checks one compact data revision on each load and refreshes all affected files immediately when uploads or records change."),
@@ -2822,7 +2817,15 @@ def sample_sources() -> tuple[Path, list[Path]]:
 
 def init_quality_store() -> tuple[bool, str]:
     DATA_STORE_DIR.mkdir(parents=True, exist_ok=True)
-    cloud_active = cloud_store_is_active()
+    cloud_status = cloud_store_status()
+    cloud_active = bool(cloud_status["active"])
+    initialize_clean_cloud = (
+        bool(cloud_status["configured"])
+        and not cloud_active
+        and str(cloud_status["mode"]) == "Supabase awaiting migration"
+    )
+    if initialize_clean_cloud and QUALITY_DB_PATH.is_file():
+        QUALITY_DB_PATH.unlink()
     data_version = ensure_cloud_data_version() if cloud_active else ""
     sync_file_from_cloud(
         DATABASE_OBJECT,
@@ -2901,6 +2904,10 @@ def init_quality_store() -> tuple[bool, str]:
             )
             """
         )
+    if initialize_clean_cloud:
+        upload_local_file(DATABASE_OBJECT, QUALITY_DB_PATH, upsert=True)
+        data_version = bump_cloud_data_version("initialize clean Quality Center 2.0 baseline")
+        cloud_active = True
     return cloud_active, data_version
 
 
@@ -2939,6 +2946,12 @@ def sync_assembly_source_cache(cloud_active: bool | None = None, data_version: s
         data_version=data_version,
         cloud_active=True,
     )
+    sync_prefix_from_cloud(
+        "assembly/repair",
+        ASSEMBLY_FILE_STORE_DIR / "repair",
+        data_version=data_version,
+        cloud_active=True,
+    )
 
 
 def full_cloud_refresh() -> dict[str, int]:
@@ -2959,10 +2972,12 @@ def full_cloud_refresh() -> dict[str, int]:
     ):
         refreshed.append(QUALITY_DB_PATH)
     init_quality_store()
-    refreshed.extend(sync_prefix_from_cloud("smt/input", smt_quality_dashboard.SMT_INPUT_DIR, force=True, data_version=data_version, cloud_active=True))
-    refreshed.extend(sync_prefix_from_cloud("smt/defects", smt_quality_dashboard.SMT_DEFECT_DIR, force=True, data_version=data_version, cloud_active=True))
+    refreshed.extend(sync_prefix_from_cloud("smt/fpy/input", smt_quality_dashboard.SMT_INPUT_DIR, force=True, data_version=data_version, cloud_active=True))
+    refreshed.extend(sync_prefix_from_cloud("smt/fpy/detail", smt_quality_dashboard.SMT_DEFECT_DIR, force=True, data_version=data_version, cloud_active=True))
+    refreshed.extend(sync_prefix_from_cloud("smt/repair", smt_quality_dashboard.SMT_REPAIR_DIR, force=True, data_version=data_version, cloud_active=True))
     refreshed.extend(sync_prefix_from_cloud("assembly/input", ASSEMBLY_FILE_STORE_DIR / "input", force=True, data_version=data_version, cloud_active=True))
     refreshed.extend(sync_prefix_from_cloud("assembly/defects", ASSEMBLY_FILE_STORE_DIR / "defects", force=True, data_version=data_version, cloud_active=True))
+    refreshed.extend(sync_prefix_from_cloud("assembly/repair", ASSEMBLY_FILE_STORE_DIR / "repair", force=True, data_version=data_version, cloud_active=True))
     st.cache_data.clear()
     return {"files": len(refreshed), "bytes": sum(path.stat().st_size for path in refreshed if path.is_file())}
 
@@ -3328,6 +3343,8 @@ def safe_filename(name: str) -> str:
 def classify_assembly_file(path: Path) -> str | None:
     name = path.name.lower()
     suffix = path.suffix.lower()
+    if "repair" in name or "reparo" in name:
+        return "repair" if suffix in {".xlsx", ".xls"} else None
     if "defect" in name and suffix in {".xlsx", ".xls"}:
         return "defects"
     if any(keyword in name for keyword in ("input", "production", "produced")) and suffix in {".csv", ".xls", ".xlsx"}:
@@ -3338,7 +3355,7 @@ def classify_assembly_file(path: Path) -> str | None:
 def persist_assembly_source(source, data_type: str, source_method: str) -> dict:
     init_quality_store()
     require_persistent_store_for_writes()
-    if data_type not in {"defects", "input"}:
+    if data_type not in {"defects", "input", "repair"}:
         raise RuntimeError(f"Unsupported Assembly data type: {data_type}")
 
     original_name = safe_filename(getattr(source, "name", str(source)))
@@ -3468,6 +3485,29 @@ def stored_assembly_sources() -> tuple[list[Path], list[Path]]:
     return defects, inputs
 
 
+def stored_assembly_sources_v2() -> dict[str, list[Path]]:
+    """Return Assembly sources grouped by the validated v2 source contract."""
+    cloud_active, data_version = init_quality_store()
+    sync_assembly_source_cache(cloud_active, data_version)
+    with sqlite3.connect(QUALITY_DB_PATH) as conn:
+        rows = conn.execute(
+            """
+            SELECT data_type, stored_name, stored_path
+            FROM assembly_files
+            WHERE status = 'imported'
+            ORDER BY imported_at, id
+            """
+        ).fetchall()
+    grouped = {"defects": [], "input": [], "repair": []}
+    for data_type, stored_name, stored_path in rows:
+        if data_type not in grouped:
+            continue
+        path = resolve_assembly_stored_path(data_type, stored_name, stored_path)
+        if path is not None:
+            grouped[data_type].append(path)
+    return grouped
+
+
 def stored_assembly_file_records() -> list[dict]:
     """Return stored Assembly source metadata for the managed deletion interface."""
     cloud_active, data_version = init_quality_store()
@@ -3519,7 +3559,7 @@ def delete_assembly_source(record_id: int) -> dict:
         if not row:
             raise ValueError("The selected Assembly source file was not found.")
         data_type, original_name, stored_name = row
-        if data_type not in {"defects", "input"} or Path(stored_name).name != stored_name:
+        if data_type not in {"defects", "input", "repair"} or Path(stored_name).name != stored_name:
             raise ValueError("The selected Assembly source file is invalid.")
         conn.execute("DELETE FROM assembly_files WHERE id = ?", (int(record_id),))
         conn.commit()
@@ -3565,7 +3605,7 @@ def render_assembly_source_manager() -> None:
             st.info("No Assembly source files are currently stored.")
             return
 
-        file_types = {"input": "Production input", "defects": "Defects"}
+        file_types = {"input": "Input diário", "defects": "Defeitos gerais", "repair": "Reparo cumulativo"}
         table = pd.DataFrame(
             [
                 {
@@ -3661,6 +3701,7 @@ def assembly_store_status(*, sync: bool = True) -> dict:
     status = {
         "defects": 0,
         "input": 0,
+        "repair": 0,
         "bytes": 0,
         "latest": latest[0] if latest else "-",
         "ready": False,
@@ -3668,7 +3709,7 @@ def assembly_store_status(*, sync: bool = True) -> dict:
     for data_type, count, file_size in rows:
         status[data_type] = count
         status["bytes"] += file_size
-    status["ready"] = status["defects"] > 0 and status["input"] > 0
+    status["ready"] = status["defects"] > 0 and status["input"] > 0 and status["repair"] > 0
     return status
 
 
@@ -4939,7 +4980,7 @@ def smart_report_reference_date() -> date:
     except Exception:
         pass
     try:
-        _, assembly_inputs = stored_assembly_sources()
+        assembly_inputs = stored_assembly_sources_v2()["input"]
         if assembly_inputs:
             _, end = assembly_input_bounds(assembly_inputs)
             latest_dates.append(end)
@@ -5044,27 +5085,19 @@ def smart_report_smt_data(start_date: date, end_date: date) -> tuple[list[dict],
 
 
 def smart_report_assembly_data(start_date: date, end_date: date) -> tuple[list[dict], int, int, str]:
-    stored_defects, stored_inputs = stored_assembly_sources()
-    if not stored_defects or not stored_inputs:
-        return [], 0, 0, "Assembly input and defect files are required."
-    selected_defects, source_note = select_defect_sources(stored_defects)
-    rules = load_rules()
-    rules["date_start"] = start_date.isoformat()
-    rules["date_end"] = end_date.isoformat()
-    analysis = analyze_skd_quality_cached(
-        selected_defects,
-        stored_inputs,
-        rules,
-        f"Local stored Assembly data · {source_note}",
-    )
-    raw = analysis["raw"].copy()
-    functional = {str(value).strip() for value in rules.get("assembly_functional_operations", [])}
-    appearance = {str(value).strip() for value in rules.get("assembly_appearance_operations", [])}
-    raw["FailureType"] = "Unclassified"
-    raw.loc[raw["TestOperation"].isin(functional), "FailureType"] = "Functional Failure"
-    raw.loc[raw["TestOperation"].isin(appearance), "FailureType"] = "Appearance Failure"
-    confirmed = raw[raw["ConfirmedDefect"].fillna(False).astype(bool)].copy()
-    produced = int(analysis["production_detail"]["Produced"].sum())
+    try:
+        metrics = calculate_assembly_kpi_metrics(start_date, end_date)
+    except Exception as exc:
+        return [], 0, 0, str(exc)
+    confirmed = metrics["defects"].copy()
+    confirmed["FailureType"] = confirmed["FailureType"].map(
+        {
+            "Funcional": "Functional Failure",
+            "Aparência": "Appearance Failure",
+            "Fora do escopo": "Unclassified",
+        }
+    ).fillna("Unclassified")
+    produced = int(metrics["produced"])
     frequency = smart_report_defect_key(confirmed).value_counts()
     repeated = int((frequency > 1).sum())
     return smart_report_candidates(confirmed, produced), produced, repeated, ""
@@ -5566,181 +5599,95 @@ def build_smt_oqc_trend(oqc_records, start_date: date, end_date: date):
 
 
 def calculate_assembly_smt_duty_kpi(start_date: date, end_date: date) -> dict:
-    import pandas as pd
-
-    stored_defects, stored_inputs = stored_assembly_sources()
-    if not stored_defects or not stored_inputs:
-        raise RuntimeError("Stored Assembly input and defects are required.")
-    selected_defects, defect_source_note = select_defect_sources(stored_defects)
-    rules = load_rules()
-    rules["date_start"] = start_date.isoformat()
-    rules["date_end"] = end_date.isoformat()
-    analysis = analyze_skd_quality_cached(
-        selected_defects,
-        stored_inputs,
-        rules,
-        f"Local stored Assembly data · {defect_source_note}",
-    )
-    raw = analysis["raw"].copy()
-    duty_column = rules["mando_column"]
-    if duty_column not in raw.columns:
-        raise RuntimeError(f"Assembly defects do not contain the {duty_column} column.")
-    allowed_duty_types = {compact_text(value) for value in ASSEMBLY_SMT_DUTY_TYPES}
-    normalized_duty = raw[duty_column].fillna("").astype(str).map(compact_text)
-    duty_mask = raw["ConfirmedDefect"].fillna(False).astype(bool) & normalized_duty.isin(allowed_duty_types)
-    duty_rows = raw[duty_mask].copy()
-    produced = int(analysis["totals"]["produced"])
-    duty_defects = int(len(duty_rows))
-    duty_ppm = duty_defects / produced * 1_000_000 if produced else None
-
-    trend_settings = analysis["trend_settings"]
-    trend = analysis["trend"][["PeriodDate", "Period", "Produced"]].copy()
-    trend["Period"] = trend["PeriodDate"].map(
-        lambda value: format_trend_period(value, trend_settings["grain"])
-    )
-    duty_period_rows = add_trend_period(duty_rows, "_Date", trend_settings)
-    duty_by_period = (
-        duty_period_rows.groupby("PeriodDate", as_index=False)
-        .agg(DutyDefects=("Item", "count"))
-        if not duty_rows.empty
-        else pd.DataFrame(columns=["PeriodDate", "DutyDefects"])
-    )
-    trend = trend.merge(duty_by_period, on="PeriodDate", how="left")
-    trend["DutyDefects"] = trend["DutyDefects"].fillna(0).astype(int)
-    trend["DutyPPM"] = trend["DutyDefects"] / trend["Produced"].replace(0, pd.NA) * 1_000_000
-    trend = trend.sort_values("PeriodDate")
-
+    metrics = calculate_assembly_kpi_metrics(start_date, end_date)
+    duty_rows = metrics["defects"][metrics["defects"]["IsSMTDuty"]].copy()
+    trend = metrics["trend"][["PeriodDate", "Period", "Produced", "SMTDutyPCBs", "SMTDutyPPM"]].copy()
+    trend = trend.rename(columns={"SMTDutyPCBs": "DutyDefects", "SMTDutyPPM": "DutyPPM"})
     breakdown = (
-        duty_rows.groupby(duty_column, as_index=False)
-        .agg(DefectRecords=("Item", "count"))
-        .rename(columns={duty_column: "DutyType"})
-        .sort_values("DefectRecords", ascending=False)
+        duty_rows.groupby("FinalDutyType", as_index=False)["PCBNormalized"]
+        .nunique()
+        .rename(columns={"FinalDutyType": "DutyType", "PCBNormalized": "DefectPCBs"})
+        .sort_values("DefectPCBs", ascending=False)
     )
     return {
-        "produced": produced,
-        "duty_defects": duty_defects,
-        "duty_ppm": duty_ppm,
+        "produced": metrics["produced"],
+        "duty_defects": metrics["smt_duty_pcbs"],
+        "duty_ppm": metrics["smt_duty_ppm"],
         "trend": trend,
-        "trend_settings": trend_settings,
+        "trend_settings": metrics["trend_settings"],
         "breakdown": breakdown,
-        "source": analysis["totals"]["source"],
+        "source": metrics["source"],
     }
 
 
 def assembly_input_bounds(input_paths: list[Path]) -> tuple[date, date]:
-    import pandas as pd
-
     starts = []
-    ends = []
     for input_path in input_paths:
-        frame = read_production_file(input_path, input_path.name)
-        if frame.empty:
+        try:
+            frame = assembly_kpi_v2.read_daily_input(input_path)
+        except Exception:
             continue
-        starts.extend(pd.to_datetime(frame["ProductionStart"], errors="coerce").dropna().tolist())
-        ends.extend(pd.to_datetime(frame["ProductionEnd"], errors="coerce").dropna().tolist())
-    if not starts or not ends:
-        raise RuntimeError("Assembly input files do not contain valid production dates.")
-    return min(starts).date(), max(ends).date()
+        starts.extend(frame["Date"].dropna().tolist())
+    if not starts:
+        raise RuntimeError("Nenhum arquivo de input diário válido foi encontrado.")
+    return min(starts).date(), max(starts).date()
 
 
 def calculate_assembly_kpi_metrics(start_date: date, end_date: date) -> dict:
     import pandas as pd
 
-    stored_defects, stored_inputs = stored_assembly_sources()
-    if not stored_defects or not stored_inputs:
-        raise RuntimeError("Stored Assembly input and defects are required.")
-    selected_defects, defect_source_note = select_defect_sources(stored_defects)
-    rules = load_rules()
-    rules["date_start"] = start_date.isoformat()
-    rules["date_end"] = end_date.isoformat()
-    analysis = analyze_skd_quality_cached(
-        selected_defects,
-        stored_inputs,
-        rules,
-        f"Local stored Assembly data · {defect_source_note}",
+    sources = stored_assembly_sources_v2()
+    if not sources["input"] or not sources["defects"] or not sources["repair"]:
+        raise RuntimeError("Carregue inputs diários, defeitos gerais cumulativos e reparo cumulativo de Assembly.")
+
+    def latest_valid(paths, reader, label):
+        errors = []
+        for path in reversed(paths):
+            try:
+                reader(path)
+                return path
+            except Exception as exc:
+                errors.append(f"{path.name}: {exc}")
+        raise RuntimeError(f"Nenhum arquivo válido de {label} foi encontrado. " + " | ".join(errors[:2]))
+
+    defect_path = latest_valid(sources["defects"], assembly_kpi_v2.read_fpy_defects, "defeitos gerais")
+    repair_path = latest_valid(sources["repair"], assembly_kpi_v2.read_repair, "reparo")
+    valid_inputs = []
+    for path in sources["input"]:
+        try:
+            assembly_kpi_v2.read_daily_input(path)
+        except Exception:
+            continue
+        valid_inputs.append(path)
+    if not valid_inputs:
+        raise RuntimeError("Nenhum input diário válido de Assembly foi encontrado.")
+
+    result = assembly_kpi_v2.calculate(valid_inputs, defect_path, repair_path, start_date, end_date)
+    trend = result["daily"].rename(
+        columns={
+            "Date": "PeriodDate",
+            "Input": "Produced",
+            "FunctionalNGPCBs": "FunctionalNGRecords",
+            "AppearanceNGPCBs": "AppearanceNGRecords",
+            "AppearancePassRate": "AppearanceTotalPassRate",
+        }
     )
-    raw = analysis["raw"].copy()
-    operation_column = "TestOperation" if "TestOperation" in raw.columns else None
-    duty_column = rules["mando_column"]
-    if operation_column is None:
-        raise RuntimeError("Assembly defects do not contain the TestOperation column.")
-    if duty_column not in raw.columns:
-        raise RuntimeError(f"Assembly defects do not contain the {duty_column} column.")
-
-    operations = sorted(
-        value
-        for value in raw[operation_column].fillna("").astype(str).str.strip().unique()
-        if value
+    trend["Period"] = trend["PeriodDate"].map(lambda value: pd.Timestamp(value).strftime("%d/%m"))
+    result.update(
+        {
+            "source": f"{defect_path.name} + {repair_path.name}",
+            "operations": sorted(set(result["defects"]["Operation"])),
+            "functional_operations": list(assembly_kpi_v2.FUNCTIONAL_OPERATIONS),
+            "appearance_operations": list(assembly_kpi_v2.APPEARANCE_OPERATIONS),
+            "unclassified_operations": sorted(set(result["unclassified"]["Operation"])),
+            "functional_records": result["functional_pcbs"],
+            "appearance_records": result["appearance_pcbs"],
+            "functional_mando_pcbs": result["function_mando_pcbs"],
+            "trend": trend.sort_values("PeriodDate"),
+            "trend_settings": {"grain": "daily", "label": "Daily"},
+        }
     )
-    functional_operations = {str(value).strip() for value in rules.get("assembly_functional_operations", []) if str(value).strip()}
-    appearance_operations = {str(value).strip() for value in rules.get("assembly_appearance_operations", []) if str(value).strip()}
-    raw["FailureType"] = "Unclassified"
-    raw.loc[raw[operation_column].isin(functional_operations), "FailureType"] = "Functional Failure"
-    raw.loc[raw[operation_column].isin(appearance_operations), "FailureType"] = "Appearance Failure"
-
-    confirmed = raw[raw["ConfirmedDefect"].fillna(False).astype(bool)].copy()
-    functional = confirmed[confirmed["FailureType"].eq("Functional Failure")].copy()
-    appearance = confirmed[confirmed["FailureType"].eq("Appearance Failure")].copy()
-    functional_mando = functional[keyword_mask(functional[duty_column], ["Mando", "Man-do", "Man Do", "Man_Do"])].copy()
-    produced = int(analysis["totals"]["produced"])
-
-    def confirmed_record_count(frame) -> int:
-        """MES Functional/Appearance quantities count valid defect occurrences, not unique PCBs."""
-        return int(len(frame))
-
-    def unique_pcb_count(frame) -> int:
-        """The dedicated Mando PPM remains a PCB-based KPI until its MES definition is separately reconciled."""
-        return int(frame["PCB"].replace("", pd.NA).dropna().nunique()) if not frame.empty else 0
-
-    functional_records = confirmed_record_count(functional)
-    appearance_records = confirmed_record_count(appearance)
-    functional_mando_pcbs = unique_pcb_count(functional_mando)
-
-    trend_settings = analysis["trend_settings"]
-    trend = analysis["trend"][["PeriodDate", "Period", "Produced"]].copy()
-    trend["Period"] = trend["PeriodDate"].map(
-        lambda value: format_trend_period(value, trend_settings["grain"])
-    )
-
-    def period_record_counts(frame, column_name: str):
-        period_frame = add_trend_period(frame, "_Date", trend_settings)
-        if period_frame.empty:
-            return pd.DataFrame(columns=["PeriodDate", column_name])
-        return period_frame.groupby("PeriodDate", as_index=False).agg(**{column_name: ("Item", "size")})
-
-    def period_pcb_counts(frame, column_name: str):
-        period_frame = add_trend_period(frame, "_Date", trend_settings)
-        if period_frame.empty:
-            return pd.DataFrame(columns=["PeriodDate", column_name])
-        return period_frame.groupby("PeriodDate", as_index=False).agg(**{column_name: ("PCB", "nunique")})
-
-    trend = trend.merge(period_record_counts(functional, "FunctionalNGRecords"), on="PeriodDate", how="left")
-    trend = trend.merge(period_record_counts(appearance, "AppearanceNGRecords"), on="PeriodDate", how="left")
-    trend = trend.merge(period_pcb_counts(functional_mando, "FunctionMandoPCBs"), on="PeriodDate", how="left")
-    for column in ["FunctionalNGRecords", "AppearanceNGRecords", "FunctionMandoPCBs"]:
-        trend[column] = trend[column].fillna(0).astype(int)
-    trend["FunctionPassRate"] = (trend["Produced"] - trend["FunctionalNGRecords"]) / trend["Produced"].replace(0, pd.NA)
-    trend["AppearanceTotalPassRate"] = (trend["Produced"] - trend["AppearanceNGRecords"]) / trend["Produced"].replace(0, pd.NA)
-    trend["FunctionMandoPPM"] = trend["FunctionMandoPCBs"] / trend["Produced"].replace(0, pd.NA) * 1_000_000
-
-    return {
-        "source": analysis["totals"]["source"],
-        "operations": operations,
-        "functional_operations": sorted(functional_operations),
-        "appearance_operations": sorted(appearance_operations),
-        "unclassified_operations": sorted(
-            set(operations) - functional_operations - appearance_operations
-        ),
-        "produced": produced,
-        "functional_records": functional_records,
-        "appearance_records": appearance_records,
-        "functional_mando_pcbs": functional_mando_pcbs,
-        "function_pass_rate": (produced - functional_records) / produced if produced and functional_operations else None,
-        "appearance_pass_rate": (produced - appearance_records) / produced if produced and appearance_operations else None,
-        "function_mando_ppm": functional_mando_pcbs / produced * 1_000_000 if produced and functional_operations else None,
-        "trend": trend.sort_values("PeriodDate"),
-        "trend_settings": trend_settings,
-    }
+    return result
 
 
 def build_assembly_oqc_fqc_trend(records, start_date: date, end_date: date):
@@ -5771,7 +5718,7 @@ def smt_kpi_track_page(color: str) -> None:
 
     input_paths, defect_paths = smt_quality_dashboard.stored_smt_sources()
     if not input_paths or not defect_paths:
-        st.error("SMT input and defect files are required before KPI calculation.")
+        st.info("Abra a aba Data Upload e carregue pelo menos o Input FPY e os Defeitos FPY para iniciar os cálculos de SMT.")
         return
     input_signatures = tuple(smt_quality_dashboard.path_signature(path) for path in input_paths)
     minimum_date, maximum_date = smt_quality_dashboard.input_bounds(input_signatures)
@@ -6089,9 +6036,10 @@ def assembly_kpi_track_page(color: str) -> None:
     import pandas as pd
 
     st.markdown(f"<h1 class='section-title' style='color:{color};'>Assembly KPI Track</h1>", unsafe_allow_html=True)
-    stored_defects, stored_inputs = stored_assembly_sources()
-    if not stored_defects or not stored_inputs:
-        st.error("Assembly input and defect files are required before KPI calculation.")
+    sources = stored_assembly_sources_v2()
+    stored_inputs = sources["input"]
+    if not sources["defects"] or not stored_inputs or not sources["repair"]:
+        st.info("Abra a aba Data Upload e carregue os três grupos: Input FPY diário, Defeitos FPY cumulativos e Defeitos de reparo cumulativos.")
         return
     try:
         minimum_date, maximum_date = assembly_input_bounds(stored_inputs)
@@ -6120,44 +6068,12 @@ def assembly_kpi_track_page(color: str) -> None:
         st.error(f"Unable to calculate Assembly KPIs: {calculation_error}")
         return
 
-    with st.expander("Assembly failure classification", expanded=not metrics["functional_operations"] or not metrics["appearance_operations"]):
-        with st.form("assembly_failure_classification_form"):
-            functional_selection = st.multiselect(
-                "Functional Failure stations",
-                options=metrics["operations"],
-                default=[value for value in metrics["functional_operations"] if value in metrics["operations"]],
-                key="assembly_kpi_functional_operations",
-            )
-            appearance_selection = st.multiselect(
-                "Appearance Failure stations",
-                options=metrics["operations"],
-                default=[value for value in metrics["appearance_operations"] if value in metrics["operations"]],
-                key="assembly_kpi_appearance_operations",
-            )
-            save_classification = st.form_submit_button("Save Assembly classification", use_container_width=True)
-        if save_classification:
-            overlap = sorted(set(functional_selection) & set(appearance_selection))
-            if overlap:
-                st.error("A station cannot be both Functional and Appearance: " + ", ".join(overlap))
-            else:
-                updated_rules = load_rules()
-                updated_rules["assembly_functional_operations"] = functional_selection
-                updated_rules["assembly_appearance_operations"] = appearance_selection
-                save_rules(updated_rules)
-                st.success("Assembly failure classification saved.")
-                st.rerun()
-
-    functional_ready = bool(metrics["functional_operations"])
-    appearance_ready = bool(metrics["appearance_operations"])
-    if not functional_ready or not appearance_ready:
-        missing = []
-        if not functional_ready:
-            missing.append("Functional Failure")
-        if not appearance_ready:
-            missing.append("Appearance Failure")
-        st.warning(
-            "Complete the Assembly station classification to calculate: " + ", ".join(missing) + "."
-        )
+    functional_ready = True
+    appearance_ready = True
+    st.caption(
+        "Regras MES validadas: PCB único no período; defeitos separados por TestOperation; "
+        "responsabilidade final atualizada pelo reparo cumulativo."
+    )
     oqc_fqc_records = load_assembly_oqc_fqc_inspections(start_date, end_date)
     oqc_inspected = int(oqc_fqc_records["OQCInspected"].sum()) if not oqc_fqc_records.empty else 0
     oqc_ok = int(oqc_fqc_records["OQCOK"].sum()) if not oqc_fqc_records.empty else 0
@@ -6173,14 +6089,14 @@ def assembly_kpi_track_page(color: str) -> None:
         smt_kpi_card(
             "Function Pass Rate",
             fmt_kpi_pct(metrics["function_pass_rate"]),
-            f"{fmt_int(metrics['functional_records'])} functional NG records · {fmt_int(metrics['produced'])} input" if functional_ready else "Awaiting station classification",
+            f"{fmt_int(metrics['functional_records'])} PCBs funcionais NG · {fmt_int(metrics['produced'])} input" if functional_ready else "Classificação indisponível",
             color,
         )
     with cards[1]:
         smt_kpi_card(
             "Appearance Total Pass Rate",
             fmt_kpi_pct(metrics["appearance_pass_rate"]),
-            f"{fmt_int(metrics['appearance_records'])} appearance NG records · {fmt_int(metrics['produced'])} input" if appearance_ready else "Awaiting station classification",
+            f"{fmt_int(metrics['appearance_records'])} PCBs de aparência NG · {fmt_int(metrics['produced'])} input" if appearance_ready else "Classificação indisponível",
             color,
         )
     with cards[2]:
@@ -6202,23 +6118,23 @@ def assembly_kpi_track_page(color: str) -> None:
         {
             "KPI": "Function Pass Rate",
             "Calculation basis": (
-                f"{fmt_int(metrics['functional_records'])} functional NG records | "
+                f"{fmt_int(metrics['functional_records'])} functional NG PCBs | "
                 f"{fmt_int(metrics['produced'])} Assembly input"
                 if functional_ready
                 else "Functional classification pending"
             ),
-            "Formula": "(Input − functional NG records) / Input × 100",
+            "Formula": "(Input − unique functional NG PCB) / Input × 100",
             "Result": fmt_kpi_pct(metrics["function_pass_rate"]),
         },
         {
             "KPI": "Appearance Total Pass Rate",
             "Calculation basis": (
-                f"{fmt_int(metrics['appearance_records'])} appearance NG records | "
+                f"{fmt_int(metrics['appearance_records'])} appearance NG PCBs | "
                 f"{fmt_int(metrics['produced'])} Assembly input"
                 if appearance_ready
                 else "Appearance classification pending"
             ),
-            "Formula": "(Input − appearance NG records) / Input × 100",
+            "Formula": "(Input − unique appearance NG PCB) / Input × 100",
             "Result": fmt_kpi_pct(metrics["appearance_pass_rate"]),
         },
         {
@@ -6241,6 +6157,36 @@ def assembly_kpi_track_page(color: str) -> None:
     ]
     st.markdown("### KPI formulas")
     styled_table(pd.DataFrame(formula_rows), table_class="kpi-formula-table")
+
+    with st.expander("Detalhamento diário e qualidade dos dados", expanded=True):
+        daily_view = metrics["daily"].copy()
+        daily_view["Date"] = pd.to_datetime(daily_view["Date"]).dt.strftime("%d/%m/%Y")
+        daily_view["Function Pass Rate"] = (daily_view["FunctionPassRate"] * 100).round(2)
+        daily_view["Appearance Pass Rate"] = (daily_view["AppearancePassRate"] * 100).round(2)
+        daily_view["Function Mando PPM"] = daily_view["FunctionMandoPPM"].round(2)
+        daily_view = daily_view.rename(
+            columns={
+                "Date": "Data",
+                "FunctionalNGPCBs": "Functional NG",
+                "AppearanceNGPCBs": "Appearance NG",
+                "FunctionMandoPCBs": "Function Mando NG",
+                "PendingResponsibilityPCBs": "Responsabilidade pendente",
+            }
+        )
+        styled_table(
+            daily_view[
+                [
+                    "Data", "Input", "Functional NG", "Function Pass Rate",
+                    "Appearance NG", "Appearance Pass Rate", "Function Mando NG",
+                    "Function Mando PPM", "Responsabilidade pendente",
+                ]
+            ]
+        )
+        st.caption(
+            f"Fonte ativa: {metrics['source']} · "
+            f"{fmt_int(metrics['pending_responsibility_pcbs'])} PCB(s) funcionais com responsabilidade pendente · "
+            f"{fmt_int(len(metrics['unclassified']))} ocorrência(s) fora do escopo."
+        )
 
     trend = metrics["trend"]
     trend_label = metrics["trend_settings"]["label"]
@@ -6497,7 +6443,7 @@ def _build_smt_dashboard_view(analysis: dict, model: str, station: str, failure_
             ].sum()
         )
         period_confirmed = confirmed[
-            confirmed["TestTime"].ge(begin) & confirmed["TestTime"].lt(end)
+            confirmed["KPIDate"].ge(begin) & confirmed["KPIDate"].lt(end)
         ]
         period_classified = period_confirmed[
             period_confirmed["FailureType"].isin(["Functional Failure", "Appearance Failure"])
@@ -6700,9 +6646,7 @@ def smt_quality_dashboard_v2(color: str) -> None:
     input_paths, defect_paths = smt_quality_dashboard.stored_smt_sources()
     source_seconds = perf_counter() - source_started
     if not input_paths or not defect_paths:
-        st.warning("SMT stored data is incomplete. Add at least one input file and one defect file.")
-        with st.expander("Upload SMT data", expanded=True):
-            smt_quality_dashboard._upload_section(color)
+        st.warning("Os dados de SMT estão incompletos. Abra a aba Data Upload para carregar os arquivos necessários.")
         return
 
     input_signatures = tuple(smt_quality_dashboard.path_signature(path) for path in input_paths)
@@ -6925,10 +6869,10 @@ def smt_quality_dashboard_v2(color: str) -> None:
                 )
             )
 
-    with st.expander("Excluded retest, repeats and data-quality audit"):
+    with st.expander("Repeats and data-quality audit"):
         audit_cards = st.columns(4)
         with audit_cards[0]:
-            smt_kpi_card("Excluded retest records", fmt_int(len(view["rejudge"])), "Re-Judge, Re-Download or Re-Calibration", color)
+            smt_kpi_card("FPY-approved records", fmt_int(len(view["confirmed"])), "No secondary exclusion", color)
         with audit_cards[1]:
             smt_kpi_card(
                 "Repeated PCBs",
@@ -6967,7 +6911,7 @@ def smt_quality_dashboard_v2(color: str) -> None:
 
     with st.expander("Filtered detail and export"):
         visible_columns = [
-            "PCB", "TestTime", "Model", "Operation", "FailureType", "Phenomenon", "DutyType", "Maintenance"
+            "PCB", "EntryTime", "TestTime", "Model", "Operation", "FailureType", "Phenomenon", "DutyType", "Maintenance"
         ]
         detail = view["confirmed"][[column for column in visible_columns if column in view["confirmed"].columns]].copy()
         st.caption(f"{fmt_int(len(detail))} confirmed records match the global filters.")
@@ -6984,9 +6928,6 @@ def smt_quality_dashboard_v2(color: str) -> None:
             mime="text/csv",
             use_container_width=True,
         )
-
-    with st.expander("Upload SMT data"):
-        smt_quality_dashboard._upload_section(color)
 
     record_dashboard_performance(
         "SMT Quality Dashboard",
@@ -7059,10 +7000,12 @@ def _build_assembly_dashboard_view(
     rejudge = raw[raw["IsRejudgeOK"].fillna(False).astype(bool)].copy()
     functional = confirmed[confirmed["FailureType"].eq("Functional Failure")].copy()
     appearance = confirmed[confirmed["FailureType"].eq("Appearance Failure")].copy()
-    functional_mando = functional[
-        keyword_mask(functional[duty_column], ["Mando", "Man-do", "Man Do", "Man_Do"])
+    functional_mando = confirmed[
+        confirmed.get("IsFunctionMando", False).fillna(False).astype(bool)
     ].copy()
-    smt_origin = confirmed[confirmed["DutyCategory"].eq("SMT")].copy()
+    smt_origin = confirmed[
+        confirmed.get("IsSMTDuty", False).fillna(False).astype(bool)
+    ].copy()
     produced = int(production_detail["Produced"].sum())
 
     def unique_count(frame) -> int:
@@ -7269,34 +7212,53 @@ def _build_assembly_dashboard_view(
 
 
 def _assembly_upload_section_v2(store_status: dict) -> None:
-    st.caption("Add one cumulative defects workbook and one or more production/input files.")
+    st.caption(
+        "Carregue inputs FPY diariamente. Para defeitos FPY e reparo, carregue sempre o snapshot MTD/YTD mais recente."
+    )
     cards = st.columns(4)
     with cards[0]:
-        smt_kpi_card("Defect files", fmt_int(store_status["defects"]), "Local history", "#6532C8")
+        smt_kpi_card("FPY Input", fmt_int(store_status["input"]), "Arquivos diários", "#6532C8")
     with cards[1]:
-        smt_kpi_card("Input files", fmt_int(store_status["input"]), "Local history", "#6532C8")
+        smt_kpi_card("FPY Defects", fmt_int(store_status["defects"]), "Snapshots MTD/YTD", "#6532C8")
     with cards[2]:
-        smt_kpi_card("Stored size", f"{store_status['bytes'] / 1024 / 1024:.1f} MB", "Local files", "#6532C8")
+        smt_kpi_card("Repair Defects", fmt_int(store_status["repair"]), "Snapshots MTD/YTD", "#6532C8")
     with cards[3]:
-        smt_kpi_card("Latest import", str(store_status["latest"]), "Local data store", "#6532C8")
-    uploaded_defects = st.file_uploader(
-        "Assembly defects file", type=["xlsx"], key="assembly_quality_v2_defects_upload"
-    )
+        smt_kpi_card("Stored size", f"{store_status['bytes'] / 1024 / 1024:.1f} MB", "Local files", "#6532C8")
+    st.caption(f"Última importação: {store_status['latest']}")
     uploaded_inputs = st.file_uploader(
-        "Assembly production/input files",
-        type=["csv", "xls", "xlsx"],
+        "Input FPY — Assembly",
+        type=["xls", "xlsx"],
         accept_multiple_files=True,
         key="assembly_quality_v2_inputs_upload",
     )
-    if uploaded_defects and uploaded_inputs:
-        if st.button("Save Assembly files", use_container_width=True, key="assembly_quality_v2_save"):
-            results = [persist_assembly_source(uploaded_defects, "defects", "manual upload")]
-            results.extend(
-                persist_assembly_source(uploaded, "input", "manual upload")
-                for uploaded in uploaded_inputs
-            )
+    uploaded_defects = st.file_uploader(
+        "Defeitos FPY — Assembly (MTD/YTD)", type=["xls", "xlsx"], key="assembly_quality_v2_defects_upload"
+    )
+    uploaded_repair = st.file_uploader(
+        "Defeitos de reparo — Assembly (MTD/YTD)", type=["xls", "xlsx"], key="assembly_quality_v2_repair_upload"
+    )
+    if st.button(
+        "Salvar arquivos de Assembly",
+        use_container_width=True,
+        key="assembly_quality_v2_save",
+        disabled=not (uploaded_defects or uploaded_repair or uploaded_inputs),
+    ):
+        results = []
+        try:
+            for uploaded in uploaded_inputs or []:
+                assembly_kpi_v2.read_daily_input(uploaded)
+                results.append(persist_assembly_source(uploaded, "input", "manual upload"))
+            if uploaded_defects:
+                assembly_kpi_v2.read_fpy_defects(uploaded_defects)
+                results.append(persist_assembly_source(uploaded_defects, "defects", "manual upload"))
+            if uploaded_repair:
+                assembly_kpi_v2.read_repair(uploaded_repair)
+                results.append(persist_assembly_source(uploaded_repair, "repair", "manual upload"))
+        except Exception as exc:
+            st.error(str(exc))
+        else:
             st.session_state["assembly_last_import_results"] = results
-            st.success("Assembly files processed.")
+            st.success("Arquivos de Assembly processados.")
             st.rerun()
     if st.button(
         "Refresh monitored folder",
@@ -7310,32 +7272,54 @@ def _assembly_upload_section_v2(store_status: dict) -> None:
     render_assembly_source_manager()
 
 
+def data_upload_page(module: str, color: str) -> None:
+    """Central upload workspace for the three validated MES source groups."""
+    st.markdown(
+        f"<h1 class='section-title' style='color:{color};'>{module} · Data Upload</h1>",
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "Gerencie aqui os arquivos que alimentam o KPI Track e o Quality Dashboard desta área. "
+        "Cada área mantém sua própria base de Input FPY, Defeitos FPY e Defeitos de reparo."
+    )
+    if module == "SMT":
+        import importlib
+        from tools import smt_quality_dashboard
+
+        importlib.reload(smt_quality_dashboard)
+        smt_quality_dashboard._upload_section(color)
+        return
+    if module == "Assembly":
+        st.markdown("### Upload Data")
+        _assembly_upload_section_v2(assembly_store_status())
+
+
 def assembly_quality_dashboard_v2(color: str) -> None:
     import pandas as pd
     from tools import dashboard_charts
 
     page_started = perf_counter()
     source_started = perf_counter()
-    stored_rules = load_rules()
     if not st.session_state.get("assembly_auto_import_checked", False):
         results = import_assembly_monitored_folder()
         st.session_state["assembly_auto_import_checked"] = True
         if any(result["status"] == "imported" for result in results):
             st.session_state["assembly_last_import_results"] = results
-    stored_defects, stored_inputs = stored_assembly_sources()
+    sources = stored_assembly_sources_v2()
+    stored_inputs = sources["input"]
     store_status = assembly_store_status(sync=False)
     source_seconds = perf_counter() - source_started
     st.markdown(
         f"<h1 class='section-title' style='color:{color};'>Assembly · Quality Dashboard</h1>",
         unsafe_allow_html=True,
     )
-    if not stored_defects or not stored_inputs:
-        st.warning("Stored Assembly input and defect files are required.")
-        with st.expander("Upload Assembly data", expanded=True):
-            _assembly_upload_section_v2(store_status)
+    if not stored_inputs or not sources["defects"] or not sources["repair"]:
+        st.warning(
+            "Os dados de Assembly estão incompletos. Abra Data Upload e carregue input FPY diário, "
+            "defeitos FPY cumulativos e defeitos de reparo cumulativos."
+        )
         return
 
-    selected_defects, defect_source_note = select_defect_sources(stored_defects)
     minimum_date, maximum_date = assembly_input_bounds(stored_inputs)
     filter_panel = st.container(key="assembly_quality_v2_filter_panel")
     with filter_panel:
@@ -7347,20 +7331,42 @@ def assembly_quality_dashboard_v2(color: str) -> None:
             default_end=maximum_date,
         )
 
-    rules = stored_rules.copy()
+    rules = load_rules().copy()
+    rules["assembly_functional_operations"] = list(assembly_kpi_v2.FUNCTIONAL_OPERATIONS)
+    rules["assembly_appearance_operations"] = list(assembly_kpi_v2.APPEARANCE_OPERATIONS)
+    rules["mando_column"] = "DutyType"
     rules["date_start"] = start_date.isoformat()
     rules["date_end"] = end_date.isoformat()
     analysis_started = perf_counter()
     try:
-        analysis = analyze_skd_quality_cached(
-            selected_defects,
-            stored_inputs,
-            rules,
-            f"Local stored Assembly data · {defect_source_note}",
-        )
+        metrics = calculate_assembly_kpi_metrics(start_date, end_date)
     except Exception as exc:
         st.error(f"Unable to calculate the Assembly dashboard: {exc}")
         return
+    raw = metrics["defects"].copy()
+    raw["TestOperation"] = raw["Operation"]
+    raw["DutyType"] = raw["FinalDutyType"]
+    raw["ConfirmedDefect"] = True
+    raw["IsRejudgeOK"] = False
+    raw["_Date"] = raw["DefectDate"]
+    if "Line" not in raw:
+        raw["Line"] = raw["TestLine"] if "TestLine" in raw else ""
+    if "Maintenance" not in raw:
+        raw["Maintenance"] = ""
+    production_detail = metrics["inputs"].rename(
+        columns={"Date": "ProductionStart", "Input": "Produced"}
+    ).copy()
+    production_detail["ProductionEnd"] = production_detail["ProductionStart"]
+    analysis = {
+        "raw": raw,
+        "production_detail": production_detail,
+        "trend_settings": trend_granularity(
+            pd.Timestamp(start_date), pd.Timestamp(end_date), production_detail
+        ),
+        "defect_merge_stats": {"merged_updates": 0},
+        "production_input_audit": pd.DataFrame(),
+        "production_input_stats": {},
+    }
     analysis_seconds = perf_counter() - analysis_started
 
     raw = analysis["raw"].copy()
@@ -7524,12 +7530,12 @@ def assembly_quality_dashboard_v2(color: str) -> None:
             "#0D7A45",
         )
     with data_quality[1]:
-        rejudge_rate = len(view["rejudge"]) / max(len(view["rejudge"]) + len(view["confirmed"]), 1)
-        smt_kpi_card("Excluded retest rate", fmt_kpi_pct(rejudge_rate), f"{fmt_int(len(view['rejudge']))} records", "#1D5FBF")
+        smt_kpi_card("FPY-authoritative records", fmt_int(len(view["confirmed"])), "No secondary defect exclusions", "#1D5FBF")
     with data_quality[2]:
         smt_kpi_card("Exceptions", fmt_int(view["exceptions"]), "Blocked input or PPM periods", "#DC2626")
     with data_quality[3]:
-        smt_kpi_card("Defect updates merged", fmt_int(analysis["defect_merge_stats"].get("merged_updates", 0)), "Latest non-blank values retained", "#64748B")
+        pending = view["confirmed"].get("ResponsibilityPending", pd.Series(False, index=view["confirmed"].index))
+        smt_kpi_card("Pending responsibility", fmt_int(int(pending.fillna(False).sum())), "Excluded only from responsibility KPIs", "#64748B")
 
     with st.expander("Functional, appearance, model and station analysis"):
         left, right = st.columns(2)
@@ -7575,42 +7581,15 @@ def assembly_quality_dashboard_v2(color: str) -> None:
             )
 
     with st.expander("Assembly failure classification rules"):
-        operation_options = sorted(set(analysis["raw"]["TestOperation"].dropna().astype(str)))
-        with st.form("assembly_quality_v2_classification_form"):
-            functional_selection = st.multiselect(
-                "Functional Failure stations",
-                options=operation_options,
-                default=[
-                    value
-                    for value in rules.get("assembly_functional_operations", [])
-                    if value in operation_options
-                ],
-                key="assembly_quality_v2_functional_operations",
-            )
-            appearance_selection = st.multiselect(
-                "Appearance Failure stations",
-                options=operation_options,
-                default=[
-                    value
-                    for value in rules.get("assembly_appearance_operations", [])
-                    if value in operation_options
-                ],
-                key="assembly_quality_v2_appearance_operations",
-            )
-            save_classification = st.form_submit_button(
-                "Save Assembly classification", use_container_width=True
-            )
-        if save_classification:
-            overlap = sorted(set(functional_selection) & set(appearance_selection))
-            if overlap:
-                st.error("A station cannot be both Functional and Appearance: " + ", ".join(overlap))
-            else:
-                updated_rules = load_rules()
-                updated_rules["assembly_functional_operations"] = functional_selection
-                updated_rules["assembly_appearance_operations"] = appearance_selection
-                save_rules(updated_rules)
-                st.success("Assembly failure classification saved.")
-                st.rerun()
+        st.caption("Validated fixed MES operation groups. Changes require a new KPI validation.")
+        left, right = st.columns(2)
+        with left:
+            st.markdown("**Functional Failure**")
+            st.write(list(assembly_kpi_v2.FUNCTIONAL_OPERATIONS))
+        with right:
+            st.markdown("**Appearance Failure**")
+            st.write(list(assembly_kpi_v2.APPEARANCE_OPERATIONS))
+        st.info("Aging-Software-Testing remains outside both KPI classifications.")
 
     with st.expander("Filtered detail, audit and export"):
         visible_columns = [
@@ -7645,19 +7624,6 @@ def assembly_quality_dashboard_v2(color: str) -> None:
                 max_rows=50,
                 table_class="compact-dashboard-table",
             )
-        if st.button("Prepare Assembly analysis workbook", use_container_width=True):
-            st.session_state["assembly_quality_v2_export"] = make_skd_export(analysis).getvalue()
-        if "assembly_quality_v2_export" in st.session_state:
-            st.download_button(
-                "Download Assembly analysis workbook",
-                data=st.session_state["assembly_quality_v2_export"],
-                file_name="assembly_quality_analysis.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
-            )
-
-    with st.expander("Upload Assembly data"):
-        _assembly_upload_section_v2(store_status)
 
     record_dashboard_performance(
         "Assembly Quality Dashboard",
@@ -7666,7 +7632,7 @@ def assembly_quality_dashboard_v2(color: str) -> None:
         source_seconds,
         analysis_seconds,
         perf_counter() - page_started,
-        len(stored_defects) + len(stored_inputs),
+        sum(len(paths) for paths in sources.values()),
     )
 
 
@@ -7998,6 +7964,8 @@ def render_page() -> None:
             bom_tool_smt_page()
         elif tab == "BOM Comparison Tool - Assembly":
             bom_tool_assy_page()
+        elif tab == "Data Upload":
+            data_upload_page(module, color)
     elif module == "IQC":
         iqc_page()
     elif module == "Smart Report":
