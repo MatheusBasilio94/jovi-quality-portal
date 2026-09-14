@@ -1,10 +1,28 @@
 import tempfile
 import unittest
+import sys
+import types
 from datetime import date
 from io import BytesIO
 from pathlib import Path
 
 import pandas as pd
+
+
+try:
+    import streamlit  # noqa: F401
+except ModuleNotFoundError:
+    def _identity_cache(*args, **kwargs):
+        def decorator(function):
+            return function
+
+        return decorator
+
+    streamlit_stub = types.ModuleType("streamlit")
+    streamlit_stub.cache_data = _identity_cache
+    streamlit_stub.cache_resource = _identity_cache
+    streamlit_stub.secrets = {}
+    sys.modules["streamlit"] = streamlit_stub
 
 from tools import assembly_kpi_v2, smt_quality_dashboard
 
@@ -111,6 +129,27 @@ class AssemblyValidatedRulesTest(unittest.TestCase):
 
 
 class SMTValidatedRulesTest(unittest.TestCase):
+    def test_weekly_trend_boundaries_stay_inside_selected_period(self) -> None:
+        first_week = pd.Timestamp("2026-08-01").to_period("W-SUN")
+        first_begin, first_end = smt_quality_dashboard.clipped_trend_period_bounds(
+            first_week,
+            "week",
+            pd.Timestamp("2026-08-01"),
+            pd.Timestamp("2026-09-01"),
+        )
+        self.assertEqual(first_begin, pd.Timestamp("2026-08-01"))
+        self.assertEqual(first_end, pd.Timestamp("2026-08-03"))
+
+        last_week = pd.Timestamp("2026-08-31").to_period("W-SUN")
+        last_begin, last_end = smt_quality_dashboard.clipped_trend_period_bounds(
+            last_week,
+            "week",
+            pd.Timestamp("2026-08-01"),
+            pd.Timestamp("2026-09-01"),
+        )
+        self.assertEqual(last_begin, pd.Timestamp("2026-08-31"))
+        self.assertEqual(last_end, pd.Timestamp("2026-09-01"))
+
     def test_fpy_detail_is_authoritative_and_uses_entry_date(self) -> None:
         detail = pd.DataFrame(
             [
