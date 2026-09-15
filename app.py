@@ -13,7 +13,6 @@ from io import BytesIO
 from numbers import Number
 from pathlib import Path
 from time import perf_counter
-from urllib.parse import quote
 
 from tools.supabase_store import (
     DATABASE_OBJECT,
@@ -2099,31 +2098,39 @@ def set_navigation(module: str, tab: str = "") -> None:
 def top_navigation() -> None:
     """Render the primary workspace navigation as the full-width product header."""
     nav_items = [
-        ("Home", "Overview", "⌂"),
-        ("Learning Area", "Learning", "▤"),
-        ("SMT", "SMT", "▦"),
-        ("Assembly", "Assembly", "⚙"),
-        ("IQC", "QA", "◇"),
-        ("Smart Report", "Reports", "▥"),
+        ("Home", "Overview", 0.72),
+        ("Learning Area", "Learning", 0.82),
+        ("SMT", "SMT", 0.54),
+        ("Assembly", "Assembly", 0.72),
+        ("IQC", "QA", 0.50),
+        ("Smart Report", "Reports", 0.78),
     ]
-    links = []
-    for module, label, icon in nav_items:
-        active = " active" if st.session_state.module == module else ""
-        href = f"?module={quote(module)}"
-        links.append(
-            f"<a class='topnav-item{active}' href='{escape(href, quote=True)}'>"
-            f"<span class='topnav-icon'>{icon}</span><span>{escape(label)}</span></a>"
-        )
-    st.markdown(
-        "<header class='topnav-shell'>"
-        "<div class='topnav-brand'><strong><span>JOVI</span> QUALITY CENTER</strong>"
-        "<small>PEOPLE&nbsp; | &nbsp;PROCESS&nbsp; | &nbsp;QUALITY&nbsp; | &nbsp;A MORE RELIABLE TOMORROW</small></div>"
-        f"<nav class='topnav-links'>{''.join(links)}</nav>"
-        "<div class='topnav-tools'><div class='topnav-search'>⌕&nbsp;&nbsp; Search (model, lot, station, SN...)</div>"
-        "<div class='topnav-bell'>♧<i></i></div><div class='topnav-time'>Mon, Sep 15<br><b>10:24 AM</b></div></div>"
-        "</header>",
-        unsafe_allow_html=True,
-    )
+    with st.container(key="top_navigation"):
+        columns = st.columns([1.9] + [item[2] for item in nav_items] + [1.68], gap="small")
+        with columns[0]:
+            st.markdown(
+                "<div class='topnav-brand'><strong><span>JOVI</span> QUALITY CENTER</strong>"
+                "<small>PEOPLE | PROCESS | QUALITY | A MORE RELIABLE TOMORROW</small></div>",
+                unsafe_allow_html=True,
+            )
+        for column, (module, label, _) in zip(columns[1:-1], nav_items):
+            with column:
+                cfg = MODULES[module]
+                st.button(
+                    label,
+                    key=f"top_nav_module_{navigation_key(module)}",
+                    type="primary" if st.session_state.module == module else "secondary",
+                    width="stretch",
+                    on_click=set_navigation,
+                    args=(module, cfg["tabs"][0] if cfg["tabs"] else ""),
+                )
+        with columns[-1]:
+            st.markdown("<div class='topnav-search'>⌕&nbsp;&nbsp; Search (model, lot, station, SN...)</div>", unsafe_allow_html=True)
+            with st.popover("⋮", width="stretch"):
+                st.caption(f"{APP_VERSION} · Signed in as {st.session_state.get('authenticated_user', LOGIN_USERNAME)}")
+                st.button("About", key="top_nav_about", width="stretch", on_click=set_navigation, args=("About", ""))
+                if st.button("Sign out", key="top_nav_logout", width="stretch"):
+                    logout()
 
 
 def context_navigation() -> None:
@@ -2136,14 +2143,18 @@ def context_navigation() -> None:
         "BOM Comparison Tool - SMT": "BOM Comparison",
         "BOM Comparison Tool - Assembly": "BOM Comparison",
     }
-    links = []
-    for tab in tabs:
-        active = " active" if st.session_state.tab == tab else ""
-        href = f"?module={quote(module)}&tab={quote(tab)}"
-        links.append(
-            f"<a class='context-tab{active}' href='{escape(href, quote=True)}'>{escape(tab_labels.get(tab, tab))}</a>"
-        )
-    st.markdown(f"<nav class='context-tabs'>{''.join(links)}</nav>", unsafe_allow_html=True)
+    with st.container(key="context_navigation"):
+        columns = st.columns(len(tabs), gap="small")
+        for column, tab in zip(columns, tabs):
+            with column:
+                st.button(
+                    tab_labels.get(tab, tab),
+                    key=f"top_nav_tab_{navigation_key(module)}_{navigation_key(tab)}",
+                    type="primary" if st.session_state.tab == tab else "secondary",
+                    width="stretch",
+                    on_click=set_navigation,
+                    args=(module, tab),
+                )
 
 
 def footer() -> None:
