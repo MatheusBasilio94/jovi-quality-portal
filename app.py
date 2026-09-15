@@ -1860,11 +1860,11 @@ def top_navigation() -> None:
     """Render the full-width primary navigation without using Streamlit's sidebar."""
     nav_items = [
         ("Home", "Home", 0.58),
-        ("Learning Area", "Learning", 0.84),
         ("SMT", "SMT", 0.48),
         ("Assembly", "Assembly", 0.74),
         ("IQC", "IQC", 0.46),
         ("Smart Report", "Smart Report", 0.98),
+        ("Learning Area", "Learning", 0.84),
     ]
     with st.container(key="top_navigation"):
         columns = st.columns([1.42] + [item[2] for item in nav_items] + [0.56], gap="small")
