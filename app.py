@@ -33,7 +33,7 @@ from tools.trend_rules import analysis_period_days, requested_trend_grain, trend
 from tools import assembly_kpi_v2
 
 
-APP_VERSION = "v0.5.9"
+APP_VERSION = "v0.6.0"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -87,6 +87,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.6.0", "Redesigned the local workspace around a full-width horizontal navigation, top-level module tabs, streamlined filters, analytical KPI cards and a guided three-file upload flow."),
     ("v0.5.9", "Accelerated screen navigation by preserving module and KPI caches, caching Supabase metadata checks for five minutes, and caching Assembly source reads and calculations by file signature and selected period."),
     ("v0.5.8", "Clipped SMT weekly trend boundary labels to the selected analysis range, so partial weeks never display dates before or after the chosen period."),
     ("v0.5.7", "Added retry with fresh Supabase Storage connections when listing cloud folders after a paused project resumes."),
@@ -1424,6 +1425,185 @@ def apply_global_css() -> None:
         .smart-action-label { color:#13273F; font-weight:900; }
         .smart-preview-copy { background:#F7FCF9; border:1px solid #B9DEC7; border-radius:.58rem; color:#173421; font-family:Consolas,"Courier New",monospace; font-size:.75rem; font-weight:650; line-height:1.55; min-height:248px; padding:.85rem; white-space:pre-wrap; }
         .smart-preview-footnote { color:#63728A; font-size:.73rem; font-weight:700; margin:.72rem 0 .2rem; }
+
+        /* Jovi 2.0 workspace: full-width header, top tabs and analytical cards. */
+        [data-testid="stMainBlockContainer"] {
+            padding: 0 1.5rem 1.25rem !important;
+        }
+        .st-key-top_navigation {
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            margin: 0 -1.5rem 0.28rem !important;
+            padding: 0.18rem 1.5rem !important;
+            min-height: 76px;
+            border: 0;
+            border-radius: 0;
+            background: linear-gradient(105deg, #061A3A 0%, #0A376D 52%, #061A3A 100%);
+            box-shadow: 0 8px 24px rgba(4, 20, 48, 0.24);
+        }
+        .topnav-brand { min-height: 64px; padding-left: 0; }
+        .topnav-brand strong { font-size: 1.28rem; letter-spacing: .025em; }
+        .topnav-brand small { font-size: .58rem; color: #A9C9EE; }
+        div[class*="st-key-top_nav_module_"] button {
+            min-height: 68px;
+            padding: .45rem .28rem .34rem;
+            border-radius: 0;
+            color: #DDEBFF;
+            font-size: .76rem;
+            font-weight: 800;
+        }
+        div[class*="st-key-top_nav_module_"] button::before {
+            display: block;
+            margin-bottom: .22rem;
+            color: #DDEBFF;
+            font-size: 1.22rem;
+            line-height: 1;
+        }
+        div[class*="st-key-top_nav_module_home"] button::before { content: "⌂"; }
+        div[class*="st-key-top_nav_module_learning_area"] button::before { content: "▤"; }
+        div[class*="st-key-top_nav_module_smt"] button::before { content: "▦"; }
+        div[class*="st-key-top_nav_module_assembly"] button::before { content: "⚙"; }
+        div[class*="st-key-top_nav_module_iqc"] button::before { content: "◇"; }
+        div[class*="st-key-top_nav_module_smart_report"] button::before { content: "▥"; }
+        div[class*="st-key-top_nav_module_"] button[kind="primary"],
+        div[class*="st-key-top_nav_module_"] button[data-testid="stBaseButton-primary"] {
+            background: linear-gradient(180deg, #1497EF, #1474D6);
+            border-color: transparent;
+            box-shadow: inset 0 -3px 0 rgba(255,255,255,.18);
+        }
+        .st-key-context_navigation {
+            min-height: 46px;
+            margin: 0 -1.5rem 1rem !important;
+            padding: 0 1.5rem !important;
+            border: 0;
+            border-radius: 0;
+            background: rgba(255,255,255,.97);
+            box-shadow: 0 2px 9px rgba(18,48,89,.07);
+        }
+        div[class*="st-key-top_nav_tab_"] button {
+            min-height: 46px;
+            padding: .42rem .8rem .36rem;
+            border: 0;
+            border-bottom: 3px solid transparent;
+            border-radius: 0;
+            background: transparent;
+            color: #415673;
+            font-size: .82rem;
+            font-weight: 800;
+        }
+        div[class*="st-key-top_nav_tab_"] button[kind="primary"],
+        div[class*="st-key-top_nav_tab_"] button[data-testid="stBaseButton-primary"] {
+            background: transparent;
+            border-color: #1685E8;
+            color: #0868C9;
+            box-shadow: none;
+        }
+        .section-title {
+            color: #0A2348 !important;
+            font-size: 1.8rem;
+            letter-spacing: -.035em;
+            margin: .5rem 0 .2rem;
+        }
+        .metric-card {
+            position: relative;
+            min-height: 8.7rem;
+            padding: 1.15rem 1rem 1rem 1.25rem;
+            border: 1px solid #E2EAF4;
+            border-radius: .65rem;
+            box-shadow: 0 7px 18px rgba(18,48,89,.07);
+            text-align: left;
+            overflow: hidden;
+        }
+        .metric-card::after {
+            content: "";
+            position: absolute;
+            right: 1rem;
+            bottom: 1rem;
+            width: 58px;
+            height: 25px;
+            opacity: .45;
+            background: repeating-linear-gradient(90deg, #79B6F5 0 5px, transparent 5px 9px), linear-gradient(180deg, transparent 0 100%);
+            border-bottom: 3px solid #79B6F5;
+        }
+        .metric-label { color: #142D4E; font-size: .8rem; text-transform: none; }
+        .metric-value { font-size: 1.8rem; letter-spacing: -.04em; margin-top: .28rem; }
+        .small-muted { color: #63738B; font-size: .75rem; font-weight: 700; }
+        div[class*="st-key-analysis_period_"] {
+            max-width: none;
+            margin: 0 0 .65rem;
+            padding: .72rem .9rem .32rem;
+            border: 1px solid #E0E8F3;
+            border-radius: .65rem;
+            background: rgba(255,255,255,.94);
+            box-shadow: 0 5px 15px rgba(18,48,89,.04);
+        }
+        div[class*="st-key-analysis_period_"] [data-testid="stSelectbox"] > div > div,
+        div[class*="st-key-analysis_period_"] [data-testid="stDateInput"] > div > div,
+        div[class*="st-key-smt_quality_v2_filter_panel"] [data-testid="stSelectbox"] > div > div,
+        div[class*="st-key-assembly_quality_v2_filter_panel"] [data-testid="stSelectbox"] > div > div {
+            background: #FFFFFF !important;
+            border-color: #D7E2F0 !important;
+            box-shadow: none !important;
+        }
+        div[class*="st-key-analysis_period_"] [data-testid="stSelectbox"] * ,
+        div[class*="st-key-analysis_period_"] [data-testid="stDateInput"] input,
+        div[class*="st-key-smt_quality_v2_filter_panel"] [data-testid="stSelectbox"] * ,
+        div[class*="st-key-assembly_quality_v2_filter_panel"] [data-testid="stSelectbox"] * {
+            color: #193453 !important;
+        }
+        div[class*="st-key-smt_quality_v2_filter_panel"],
+        div[class*="st-key-assembly_quality_v2_filter_panel"] {
+            padding: .72rem .9rem .45rem;
+            border: 1px solid #E0E8F3;
+            border-radius: .65rem;
+            background: rgba(255,255,255,.94);
+            box-shadow: 0 5px 15px rgba(18,48,89,.04);
+        }
+        .upload-journey {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin: .8rem 0 1rem;
+            padding: 1rem 1.2rem;
+            border: 1px solid #DFEAF6;
+            border-radius: .7rem;
+            background: linear-gradient(100deg, #F7FBFF, #FFFFFF);
+        }
+        .upload-journey .step { display:flex; align-items:center; gap:.58rem; color:#61728A; font-size:.82rem; font-weight:800; }
+        .upload-journey .step b { display:inline-flex; align-items:center; justify-content:center; width:28px; height:28px; border-radius:50%; background:#E5EDF8; color:#56708F; }
+        .upload-journey .step.active { color:#0A69CE; }
+        .upload-journey .step.active b { background:#147DDE; color:#FFF; }
+        .upload-journey .line { flex:1; min-width:32px; height:1px; background:#BBD0E8; }
+        div[class*="st-key-upload_slot_"] {
+            min-height: 205px;
+            padding: .9rem;
+            border: 1px solid #DDE8F5;
+            border-radius: .7rem;
+            background: #FFFFFF;
+            box-shadow: 0 6px 16px rgba(18,48,89,.045);
+        }
+        div[class*="st-key-upload_slot_"] [data-testid="stFileUploader"] {
+            padding: .75rem .35rem;
+            border: 1px dashed #86B8EE;
+            border-radius: .55rem;
+            background: #F7FBFF;
+        }
+        div[class*="st-key-upload_slot_"] [data-testid="stFileUploader"] section { border: 0 !important; background: transparent !important; }
+        div[class*="st-key-upload_slot_"] [data-testid="stFileUploaderDropzoneInstructions"] span { color:#0A68C9 !important; font-weight:800; }
+        @media (max-width: 900px) {
+            .st-key-top_navigation { min-height: 62px; padding-left:.85rem !important; padding-right:.85rem !important; }
+            .topnav-brand { min-height:54px; }
+            .topnav-brand strong { font-size:1rem; }
+            .topnav-brand small { display:none; }
+            div[class*="st-key-top_nav_module_"] button { min-height:54px; font-size:0 !important; padding:.35rem .12rem; }
+            div[class*="st-key-top_nav_module_"] button::before { margin:0; font-size:1.18rem; }
+            .st-key-context_navigation { margin-left:-1.5rem !important; margin-right:-1.5rem !important; padding-left:.55rem !important; padding-right:.55rem !important; }
+            div[class*="st-key-top_nav_tab_"] button { font-size:.69rem; padding-left:.16rem; padding-right:.16rem; }
+            .upload-journey { gap:.45rem; padding:.75rem; }
+            .upload-journey .step { font-size:.69rem; }
+            .upload-journey .line { min-width:10px; }
+        }
         hr { border-color: var(--border) !important; }
         </style>
         """,
@@ -1831,15 +2011,15 @@ def set_navigation(module: str, tab: str = "") -> None:
 def top_navigation() -> None:
     """Render the full-width primary navigation without using Streamlit's sidebar."""
     nav_items = [
-        ("Home", "Home", 0.58),
-        ("Learning Area", "Learning", 0.84),
-        ("SMT", "SMT", 0.48),
-        ("Assembly", "Assembly", 0.74),
-        ("IQC", "IQC", 0.46),
-        ("Smart Report", "Smart Report", 0.98),
+        ("Home", "Home", 0.62),
+        ("Learning Area", "Learning", 0.82),
+        ("SMT", "SMT", 0.54),
+        ("Assembly", "Assembly", 0.72),
+        ("IQC", "IQC", 0.50),
+        ("Smart Report", "Smart Report", 0.90),
     ]
     with st.container(key="top_navigation"):
-        columns = st.columns([1.42] + [item[2] for item in nav_items] + [0.56], gap="small")
+        columns = st.columns([1.65] + [item[2] for item in nav_items] + [0.48], gap="small")
         with columns[0]:
             st.markdown(
                 "<div class='topnav-brand'><strong><span>JOVI</span> QUALITY CENTER</strong><small>QUALITY INTELLIGENCE PORTAL</small></div>",
@@ -1875,10 +2055,8 @@ def context_navigation() -> None:
         "BOM Comparison Tool - Assembly": "BOM Comparison",
     }
     with st.container(key="context_navigation"):
-        columns = st.columns([1.15] + [1] * len(tabs), gap="small")
-        with columns[0]:
-            st.markdown(f"<div class='context-label'><b>{escape(module)}</b> WORKSPACE</div>", unsafe_allow_html=True)
-        for column, tab in zip(columns[1:], tabs):
+        columns = st.columns(len(tabs), gap="small")
+        for column, tab in zip(columns, tabs):
             with column:
                 st.button(
                     tab_labels.get(tab, tab),
@@ -5446,9 +5624,21 @@ def fmt_kpi_pct(value: float | None) -> str:
 
 
 def smt_kpi_card(label: str, value: str, note: str, color: str) -> None:
+    normalized_label = label.casefold()
+    if "pass" in normalized_label or "coverage" in normalized_label:
+        icon = "✓"
+    elif "ng" in normalized_label or "exception" in normalized_label:
+        icon = "!"
+    elif "input" in normalized_label or "inspected" in normalized_label:
+        icon = "▦"
+    elif "profile" in normalized_label:
+        icon = "◔"
+    else:
+        icon = "◈"
     st.markdown(
         f"""
         <div class="metric-card">
+            <div style="position:absolute;right:1rem;top:.9rem;width:30px;height:30px;border-radius:.5rem;background:{color}18;color:{color};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:1.05rem;">{icon}</div>
             <div class="metric-label">{escape(label)}</div>
             <div class="metric-value" style="color:{color};">{escape(value)}</div>
             <div class="small-muted">{escape(note)}</div>
@@ -6764,52 +6954,25 @@ def smt_quality_dashboard_v2(color: str) -> None:
             color,
         )
     st.markdown("<div class='dashboard-kpi-chart-gap'></div>", unsafe_allow_html=True)
-    left, right = st.columns(2)
-    with left:
+    pareto_column, trend_column, priority_column = st.columns([1.28, 0.78, 0.64])
+    with pareto_column:
+        show_chart(
+            dashboard_charts.pareto_chart(
+                view["pareto"], "Phenomenon", "NGPCBs", "Defect Pareto · confirmed NG", color
+            )
+        )
+    with trend_column:
         show_chart(
             dashboard_charts.ppm_trend_chart(
                 view["trend"],
-                f"SMT Process NG PPM trend · {grain_label}",
+                f"Daily PPM trend · {grain_label}",
                 [("ProcessPPM", "SMT Process NG", color)],
                 target_value=5_000,
                 exception_mask=view["trend"]["Status"].ne("Valid"),
             )
         )
-    with right:
-        show_chart(
-            dashboard_charts.failure_donut_chart(
-                view["functional_only_pcbs"],
-                view["appearance_only_pcbs"],
-                both=view["both_type_pcbs"],
-            )
-        )
-
-    left, right = st.columns(2)
-    with left:
-        show_chart(
-            dashboard_charts.pareto_chart(
-                view["pareto"], "Phenomenon", "NGPCBs", "Top defects · Pareto", color
-            )
-        )
-    with right:
-        show_chart(
-            dashboard_charts.model_ppm_input_chart(
-                view["models"], "Worst models by PPM and input", color
-            )
-        )
-
-    left, right = st.columns(2)
-    with left:
-        if not view["heatmap"].empty:
-            show_chart(
-                dashboard_charts.heatmap_chart(
-                    view["heatmap"], "Model × station PPM heatmap"
-                )
-            )
-        else:
-            st.info("The model × station heatmap needs confirmed defects in the selected scope.")
-    with right:
-        st.markdown("#### Action priority")
+    with priority_column:
+        st.markdown("#### Priority actions")
         if view["priority"].empty:
             st.info("No confirmed defects match the selected filters.")
         else:
@@ -6819,6 +6982,31 @@ def smt_quality_dashboard_v2(color: str) -> None:
                 station_column="Operation",
                 model_column="Model",
             )
+
+    heatmap_column, mix_column, model_column = st.columns([1.28, 0.78, 0.64])
+    with heatmap_column:
+        if not view["heatmap"].empty:
+            show_chart(
+                dashboard_charts.heatmap_chart(
+                    view["heatmap"], "Model × station heatmap"
+                )
+            )
+        else:
+            st.info("The model × station heatmap needs confirmed defects in the selected scope.")
+    with mix_column:
+        show_chart(
+            dashboard_charts.failure_donut_chart(
+                view["functional_only_pcbs"],
+                view["appearance_only_pcbs"],
+                both=view["both_type_pcbs"],
+            )
+        )
+    with model_column:
+        show_chart(
+            dashboard_charts.model_ppm_input_chart(
+                view["models"], "Worst models by PPM and input", color
+            )
+        )
 
     st.markdown("#### Data quality")
     data_quality = st.columns(4)
@@ -7241,28 +7429,31 @@ def _assembly_upload_section_v2(store_status: dict) -> None:
     st.caption(
         "Carregue inputs FPY diariamente. Para defeitos FPY e reparo, carregue sempre o snapshot MTD/YTD mais recente."
     )
-    cards = st.columns(4)
-    with cards[0]:
-        smt_kpi_card("FPY Input", fmt_int(store_status["input"]), "Arquivos diários", "#6532C8")
-    with cards[1]:
-        smt_kpi_card("FPY Defects", fmt_int(store_status["defects"]), "Snapshots MTD/YTD", "#6532C8")
-    with cards[2]:
-        smt_kpi_card("Repair Defects", fmt_int(store_status["repair"]), "Snapshots MTD/YTD", "#6532C8")
-    with cards[3]:
-        smt_kpi_card("Stored size", f"{store_status['bytes'] / 1024 / 1024:.1f} MB", "Local files", "#6532C8")
-    st.caption(f"Última importação: {store_status['latest']}")
-    uploaded_inputs = st.file_uploader(
-        "Input FPY — Assembly",
-        type=["xls", "xlsx"],
-        accept_multiple_files=True,
-        key="assembly_quality_v2_inputs_upload",
-    )
-    uploaded_defects = st.file_uploader(
-        "Defeitos FPY — Assembly (MTD/YTD)", type=["xls", "xlsx"], key="assembly_quality_v2_defects_upload"
-    )
-    uploaded_repair = st.file_uploader(
-        "Defeitos de reparo — Assembly (MTD/YTD)", type=["xls", "xlsx"], key="assembly_quality_v2_repair_upload"
-    )
+    upload_columns = st.columns(3)
+    with upload_columns[0]:
+        with st.container(key="upload_slot_assembly_input"):
+            st.markdown("**Input FPY**")
+            st.caption("Arquivo diário de produção.")
+            uploaded_inputs = st.file_uploader(
+                "Input FPY — Assembly",
+                type=["xls", "xlsx"],
+                accept_multiple_files=True,
+                key="assembly_quality_v2_inputs_upload",
+            )
+    with upload_columns[1]:
+        with st.container(key="upload_slot_assembly_fpy"):
+            st.markdown("**FPY Defects MTD/YTD**")
+            st.caption("Snapshot cumulativo de defeitos FPY.")
+            uploaded_defects = st.file_uploader(
+                "Defeitos FPY — Assembly (MTD/YTD)", type=["xls", "xlsx"], key="assembly_quality_v2_defects_upload"
+            )
+    with upload_columns[2]:
+        with st.container(key="upload_slot_assembly_repair"):
+            st.markdown("**Repair Defects MTD/YTD**")
+            st.caption("Snapshot cumulativo de reparo.")
+            uploaded_repair = st.file_uploader(
+                "Defeitos de reparo — Assembly (MTD/YTD)", type=["xls", "xlsx"], key="assembly_quality_v2_repair_upload"
+            )
     if st.button(
         "Salvar arquivos de Assembly",
         width="stretch",
@@ -7293,6 +7484,17 @@ def _assembly_upload_section_v2(store_status: dict) -> None:
     ):
         st.session_state["assembly_last_import_results"] = import_assembly_monitored_folder()
         st.rerun()
+    st.markdown("#### Current stored files")
+    cards = st.columns(4)
+    with cards[0]:
+        smt_kpi_card("FPY Input", fmt_int(store_status["input"]), "Arquivos diários", "#6532C8")
+    with cards[1]:
+        smt_kpi_card("FPY Defects", fmt_int(store_status["defects"]), "Snapshots MTD/YTD", "#6532C8")
+    with cards[2]:
+        smt_kpi_card("Repair Defects", fmt_int(store_status["repair"]), "Snapshots MTD/YTD", "#6532C8")
+    with cards[3]:
+        smt_kpi_card("Stored size", f"{store_status['bytes'] / 1024 / 1024:.1f} MB", "Local files", "#6532C8")
+    st.caption(f"Última importação: {store_status['latest']}")
     if "assembly_last_import_results" in st.session_state:
         import_results_table(st.session_state["assembly_last_import_results"])
     render_assembly_source_manager()
@@ -7307,6 +7509,16 @@ def data_upload_page(module: str, color: str) -> None:
     st.caption(
         "Gerencie aqui os arquivos que alimentam o KPI Track e o Quality Dashboard desta área. "
         "Cada área mantém sua própria base de Input FPY, Defeitos FPY e Defeitos de reparo."
+    )
+    st.markdown(
+        """
+        <div class="upload-journey">
+            <div class="step active"><b>1</b><span>Select area</span></div><div class="line"></div>
+            <div class="step"><b>2</b><span>Upload files</span></div><div class="line"></div>
+            <div class="step"><b>3</b><span>Review and save</span></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
     if module == "SMT":
         from tools import smt_quality_dashboard

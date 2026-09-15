@@ -1209,26 +1209,30 @@ def bar_chart(frame: pd.DataFrame, category: str, value: str, title: str, color:
 
 def _upload_section(color: str) -> None:
     status = smt_store_status()
-    st.markdown("### Upload Data")
+    st.markdown("#### Files and validation")
     st.caption("Carregue inputs FPY diariamente. Para defeitos FPY e reparo, use sempre o snapshot MTD/YTD mais recente.")
-    columns = st.columns(4)
-    with columns[0]:
-        metric_card("FPY Input", fmt_int(status["inputs"]), "Arquivos diários", color)
-    with columns[1]:
-        metric_card("FPY Defects", fmt_int(status["defects"]), "Snapshots MTD/YTD", color)
-    with columns[2]:
-        metric_card("Repair Defects", fmt_int(status["repair"]), "Snapshots MTD/YTD", color)
-    with columns[3]:
-        metric_card("Stored size", f"{status['bytes'] / 1024 / 1024:.2f} MB", status["latest"], color)
-    uploaded_inputs = st.file_uploader(
-        "Input FPY — SMT", type=["xls", "xlsx"], accept_multiple_files=True, key="smt_summary_inputs_upload"
-    )
-    uploaded_defect = st.file_uploader(
-        "Defeitos FPY — SMT (MTD/YTD)", type=["xls", "xlsx"], key="smt_defect_upload"
-    )
-    uploaded_repair = st.file_uploader(
-        "Defeitos de reparo — SMT (MTD/YTD)", type=["xls", "xlsx"], key="smt_repair_upload"
-    )
+    upload_columns = st.columns(3)
+    with upload_columns[0]:
+        with st.container(key="upload_slot_smt_input"):
+            st.markdown("**Input FPY**")
+            st.caption("Arquivo diário de produção.")
+            uploaded_inputs = st.file_uploader(
+                "Input FPY — SMT", type=["xls", "xlsx"], accept_multiple_files=True, key="smt_summary_inputs_upload"
+            )
+    with upload_columns[1]:
+        with st.container(key="upload_slot_smt_fpy"):
+            st.markdown("**FPY Defects MTD/YTD**")
+            st.caption("Snapshot cumulativo de defeitos FPY.")
+            uploaded_defect = st.file_uploader(
+                "Defeitos FPY — SMT (MTD/YTD)", type=["xls", "xlsx"], key="smt_defect_upload"
+            )
+    with upload_columns[2]:
+        with st.container(key="upload_slot_smt_repair"):
+            st.markdown("**Repair Defects MTD/YTD**")
+            st.caption("Snapshot cumulativo de reparo.")
+            uploaded_repair = st.file_uploader(
+                "Defeitos de reparo — SMT (MTD/YTD)", type=["xls", "xlsx"], key="smt_repair_upload"
+            )
     if st.button(
         "Salvar arquivos de SMT",
         width="stretch",
@@ -1253,6 +1257,16 @@ def _upload_section(color: str) -> None:
             st.session_state["smt_last_import_results"] = results
             st.success("Arquivos de SMT processados.")
             st.rerun()
+    st.markdown("#### Current stored files")
+    columns = st.columns(4)
+    with columns[0]:
+        metric_card("FPY Input", fmt_int(status["inputs"]), "Arquivos diários", color)
+    with columns[1]:
+        metric_card("FPY Defects", fmt_int(status["defects"]), "Snapshots MTD/YTD", color)
+    with columns[2]:
+        metric_card("Repair Defects", fmt_int(status["repair"]), "Snapshots MTD/YTD", color)
+    with columns[3]:
+        metric_card("Stored size", f"{status['bytes'] / 1024 / 1024:.2f} MB", status["latest"], color)
     if "smt_last_import_results" in st.session_state:
         st.dataframe(
             pd.DataFrame(st.session_state["smt_last_import_results"]),
