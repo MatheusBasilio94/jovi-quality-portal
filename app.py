@@ -1436,6 +1436,17 @@ def apply_global_css() -> None:
         .home-overview-kpi .spark { border-radius:99px; height:3px; margin-top:.34rem; opacity:.8; background:linear-gradient(90deg,var(--kpi-color) 0 26%,transparent 26% 34%,var(--kpi-color) 34% 57%,transparent 57% 65%,var(--kpi-color) 65% 100%); }
         .home-overview-actions { margin-top:.1rem; }
         div[class*="st-key-analysis_period_home_overview"] { margin-bottom:.35rem; padding-top:.42rem; padding-bottom:.05rem; }
+        /* Streamlit applies a text-fill color to date inputs; override it so the
+           selected range has the same white contrast as the quick selector. */
+        div[class*="st-key-analysis_period_"] [data-testid="stDateInput"] input,
+        div[class*="st-key-analysis_period_"] [data-testid="stDateInput"] input::placeholder,
+        div[class*="st-key-analysis_period_"] [data-testid="stDateInput"] [contenteditable="true"],
+        div[class*="st-key-analysis_period_"] [data-testid="stDateInput"] [data-type="literal"],
+        div[class*="st-key-analysis_period_"] [data-testid="stDateInput"] > div > span {
+            color:#F8FBFF !important;
+            -webkit-text-fill-color:#F8FBFF !important;
+            opacity:1 !important;
+        }
         div[class*="st-key-home_overview_smt"] { border-top:4px solid #0D7A45 !important; }
         div[class*="st-key-home_overview_assembly"] { border-top:4px solid #6532C8 !important; }
         div[class*="st-key-home_open_smt_kpi"] button { background:#0D7A45 !important; border-color:#0D7A45 !important; }
