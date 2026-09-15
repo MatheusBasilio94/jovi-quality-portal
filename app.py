@@ -1442,7 +1442,8 @@ def apply_global_css() -> None:
         div[class*="st-key-analysis_period_"] [data-testid="stDateInput"] input::placeholder,
         div[class*="st-key-analysis_period_"] [data-testid="stDateInput"] [contenteditable="true"],
         div[class*="st-key-analysis_period_"] [data-testid="stDateInput"] [data-type="literal"],
-        div[class*="st-key-analysis_period_"] [data-testid="stDateInput"] > div > span {
+        div[class*="st-key-analysis_period_"] [data-testid="stDateInput"] > div > span,
+        div[class*="st-key-analysis_period_"] [data-testid="stDateInputField"] > span {
             color:#F8FBFF !important;
             -webkit-text-fill-color:#F8FBFF !important;
             opacity:1 !important;
