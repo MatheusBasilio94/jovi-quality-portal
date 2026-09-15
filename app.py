@@ -1420,6 +1420,35 @@ def apply_global_css() -> None:
         .smart-action-label { color:#13273F; font-weight:900; }
         .smart-preview-copy { background:#F7FCF9; border:1px solid #B9DEC7; border-radius:.58rem; color:#173421; font-family:Consolas,"Courier New",monospace; font-size:.75rem; font-weight:650; line-height:1.55; min-height:248px; padding:.85rem; white-space:pre-wrap; }
         .smart-preview-footnote { color:#63728A; font-size:.73rem; font-weight:700; margin:.72rem 0 .2rem; }
+        /* Home overview: independent operational summary for SMT and Assembly. */
+        .home-overview-head { margin: .55rem 0 .85rem; }
+        .home-overview-head h1 { color:#081f45; font-size:2rem; letter-spacing:-.045em; line-height:1.05; margin:0; }
+        .home-overview-head p { color:#62728b; font-size:1rem; font-weight:650; margin:.35rem 0 0; }
+        .home-area-shell { background:#fff; border:1px solid #dbe6f2; border-top:5px solid var(--area-color); border-radius:.85rem; box-shadow:0 7px 19px rgba(16,42,78,.07); margin:.15rem 0 .7rem; overflow:hidden; padding:1rem; }
+        .home-area-heading { align-items:center; display:flex; gap:.65rem; justify-content:space-between; margin:0 0 .85rem; }
+        .home-area-heading h2 { color:#102747; font-size:1.35rem; letter-spacing:-.025em; margin:0; }
+        .home-area-heading small { color:#65758e; display:block; font-size:.76rem; font-weight:700; margin-top:.1rem; }
+        .home-area-status { background:var(--area-soft); border-radius:99px; color:var(--area-color); font-size:.72rem; font-weight:900; padding:.36rem .62rem; white-space:nowrap; }
+        .home-area-status.attention { background:#fff3df; color:#b76200; }
+        .home-overview-kpi { background:#fbfdff; border:1px solid #e0e9f3; border-radius:.58rem; min-height:122px; padding:.75rem .78rem; }
+        .home-overview-kpi .label { color:#526781; font-size:.7rem; font-weight:850; line-height:1.2; min-height:30px; }
+        .home-overview-kpi .value { color:var(--kpi-color); font-size:1.48rem; font-weight:900; letter-spacing:-.045em; line-height:1.06; margin:.32rem 0; }
+        .home-overview-kpi .note { color:#77869a; font-size:.64rem; font-weight:700; line-height:1.25; min-height:28px; }
+        .home-overview-kpi .spark { border-radius:99px; height:4px; margin-top:.48rem; opacity:.8; background:linear-gradient(90deg,var(--kpi-color) 0 26%,transparent 26% 34%,var(--kpi-color) 34% 57%,transparent 57% 65%,var(--kpi-color) 65% 100%); }
+        .home-overview-actions { margin-top:.1rem; }
+        .home-attention-panel { background:#fff; border:1px solid #dbe6f2; border-radius:.8rem; box-shadow:0 5px 16px rgba(16,42,78,.05); margin-top:.8rem; padding:.8rem 1rem; }
+        .home-attention-title { color:#102747; font-size:1rem; font-weight:900; margin:0 0 .58rem; }
+        .home-attention-item { align-items:center; border-radius:.55rem; display:flex; gap:.5rem; min-height:55px; padding:.55rem .72rem; }
+        .home-attention-item.smt { background:#effaf4; color:#13643f; }
+        .home-attention-item.assembly { background:#f5f1ff; color:#6037bb; }
+        .home-attention-dot { border-radius:50%; height:9px; width:9px; background:currentColor; }
+        .home-attention-item b { font-size:.78rem; }
+        .home-attention-item span { font-size:.72rem; font-weight:700; }
+        .home-overview-note { color:#66809d; font-size:.75rem; font-weight:700; margin:.75rem 0 .1rem; text-align:center; }
+        div[class*="st-key-home_overview_smt"] { border-top:4px solid #0D7A45 !important; }
+        div[class*="st-key-home_overview_assembly"] { border-top:4px solid #6532C8 !important; }
+        div[class*="st-key-home_open_smt_kpi"] button { background:#0D7A45 !important; border-color:#0D7A45 !important; }
+        div[class*="st-key-home_open_assembly_kpi"] button { background:#6532C8 !important; border-color:#6532C8 !important; }
         hr { border-color: var(--border) !important; }
         </style>
         """,
@@ -5342,42 +5371,201 @@ def smart_report_page() -> None:
     st.caption("The report reads the existing stored data. Only action details are saved separately in the local quality database.")
 
 
-def home_page() -> None:
+def home_overview_kpi(label: str, value: str, note: str, color: str) -> None:
+    """Render one compact, neutral KPI tile for the Home triage view."""
     st.markdown(
-        """
-        <div class="hero">
-            <h1>JOVI QUALITY CENTER</h1>
-            <h3>All Quality. One Center.</h3>
-            <p>Knowledge, Processes and Performance in one place.</p>
+        f"""
+        <div class="home-overview-kpi" style="--kpi-color:{color};">
+            <div class="label">{escape(label)}</div>
+            <div class="value">{escape(value)}</div>
+            <div class="note">{escape(note)}</div>
+            <div class="spark"></div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-    st.markdown("<div class='home-module-gap'></div>", unsafe_allow_html=True)
-    data = [
-        ("Learning Area", "Access knowledge, procedures, process maps and KPIs to empower your quality journey.", MODULES["Learning Area"]["color"], "▣", "Overview"),
-        ("SMT", "Surface Mount Technology KPI tracking, quality analysis and BOM comparison.", MODULES["SMT"]["color"], "▦", "KPI Track"),
-        ("Assembly", "Assembly KPI tracking, quality analysis and responsibility dashboard.", MODULES["Assembly"]["color"], "◇", "KPI Track"),
-        ("IQC", "Incoming Quality Control overview and inspection insights.", MODULES["IQC"]["color"], "○", "Overview"),
-    ]
-    columns = st.columns(len(data))
-    for column, (module, description, color, icon, tab) in zip(columns, data):
-        with column:
-            with st.container(
-                border=True,
-                key=f"home_card_{navigation_key(module)}",
-            ):
-                st.markdown(
-                    module_card_html(module, description, color, icon),
-                    unsafe_allow_html=True,
-                )
-                st.button(
-                    "Enter",
-                    key=f"home_enter_{navigation_key(module)}",
-                    use_container_width=True,
-                    on_click=set_navigation,
-                    args=(module, tab),
-                )
+
+
+def home_area_heading(title: str, subtitle: str, color: str, status: str, attention: bool = False) -> None:
+    status_class = " attention" if attention else ""
+    st.markdown(
+        f"""
+        <div class="home-area-heading" style="--area-color:{color};--area-soft:{color}18;">
+            <div><h2>{escape(title)}</h2><small>{escape(subtitle)}</small></div>
+            <div class="home-area-status{status_class}">{escape(status)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def home_page() -> None:
+    """Render the Home as a compact, independent SMT and Assembly triage view."""
+    import pandas as pd
+    from tools import smt_quality_dashboard
+
+    smt_context: dict = {"ready": False, "error": "Awaiting SMT FPY input and defect files."}
+    assembly_context: dict = {"ready": False, "error": "Awaiting Assembly input, FPY defects and repair files."}
+    bounds: list[tuple[date, date]] = []
+
+    try:
+        smt_inputs, smt_defects = smt_quality_dashboard.stored_smt_sources()
+        if smt_inputs and smt_defects:
+            smt_signatures = tuple(smt_quality_dashboard.path_signature(path) for path in smt_inputs)
+            smt_minimum, smt_maximum = smt_quality_dashboard.input_bounds(smt_signatures)
+            smt_context.update(
+                ready=True,
+                inputs=smt_inputs,
+                defects=smt_defects,
+                input_signatures=smt_signatures,
+                minimum=smt_minimum.date(),
+                maximum=smt_maximum.date(),
+            )
+            bounds.append((smt_minimum.date(), smt_maximum.date()))
+    except Exception as exc:
+        smt_context["error"] = str(exc)
+
+    try:
+        assembly_sources = stored_assembly_sources_v2()
+        if all(assembly_sources[source] for source in ("input", "defects", "repair")):
+            assembly_minimum, assembly_maximum = assembly_input_bounds(assembly_sources["input"])
+            assembly_context.update(
+                ready=True,
+                minimum=assembly_minimum,
+                maximum=assembly_maximum,
+            )
+            bounds.append((assembly_minimum, assembly_maximum))
+    except Exception as exc:
+        assembly_context["error"] = str(exc)
+
+    st.markdown(
+        "<div class='home-overview-head'><h1>Quality Overview</h1>"
+        "<p>Which area needs attention today?</p></div>",
+        unsafe_allow_html=True,
+    )
+
+    if bounds:
+        shared_start = max(start for start, _ in bounds)
+        shared_end = min(end for _, end in bounds)
+        if shared_end < shared_start:
+            shared_start = min(start for start, _ in bounds)
+            shared_end = max(end for _, end in bounds)
+            st.info("The available SMT and Assembly source periods do not overlap. Each panel shows the selected range when its data is available.")
+        start_date, end_date = analysis_period_control(
+            "home_overview_period",
+            shared_start,
+            shared_end,
+            default_start=shared_start,
+            default_end=shared_end,
+        )
+    else:
+        start_date = end_date = date.today()
+        st.info("Upload the validated source files in Data Upload to populate the Home overview.")
+
+    if smt_context["ready"]:
+        try:
+            smt_analysis = smt_quality_dashboard.analyze_smt_quality_paths(
+                smt_context["input_signatures"],
+                tuple(smt_quality_dashboard.path_signature(path) for path in smt_context["defects"]),
+                start_date.isoformat(),
+                end_date.isoformat(),
+                smt_quality_dashboard.SMT_FAILURE_RULE_VERSION,
+            )
+            totals = smt_analysis["totals"]
+            oqc = load_smt_oqc_inspections(start_date, end_date)
+            oqc_inspected = int(oqc["Inspected"].sum()) if not oqc.empty else 0
+            oqc_rate = int(oqc["OK"].sum()) / oqc_inspected if oqc_inspected else None
+            smt_context.update(
+                totals=totals,
+                oqc_rate=oqc_rate,
+                attention=(
+                    totals.get("SMTProcessStatus") != "Valid"
+                    or (totals.get("SMTProcessNGRatePPM") or 0) > 5_000
+                ),
+            )
+        except Exception as exc:
+            smt_context.update(ready=False, error=str(exc))
+
+    if assembly_context["ready"]:
+        try:
+            assembly_metrics = calculate_assembly_kpi_metrics(start_date, end_date)
+            oqc_fqc = load_assembly_oqc_fqc_inspections(start_date, end_date)
+            oqc_inspected = int(oqc_fqc["OQCInspected"].sum()) if not oqc_fqc.empty else 0
+            fqc_inspected = int(oqc_fqc["FQCInspected"].sum()) if not oqc_fqc.empty else 0
+            oqc_rate = int(oqc_fqc["OQCOK"].sum()) / oqc_inspected if oqc_inspected else None
+            fqc_rate = int(oqc_fqc["FQCOK"].sum()) / fqc_inspected if fqc_inspected else None
+            oqc_fqc_rate = oqc_rate * fqc_rate if oqc_rate is not None and fqc_rate is not None else None
+            assembly_context.update(
+                metrics=assembly_metrics,
+                oqc_fqc_rate=oqc_fqc_rate,
+                attention=(assembly_metrics.get("function_mando_ppm") or 0) > 5_000,
+            )
+        except Exception as exc:
+            assembly_context.update(ready=False, error=str(exc))
+
+    smt_column, assembly_column = st.columns(2, gap="medium")
+    with smt_column:
+        with st.container(border=True, key="home_overview_smt"):
+            home_area_heading("SMT", "Surface Mount Technology", "#0D7A45", "Attention" if smt_context.get("attention") else "Stable", bool(smt_context.get("attention")))
+            if smt_context["ready"]:
+                totals = smt_context["totals"]
+                function_valid = totals.get("FunctionPassStatus") == "Valid"
+                process_valid = totals.get("SMTProcessStatus") == "Valid"
+                cards = st.columns(4, gap="small")
+                with cards[0]:
+                    home_overview_kpi("Input", fmt_int(totals.get("Produced", 0)), "Boards in selected period", "#0D7A45")
+                with cards[1]:
+                    home_overview_kpi("Functional Pass Rate", fmt_kpi_pct(totals.get("FunctionPassRate")) if function_valid else "N/A", "Functional failure result", "#0D7A45")
+                with cards[2]:
+                    home_overview_kpi("Process NG PPM", f"{fmt_ppm(totals.get('SMTProcessNGRatePPM'))} PPM" if process_valid else "N/A", "Functional + appearance", "#0D7A45")
+                with cards[3]:
+                    home_overview_kpi("OQC Pass Rate", fmt_kpi_pct(smt_context.get("oqc_rate")), "Awaiting manual input" if smt_context.get("oqc_rate") is None else "Manual inspection result", "#64748B")
+            else:
+                cards = st.columns(4, gap="small")
+                for card, label in zip(cards, ("Input", "Functional Pass Rate", "Process NG PPM", "OQC Pass Rate")):
+                    with card:
+                        home_overview_kpi(label, "N/A", "Awaiting validated source data", "#64748B")
+            actions = st.columns(2, gap="small")
+            with actions[0]:
+                st.button("KPI Track", key="home_open_smt_kpi", width="stretch", type="primary", on_click=set_navigation, args=("SMT", "KPI Track"))
+            with actions[1]:
+                st.button("Quality Dashboard", key="home_open_smt_dashboard", width="stretch", on_click=set_navigation, args=("SMT", "Quality Dashboard"))
+
+    with assembly_column:
+        with st.container(border=True, key="home_overview_assembly"):
+            home_area_heading("Assembly", "Final Assembly & Test", "#6532C8", "Attention" if assembly_context.get("attention") else "Stable", bool(assembly_context.get("attention")))
+            if assembly_context["ready"]:
+                metrics = assembly_context["metrics"]
+                cards = st.columns(4, gap="small")
+                with cards[0]:
+                    home_overview_kpi("Input", fmt_int(metrics.get("produced", 0)), "Boards in selected period", "#6532C8")
+                with cards[1]:
+                    home_overview_kpi("Functional Pass Rate", fmt_kpi_pct(metrics.get("function_pass_rate")), "Functional failure result", "#6532C8")
+                with cards[2]:
+                    home_overview_kpi("Function Mando PPM", f"{fmt_ppm(metrics.get('function_mando_ppm'))} PPM" if metrics.get("function_mando_ppm") is not None else "N/A", "Functional Mando result", "#6532C8")
+                with cards[3]:
+                    home_overview_kpi("OQC / FQC Pass Rate", fmt_kpi_pct(assembly_context.get("oqc_fqc_rate")), "Awaiting manual input" if assembly_context.get("oqc_fqc_rate") is None else "Manual inspection result", "#64748B")
+            else:
+                cards = st.columns(4, gap="small")
+                for card, label in zip(cards, ("Input", "Functional Pass Rate", "Function Mando PPM", "OQC / FQC Pass Rate")):
+                    with card:
+                        home_overview_kpi(label, "N/A", "Awaiting validated source data", "#64748B")
+            actions = st.columns(2, gap="small")
+            with actions[0]:
+                st.button("KPI Track", key="home_open_assembly_kpi", width="stretch", type="primary", on_click=set_navigation, args=("Assembly", "KPI Track"))
+            with actions[1]:
+                st.button("Quality Dashboard", key="home_open_assembly_dashboard", width="stretch", on_click=set_navigation, args=("Assembly", "Quality Dashboard"))
+
+    smt_message = "Process NG rate requires review." if smt_context.get("attention") else "No immediate process alert."
+    assembly_message = "Function Mando requires review." if assembly_context.get("attention") else "No immediate process alert."
+    st.markdown("<div class='home-attention-panel'><div class='home-attention-title'>Current attention</div>", unsafe_allow_html=True)
+    attention_columns = st.columns(2, gap="small")
+    with attention_columns[0]:
+        st.markdown(f"<div class='home-attention-item smt'><i class='home-attention-dot'></i><b>SMT</b><span>{escape(smt_message)}</span></div>", unsafe_allow_html=True)
+    with attention_columns[1]:
+        st.markdown(f"<div class='home-attention-item assembly'><i class='home-attention-dot'></i><b>Assembly</b><span>{escape(assembly_message)}</span></div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("<div class='home-overview-note'>Use the SMT and Assembly pages for trends, Pareto, filters, detailed OQC/FQC input and defect drill-down.</div>", unsafe_allow_html=True)
 
 
 def overview_page(module: str, color: str) -> None:
