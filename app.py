@@ -1421,30 +1421,21 @@ def apply_global_css() -> None:
         .smart-preview-copy { background:#F7FCF9; border:1px solid #B9DEC7; border-radius:.58rem; color:#173421; font-family:Consolas,"Courier New",monospace; font-size:.75rem; font-weight:650; line-height:1.55; min-height:248px; padding:.85rem; white-space:pre-wrap; }
         .smart-preview-footnote { color:#63728A; font-size:.73rem; font-weight:700; margin:.72rem 0 .2rem; }
         /* Home overview: independent operational summary for SMT and Assembly. */
-        .home-overview-head { margin: .55rem 0 .85rem; }
-        .home-overview-head h1 { color:#081f45; font-size:2rem; letter-spacing:-.045em; line-height:1.05; margin:0; }
-        .home-overview-head p { color:#62728b; font-size:1rem; font-weight:650; margin:.35rem 0 0; }
+        .home-overview-head { margin: .38rem 0 .5rem; }
+        .home-overview-head h1 { color:#081f45; font-size:1.72rem; letter-spacing:-.045em; line-height:1.05; margin:0; }
         .home-area-shell { background:#fff; border:1px solid #dbe6f2; border-top:5px solid var(--area-color); border-radius:.85rem; box-shadow:0 7px 19px rgba(16,42,78,.07); margin:.15rem 0 .7rem; overflow:hidden; padding:1rem; }
-        .home-area-heading { align-items:center; display:flex; gap:.65rem; justify-content:space-between; margin:0 0 .85rem; }
-        .home-area-heading h2 { color:#102747; font-size:1.35rem; letter-spacing:-.025em; margin:0; }
+        .home-area-heading { align-items:center; display:flex; gap:.65rem; justify-content:space-between; margin:0 0 .55rem; }
+        .home-area-heading h2 { color:#102747; font-size:1.2rem; letter-spacing:-.025em; margin:0; }
         .home-area-heading small { color:#65758e; display:block; font-size:.76rem; font-weight:700; margin-top:.1rem; }
         .home-area-status { background:var(--area-soft); border-radius:99px; color:var(--area-color); font-size:.72rem; font-weight:900; padding:.36rem .62rem; white-space:nowrap; }
         .home-area-status.attention { background:#fff3df; color:#b76200; }
-        .home-overview-kpi { background:#fbfdff; border:1px solid #e0e9f3; border-radius:.58rem; min-height:122px; padding:.75rem .78rem; }
+        .home-overview-kpi { background:#fbfdff; border:1px solid #e0e9f3; border-radius:.58rem; min-height:104px; padding:.62rem .68rem; }
         .home-overview-kpi .label { color:#526781; font-size:.7rem; font-weight:850; line-height:1.2; min-height:30px; }
-        .home-overview-kpi .value { color:var(--kpi-color); font-size:1.48rem; font-weight:900; letter-spacing:-.045em; line-height:1.06; margin:.32rem 0; }
-        .home-overview-kpi .note { color:#77869a; font-size:.64rem; font-weight:700; line-height:1.25; min-height:28px; }
-        .home-overview-kpi .spark { border-radius:99px; height:4px; margin-top:.48rem; opacity:.8; background:linear-gradient(90deg,var(--kpi-color) 0 26%,transparent 26% 34%,var(--kpi-color) 34% 57%,transparent 57% 65%,var(--kpi-color) 65% 100%); }
+        .home-overview-kpi .value { color:var(--kpi-color); font-size:1.34rem; font-weight:900; letter-spacing:-.045em; line-height:1.06; margin:.22rem 0; }
+        .home-overview-kpi .note { color:#77869a; font-size:.61rem; font-weight:700; line-height:1.2; min-height:25px; }
+        .home-overview-kpi .spark { border-radius:99px; height:3px; margin-top:.34rem; opacity:.8; background:linear-gradient(90deg,var(--kpi-color) 0 26%,transparent 26% 34%,var(--kpi-color) 34% 57%,transparent 57% 65%,var(--kpi-color) 65% 100%); }
         .home-overview-actions { margin-top:.1rem; }
-        .home-attention-panel { background:#fff; border:1px solid #dbe6f2; border-radius:.8rem; box-shadow:0 5px 16px rgba(16,42,78,.05); margin-top:.8rem; padding:.8rem 1rem; }
-        .home-attention-title { color:#102747; font-size:1rem; font-weight:900; margin:0 0 .58rem; }
-        .home-attention-item { align-items:center; border-radius:.55rem; display:flex; gap:.5rem; min-height:55px; padding:.55rem .72rem; }
-        .home-attention-item.smt { background:#effaf4; color:#13643f; }
-        .home-attention-item.assembly { background:#f5f1ff; color:#6037bb; }
-        .home-attention-dot { border-radius:50%; height:9px; width:9px; background:currentColor; }
-        .home-attention-item b { font-size:.78rem; }
-        .home-attention-item span { font-size:.72rem; font-weight:700; }
-        .home-overview-note { color:#66809d; font-size:.75rem; font-weight:700; margin:.75rem 0 .1rem; text-align:center; }
+        div[class*="st-key-analysis_period_home_overview"] { margin-bottom:.35rem; padding-top:.42rem; padding-bottom:.05rem; }
         div[class*="st-key-home_overview_smt"] { border-top:4px solid #0D7A45 !important; }
         div[class*="st-key-home_overview_assembly"] { border-top:4px solid #6532C8 !important; }
         div[class*="st-key-home_open_smt_kpi"] button { background:#0D7A45 !important; border-color:#0D7A45 !important; }
@@ -5401,7 +5392,6 @@ def home_area_heading(title: str, subtitle: str, color: str, status: str, attent
 
 def home_page() -> None:
     """Render the Home as a compact, independent SMT and Assembly triage view."""
-    import pandas as pd
     from tools import smt_quality_dashboard
 
     smt_context: dict = {"ready": False, "error": "Awaiting SMT FPY input and defect files."}
@@ -5439,8 +5429,7 @@ def home_page() -> None:
         assembly_context["error"] = str(exc)
 
     st.markdown(
-        "<div class='home-overview-head'><h1>Quality Overview</h1>"
-        "<p>Which area needs attention today?</p></div>",
+        "<div class='home-overview-head'><h1>Quality Overview</h1></div>",
         unsafe_allow_html=True,
     )
 
@@ -5555,18 +5544,6 @@ def home_page() -> None:
                 st.button("KPI Track", key="home_open_assembly_kpi", width="stretch", type="primary", on_click=set_navigation, args=("Assembly", "KPI Track"))
             with actions[1]:
                 st.button("Quality Dashboard", key="home_open_assembly_dashboard", width="stretch", on_click=set_navigation, args=("Assembly", "Quality Dashboard"))
-
-    smt_message = "Process NG rate requires review." if smt_context.get("attention") else "No immediate process alert."
-    assembly_message = "Function Mando requires review." if assembly_context.get("attention") else "No immediate process alert."
-    st.markdown("<div class='home-attention-panel'><div class='home-attention-title'>Current attention</div>", unsafe_allow_html=True)
-    attention_columns = st.columns(2, gap="small")
-    with attention_columns[0]:
-        st.markdown(f"<div class='home-attention-item smt'><i class='home-attention-dot'></i><b>SMT</b><span>{escape(smt_message)}</span></div>", unsafe_allow_html=True)
-    with attention_columns[1]:
-        st.markdown(f"<div class='home-attention-item assembly'><i class='home-attention-dot'></i><b>Assembly</b><span>{escape(assembly_message)}</span></div>", unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)
-    st.markdown("<div class='home-overview-note'>Use the SMT and Assembly pages for trends, Pareto, filters, detailed OQC/FQC input and defect drill-down.</div>", unsafe_allow_html=True)
-
 
 def overview_page(module: str, color: str) -> None:
     status = "Normal" if module != "Assembly" else "Attention"
