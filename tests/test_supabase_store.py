@@ -14,6 +14,7 @@ def _identity_cache_resource(*args, **kwargs):
 
 streamlit_stub = types.ModuleType("streamlit")
 streamlit_stub.cache_resource = _identity_cache_resource
+streamlit_stub.cache_data = _identity_cache_resource
 streamlit_stub.secrets = {}
 sys.modules.setdefault("streamlit", streamlit_stub)
 

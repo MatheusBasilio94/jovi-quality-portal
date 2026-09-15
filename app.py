@@ -33,7 +33,7 @@ from tools.trend_rules import analysis_period_days, requested_trend_grain, trend
 from tools import assembly_kpi_v2
 
 
-APP_VERSION = "v0.5.8"
+APP_VERSION = "v0.5.9"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -87,6 +87,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.9", "Accelerated screen navigation by preserving module and KPI caches, caching Supabase metadata checks for five minutes, and caching Assembly source reads and calculations by file signature and selected period."),
     ("v0.5.8", "Clipped SMT weekly trend boundary labels to the selected analysis range, so partial weeks never display dates before or after the chosen period."),
     ("v0.5.7", "Added retry with fresh Supabase Storage connections when listing cloud folders after a paused project resumes."),
     ("v0.5.6", "Hardened Supabase Storage synchronization after project wake-up by ignoring internal empty-folder entries, extending Storage timeouts and retrying transient downloads."),
@@ -1743,7 +1744,7 @@ def login_page() -> None:
                     placeholder="Enter your password",
                     autocomplete="current-password",
                 )
-                submitted = st.form_submit_button("Sign in", use_container_width=True)
+                submitted = st.form_submit_button("Sign in", width="stretch")
 
             if submitted:
                 if credentials_are_valid(username, password):
@@ -1851,15 +1852,15 @@ def top_navigation() -> None:
                     label,
                     key=f"top_nav_module_{navigation_key(module)}",
                     type="primary" if st.session_state.module == module else "secondary",
-                    use_container_width=True,
+                    width="stretch",
                     on_click=set_navigation,
                     args=(module, cfg["tabs"][0] if cfg["tabs"] else ""),
                 )
         with columns[-1]:
-            with st.popover("More", use_container_width=True):
+            with st.popover("More", width="stretch"):
                 st.caption(f"{APP_VERSION} · Signed in as {st.session_state.get('authenticated_user', LOGIN_USERNAME)}")
-                st.button("About", key="top_nav_about", use_container_width=True, on_click=set_navigation, args=("About", ""))
-                if st.button("Sign out", key="top_nav_logout", use_container_width=True):
+                st.button("About", key="top_nav_about", width="stretch", on_click=set_navigation, args=("About", ""))
+                if st.button("Sign out", key="top_nav_logout", width="stretch"):
                     logout()
 
 
@@ -1883,7 +1884,7 @@ def context_navigation() -> None:
                     tab_labels.get(tab, tab),
                     key=f"top_nav_tab_{navigation_key(module)}_{navigation_key(tab)}",
                     type="primary" if st.session_state.tab == tab else "secondary",
-                    use_container_width=True,
+                    width="stretch",
                     on_click=set_navigation,
                     args=(module, tab),
                 )
@@ -3586,7 +3587,6 @@ def delete_assembly_source(record_id: int) -> dict:
             cleanup_note = f" The source record was removed, but the stored file could not be cleaned up: {exc}"
     if cloud_active:
         bump_cloud_data_version("Assembly source deletion")
-    st.cache_data.clear()
     return {
         "data_type": data_type,
         "original_name": original_name,
@@ -3622,7 +3622,7 @@ def render_assembly_source_manager() -> None:
                 for record in records
             ]
         )
-        st.dataframe(table, use_container_width=True, hide_index=True, height="content")
+        st.dataframe(table, width="stretch", hide_index=True, height="content")
 
         record_by_id = {record["id"]: record for record in records}
         selected_id = st.selectbox(
@@ -3645,7 +3645,7 @@ def render_assembly_source_manager() -> None:
             "Delete selected source file",
             type="secondary",
             disabled=not confirmed,
-            use_container_width=True,
+            width="stretch",
             key="assembly_source_delete_button",
         ):
             try:
@@ -4189,13 +4189,11 @@ PLOTLY_CONFIG = {
 
 
 def show_chart(fig) -> None:
-    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+    st.plotly_chart(fig, width="stretch", config=PLOTLY_CONFIG)
 
 
 def install_chart_copy_controls() -> None:
-    import streamlit.components.v1 as components
-
-    components.html(
+    st.iframe(
         """
         <script>
         (() => {
@@ -4309,8 +4307,7 @@ def install_chart_copy_controls() -> None:
         })();
         </script>
         """,
-        height=0,
-        scrolling=False,
+        height=1,
     )
 
 
@@ -4583,7 +4580,7 @@ def assembly_quality_dashboard(color: str) -> None:
             st.markdown("#### Last import result")
             import_results_table(st.session_state["assembly_last_import_results"])
 
-        if st.button("Refresh monitored folder now", use_container_width=True):
+        if st.button("Refresh monitored folder now", width="stretch"):
             results = import_assembly_monitored_folder()
             st.session_state["assembly_last_import_results"] = results
             st.success("Monitored folder import finished.")
@@ -4597,7 +4594,7 @@ def assembly_quality_dashboard(color: str) -> None:
             key="assembly_inputs_upload",
         )
         if uploaded_defects and uploaded_inputs:
-            if st.button("Save uploaded files to local data store", use_container_width=True):
+            if st.button("Save uploaded files to local data store", width="stretch"):
                 results = [persist_assembly_source(uploaded_defects, "defects", "manual upload")]
                 results.extend(persist_assembly_source(uploaded, "input", "manual upload") for uploaded in uploaded_inputs)
                 st.session_state["assembly_last_import_results"] = results
@@ -4920,7 +4917,7 @@ def assembly_quality_dashboard(color: str) -> None:
         if st.session_state.get("assembly_detail_signature") != detail_signature:
             st.session_state.pop("assembly_detail_csv", None)
             st.session_state["assembly_detail_signature"] = detail_signature
-        if st.button("Prepare filtered detail CSV", use_container_width=True):
+        if st.button("Prepare filtered detail CSV", width="stretch"):
             st.session_state["assembly_detail_csv"] = visible_view.to_csv(index=False).encode("utf-8-sig")
             st.success("Filtered detail CSV is ready to download.")
         if "assembly_detail_csv" in st.session_state:
@@ -4929,7 +4926,7 @@ def assembly_quality_dashboard(color: str) -> None:
                 data=st.session_state["assembly_detail_csv"],
                 file_name="assembly_filtered_detail_rows.csv",
                 mime="text/csv",
-                use_container_width=True,
+                width="stretch",
             )
 
     if active_section == "Export":
@@ -4945,7 +4942,7 @@ def assembly_quality_dashboard(color: str) -> None:
         if st.session_state.get("assembly_export_signature") != export_signature:
             st.session_state.pop("assembly_export_bytes", None)
             st.session_state["assembly_export_signature"] = export_signature
-        if st.button("Prepare SKD analysis workbook", use_container_width=True):
+        if st.button("Prepare SKD analysis workbook", width="stretch"):
             st.session_state["assembly_export_bytes"] = make_skd_export(analysis).getvalue()
             st.success("Workbook is ready to download.")
         if "assembly_export_bytes" in st.session_state:
@@ -4954,7 +4951,7 @@ def assembly_quality_dashboard(color: str) -> None:
                 data=st.session_state["assembly_export_bytes"],
                 file_name="skd_quality_analysis.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
+                width="stretch",
             )
 
     if active_section == "About":
@@ -5204,7 +5201,7 @@ def smart_report_area_panel(area: str, color: str, candidates: list[dict], perio
                     owner = st.text_input("Owner", value=action["owner"])
                 with c4:
                     due_date = st.text_input("Due date", value=action["due_date"], placeholder="MM/DD/YYYY")
-                if st.form_submit_button("Save information", use_container_width=True):
+                if st.form_submit_button("Save information", width="stretch"):
                     save_smart_report_action(
                         area,
                         period_key,
@@ -5296,7 +5293,7 @@ def smart_report_page() -> None:
         ) or "All"
     with action_column:
         st.markdown("<div class='smart-control-label'>&nbsp;</div>", unsafe_allow_html=True)
-        if st.button("Generate report", use_container_width=True, type="primary"):
+        if st.button("Generate report", width="stretch", type="primary"):
             st.toast("Report suggestions refreshed from the stored input data.")
 
     area_results = {}
@@ -5329,7 +5326,7 @@ def smart_report_page() -> None:
             smart_report_area_panel("Assembly", MODULES["Assembly"]["color"], area_results["Assembly"][0], period_key)
         with preview_column:
             st.markdown("<div class='smart-whatsapp-panel'><div class='smart-area-head'><span class='smart-area-icon' style='background:#16A05D;'>◔</span><span class='smart-area-title'>WhatsApp Preview</span></div><div class='smart-preview-copy'>" + escape(message) + "</div><div class='smart-preview-footnote'>Preview based on selected real-data defects.</div></div>", unsafe_allow_html=True)
-            if st.button("Copy for WhatsApp", key="smart_report_copy_all", use_container_width=True):
+            if st.button("Copy for WhatsApp", key="smart_report_copy_all", width="stretch"):
                 st.toast("Select the preview text and copy it to WhatsApp.")
     else:
         report_column, preview_column = st.columns([1.3, 1.0])
@@ -5338,7 +5335,7 @@ def smart_report_page() -> None:
             smart_report_area_panel(area, MODULES[area]["color"], area_results[area][0], period_key)
         with preview_column:
             st.markdown("<div class='smart-whatsapp-panel'><div class='smart-area-head'><span class='smart-area-icon' style='background:#16A05D;'>◔</span><span class='smart-area-title'>WhatsApp Preview</span></div><div class='smart-preview-copy'>" + escape(message) + "</div><div class='smart-preview-footnote'>Preview based on selected real-data defects.</div></div>", unsafe_allow_html=True)
-            if st.button("Copy for WhatsApp", key="smart_report_copy_single", use_container_width=True):
+            if st.button("Copy for WhatsApp", key="smart_report_copy_single", width="stretch"):
                 st.toast("Select the preview text and copy it to WhatsApp.")
     with st.expander("Copyable report text"):
         st.code(message, language=None)
@@ -5377,7 +5374,7 @@ def home_page() -> None:
                 st.button(
                     "Enter",
                     key=f"home_enter_{navigation_key(module)}",
-                    use_container_width=True,
+                    width="stretch",
                     on_click=set_navigation,
                     args=(module, tab),
                 )
@@ -5623,9 +5620,11 @@ def calculate_assembly_smt_duty_kpi(start_date: date, end_date: date) -> dict:
     }
 
 
-def assembly_input_bounds(input_paths: list[Path]) -> tuple[date, date]:
+@st.cache_data(show_spinner=False)
+def assembly_input_bounds_cached(input_signatures: tuple[tuple[str, int, int], ...]) -> tuple[date, date]:
     starts = []
-    for input_path in input_paths:
+    for path_text, _, _ in input_signatures:
+        input_path = Path(path_text)
         try:
             frame = assembly_kpi_v2.read_daily_input(input_path)
         except Exception:
@@ -5636,12 +5635,25 @@ def assembly_input_bounds(input_paths: list[Path]) -> tuple[date, date]:
     return min(starts).date(), max(starts).date()
 
 
-def calculate_assembly_kpi_metrics(start_date: date, end_date: date) -> dict:
+def assembly_input_bounds(input_paths: list[Path]) -> tuple[date, date]:
+    return assembly_input_bounds_cached(tuple(path_signature(path) for path in input_paths))
+
+
+@st.cache_data(show_spinner=False)
+def calculate_assembly_kpi_metrics_cached(
+    input_signatures: tuple[tuple[str, int, int], ...],
+    defect_signatures: tuple[tuple[str, int, int], ...],
+    repair_signatures: tuple[tuple[str, int, int], ...],
+    start_text: str,
+    end_text: str,
+) -> dict:
     import pandas as pd
 
-    sources = stored_assembly_sources_v2()
-    if not sources["input"] or not sources["defects"] or not sources["repair"]:
-        raise RuntimeError("Carregue inputs diários, defeitos gerais cumulativos e reparo cumulativo de Assembly.")
+    input_paths = [Path(signature[0]) for signature in input_signatures]
+    defect_paths = [Path(signature[0]) for signature in defect_signatures]
+    repair_paths = [Path(signature[0]) for signature in repair_signatures]
+    start_date = date.fromisoformat(start_text)
+    end_date = date.fromisoformat(end_text)
 
     def latest_valid(paths, reader, label):
         errors = []
@@ -5653,10 +5665,10 @@ def calculate_assembly_kpi_metrics(start_date: date, end_date: date) -> dict:
                 errors.append(f"{path.name}: {exc}")
         raise RuntimeError(f"Nenhum arquivo válido de {label} foi encontrado. " + " | ".join(errors[:2]))
 
-    defect_path = latest_valid(sources["defects"], assembly_kpi_v2.read_fpy_defects, "defeitos gerais")
-    repair_path = latest_valid(sources["repair"], assembly_kpi_v2.read_repair, "reparo")
+    defect_path = latest_valid(defect_paths, assembly_kpi_v2.read_fpy_defects, "defeitos gerais")
+    repair_path = latest_valid(repair_paths, assembly_kpi_v2.read_repair, "reparo")
     valid_inputs = []
-    for path in sources["input"]:
+    for path in input_paths:
         try:
             assembly_kpi_v2.read_daily_input(path)
         except Exception:
@@ -5693,6 +5705,19 @@ def calculate_assembly_kpi_metrics(start_date: date, end_date: date) -> dict:
     return result
 
 
+def calculate_assembly_kpi_metrics(start_date: date, end_date: date) -> dict:
+    sources = stored_assembly_sources_v2()
+    if not sources["input"] or not sources["defects"] or not sources["repair"]:
+        raise RuntimeError("Carregue inputs diários, defeitos gerais cumulativos e reparo cumulativo de Assembly.")
+    return calculate_assembly_kpi_metrics_cached(
+        tuple(path_signature(path) for path in sources["input"]),
+        tuple(path_signature(path) for path in sources["defects"]),
+        tuple(path_signature(path) for path in sources["repair"]),
+        start_date.isoformat(),
+        end_date.isoformat(),
+    )
+
+
 def build_assembly_oqc_fqc_trend(records, start_date: date, end_date: date):
     import pandas as pd
 
@@ -5712,11 +5737,9 @@ def build_assembly_oqc_fqc_trend(records, start_date: date, end_date: date):
 
 
 def smt_kpi_track_page(color: str) -> None:
-    import importlib
     import pandas as pd
     from tools import smt_quality_dashboard
 
-    importlib.reload(smt_quality_dashboard)
     st.markdown(f"<h1 class='section-title' style='color:{color};'>SMT KPI Track</h1>", unsafe_allow_html=True)
 
     input_paths, defect_paths = smt_quality_dashboard.stored_smt_sources()
@@ -5970,7 +5993,7 @@ def smt_kpi_track_page(color: str) -> None:
         with form_columns[4]:
             ng_qty = st.number_input("NG", min_value=0, value=0, step=1, key="smt_oqc_ng")
         oqc_notes = st.text_input("Notes (optional)", key="smt_oqc_notes")
-        oqc_submit = st.form_submit_button("Save OQC inspection", use_container_width=True)
+        oqc_submit = st.form_submit_button("Save OQC inspection", width="stretch")
     if oqc_submit:
         try:
             save_smt_oqc_inspection(
@@ -6004,7 +6027,7 @@ def smt_kpi_track_page(color: str) -> None:
             data=oqc_view.to_csv(index=False).encode("utf-8-sig"),
             file_name="smt_oqc_inspection_history.csv",
             mime="text/csv",
-            use_container_width=True,
+            width="stretch",
         )
         with st.expander("Delete an OQC inspection record"):
             st.caption("Select the incorrect manual record, then confirm its deletion. This action cannot be undone.")
@@ -6274,7 +6297,7 @@ def assembly_kpi_track_page(color: str) -> None:
             fqc_ok_input = st.number_input("FQC OK", min_value=0, value=0, step=1, key="assembly_fqc_ok")
             fqc_ng_input = st.number_input("FQC NG", min_value=0, value=0, step=1, key="assembly_fqc_ng")
         inspection_notes = st.text_input("Notes (optional)", key="assembly_oqc_fqc_notes")
-        oqc_fqc_submit = st.form_submit_button("Save Assembly OQC and FQC inspection", use_container_width=True)
+        oqc_fqc_submit = st.form_submit_button("Save Assembly OQC and FQC inspection", width="stretch")
     if oqc_fqc_submit:
         try:
             save_assembly_oqc_fqc_inspection(
@@ -6322,7 +6345,7 @@ def assembly_kpi_track_page(color: str) -> None:
             data=oqc_fqc_view.to_csv(index=False).encode("utf-8-sig"),
             file_name="assembly_oqc_fqc_inspection_history.csv",
             mime="text/csv",
-            use_container_width=True,
+            width="stretch",
         )
         with st.expander("Delete an Assembly OQC/FQC inspection record"):
             st.caption("Select the incorrect manual record, then confirm its deletion. This action cannot be undone.")
@@ -6929,7 +6952,7 @@ def smt_quality_dashboard_v2(color: str) -> None:
             data=detail.to_csv(index=False).encode("utf-8-sig"),
             file_name="smt_quality_filtered_detail.csv",
             mime="text/csv",
-            use_container_width=True,
+            width="stretch",
         )
 
     record_dashboard_performance(
@@ -7242,7 +7265,7 @@ def _assembly_upload_section_v2(store_status: dict) -> None:
     )
     if st.button(
         "Salvar arquivos de Assembly",
-        use_container_width=True,
+        width="stretch",
         key="assembly_quality_v2_save",
         disabled=not (uploaded_defects or uploaded_repair or uploaded_inputs),
     ):
@@ -7265,7 +7288,7 @@ def _assembly_upload_section_v2(store_status: dict) -> None:
             st.rerun()
     if st.button(
         "Refresh monitored folder",
-        use_container_width=True,
+        width="stretch",
         key="assembly_quality_v2_refresh_folder",
     ):
         st.session_state["assembly_last_import_results"] = import_assembly_monitored_folder()
@@ -7286,10 +7309,8 @@ def data_upload_page(module: str, color: str) -> None:
         "Cada área mantém sua própria base de Input FPY, Defeitos FPY e Defeitos de reparo."
     )
     if module == "SMT":
-        import importlib
         from tools import smt_quality_dashboard
 
-        importlib.reload(smt_quality_dashboard)
         smt_quality_dashboard._upload_section(color)
         return
     if module == "Assembly":
@@ -7614,7 +7635,7 @@ def assembly_quality_dashboard_v2(color: str) -> None:
             data=detail.to_csv(index=False).encode("utf-8-sig"),
             file_name="assembly_quality_filtered_detail.csv",
             mime="text/csv",
-            use_container_width=True,
+            width="stretch",
         )
         if not analysis["production_input_audit"].empty:
             audit_columns = [
@@ -7834,18 +7855,14 @@ def learning_page(tab: str) -> None:
 
 
 def bom_tool_smt_page() -> None:
-    import importlib
     from tools import bom_comparison_tool
 
-    importlib.reload(bom_comparison_tool)
     bom_comparison_tool.render_bom_comparison_tool(MODULES["SMT"]["color"])
 
 
 def bom_tool_assy_page() -> None:
-    import importlib
     from tools import bom_comparison_assy_tool
 
-    importlib.reload(bom_comparison_assy_tool)
     bom_comparison_assy_tool.render_bom_comparison_assy_tool(MODULES["Assembly"]["color"])
 
 
@@ -7891,7 +7908,7 @@ def render_cloud_storage_panel() -> None:
             if st.button(
                 "Full cloud refresh",
                 help="Downloads every current portal file from Supabase. This may take a few minutes and never deletes cloud data.",
-                use_container_width=True,
+                width="stretch",
                 key="supabase_full_cloud_refresh_button",
             ):
                 try:
@@ -7912,7 +7929,7 @@ def render_cloud_storage_panel() -> None:
             "Migrate current portal data to Supabase",
             type="primary",
             disabled=not confirmed,
-            use_container_width=True,
+            width="stretch",
             key="supabase_initial_migration_button",
         ):
             try:

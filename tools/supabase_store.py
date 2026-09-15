@@ -38,6 +38,7 @@ DATABASE_OBJECT = "state/jovi_quality.db"
 DATA_VERSION_OBJECT = "state/data_version.json"
 SYNC_MANIFEST_FILENAME = ".supabase_sync_manifest.json"
 DATA_VERSION_FILENAME = ".supabase_data_version"
+CLOUD_METADATA_CACHE_TTL_SECONDS = 300
 
 
 def _setting(name: str, default: str = "") -> str:
@@ -258,6 +259,7 @@ def remote_object_exists(path: str) -> bool:
     return any(str(row.get("name")) == name for row in _list_objects(parent))
 
 
+@st.cache_data(ttl=CLOUD_METADATA_CACHE_TTL_SECONDS, show_spinner=False)
 def cloud_store_status() -> dict[str, str | bool]:
     if not supabase_is_configured():
         return {
@@ -289,6 +291,7 @@ def cloud_store_is_active() -> bool:
     return bool(cloud_store_status()["active"])
 
 
+@st.cache_data(ttl=CLOUD_METADATA_CACHE_TTL_SECONDS, show_spinner=False)
 def cloud_data_version() -> str:
     """Read the compact revision marker without listing every stored source file."""
     if not supabase_is_configured():
@@ -321,6 +324,13 @@ def bump_cloud_data_version(reason: str = "data update") -> str:
         )
     except Exception as exc:
         raise RuntimeError("Supabase could not publish the portal data revision.") from exc
+    # A portal write must invalidate the metadata snapshot immediately. Normal
+    # navigation reuses it for five minutes, avoiding a cloud request per rerun.
+    for cached_function in (cloud_data_version, cloud_store_status):
+        try:
+            cached_function.clear()
+        except AttributeError:
+            pass
     return version
 
 

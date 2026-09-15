@@ -344,10 +344,10 @@ def render_bom_comparison_assy_tool(color: str) -> None:
         jovi_raw = read_uploaded_file(jovi_file, "jovi")
         with st.expander("Preview uploaded files"):
             preview_left, preview_right = st.columns(2)
-            preview_left.dataframe(microsiga_raw.head(20), use_container_width=True)
-            preview_right.dataframe(jovi_raw.head(20), use_container_width=True)
+            preview_left.dataframe(microsiga_raw.head(20), width="stretch")
+            preview_right.dataframe(jovi_raw.head(20), width="stretch")
 
-        if st.button("Compare Assembly BOM", type="primary", use_container_width=True, key="bom_assy_compare"):
+        if st.button("Compare Assembly BOM", type="primary", width="stretch", key="bom_assy_compare"):
             microsiga_filtered, ignored_microsiga = filter_microsiga_ignored_items(microsiga_raw)
             jovi_filtered, ignored_jovi = filter_jovi_ignored_items(jovi_raw)
             microsiga = normalize_bom(microsiga_filtered, "microsiga")
@@ -394,7 +394,7 @@ def render_bom_comparison_assy_tool(color: str) -> None:
                 issue_types = ["All", *sorted(analysis["issues"]["Issue Type"].unique())]
                 selected_issue = st.selectbox("Issue type", issue_types, key="bom_assy_issue_filter")
                 issue_view = analysis["issues"] if selected_issue == "All" else analysis["issues"][analysis["issues"]["Issue Type"].eq(selected_issue)]
-                st.dataframe(issue_view, use_container_width=True, height=390)
+                st.dataframe(issue_view, width="stretch", height=390)
         with results_tab:
             statuses = ["All", *sorted(analysis["result"]["Status"].unique())]
             selected_status = st.selectbox("Status", statuses, key="bom_assy_status_filter")
@@ -404,13 +404,13 @@ def render_bom_comparison_assy_tool(color: str) -> None:
                 term = re.escape(search.strip())
                 mask = result_view.astype(str).apply(lambda column: column.str.contains(term, case=False, na=False, regex=True)).any(axis=1)
                 result_view = result_view[mask]
-            st.dataframe(result_view, use_container_width=True, height=430)
+            st.dataframe(result_view, width="stretch", height=430)
         with normalized_tab:
             normalized_left, normalized_right = st.columns(2)
             normalized_left.markdown("#### Microsiga normalized")
-            normalized_left.dataframe(analysis["microsiga"], use_container_width=True, height=390)
+            normalized_left.dataframe(analysis["microsiga"], width="stretch", height=390)
             normalized_right.markdown("#### Jovi normalized")
-            normalized_right.dataframe(analysis["jovi"], use_container_width=True, height=390)
+            normalized_right.dataframe(analysis["jovi"], width="stretch", height=390)
         with report_tab:
             st.caption("Includes summary, issues, missing/extra/quantity views, normalized BOMs and a filter audit.")
             st.download_button(
@@ -418,7 +418,7 @@ def render_bom_comparison_assy_tool(color: str) -> None:
                 data=generate_excel(analysis),
                 file_name="Assembly_BOM_Comparison_Report_v2_0_8.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
+                width="stretch",
                 key="bom_assy_download",
             )
     except Exception as exc:
