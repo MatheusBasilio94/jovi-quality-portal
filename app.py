@@ -1670,6 +1670,21 @@ def apply_global_css() -> None:
         .context-tab.active { border-bottom-color:#1286e7; color:#096bc8 !important; }
         .dashboard-kpi-chart-gap { height:.55rem; }
         .stPlotlyChart { padding:.2rem; border:1px solid #e1e9f3; border-radius:.62rem; background:#fff; box-shadow:0 5px 16px rgba(24,48,83,.045); }
+        /* Keep the dashboard readable on the 1366 px wide screens used on the shop floor.
+           This is a density adjustment, not a browser zoom setting. */
+        @media (min-width: 1100px) and (max-height: 800px) {
+            [data-testid="stAppViewContainer"] {
+                zoom: .88;
+                /* Compensate the compact scale without introducing horizontal overflow. */
+                width: 108%;
+            }
+            .metric-card { min-height: 7.65rem; padding: .92rem .9rem .8rem 1rem; }
+            .metric-value { font-size: 1.62rem; }
+            .section-title { font-size: 1.58rem; margin-top: .35rem; }
+            div[class*="st-key-analysis_period_"],
+            div[class*="st-key-smt_quality_v2_filter_panel"],
+            div[class*="st-key-assembly_quality_v2_filter_panel"] { padding-top: .52rem; }
+        }
         @media (max-width: 900px) {
             .topnav-shell { grid-template-columns:145px 1fr; min-height:62px; margin-left:-1.5rem; margin-right:-1.5rem; padding:0 .85rem; }
             .topnav-shell .topnav-brand { min-height:62px; }

@@ -12,7 +12,9 @@ NAVY = "#0B1F3A"
 SLATE = "#64748B"
 GRID = "#DDE5F0"
 PLOT_BG = "#F8FAFD"
-DASHBOARD_CHART_HEIGHT = 465
+# Dense desktop dashboard: keeps the primary analytical row visible on common
+# 1366 × 768 and 1440 × 900 factory workstations.
+DASHBOARD_CHART_HEIGHT = 385
 
 
 def shorten_label(value: object, limit: int = 20) -> str:
