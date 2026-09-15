@@ -1459,6 +1459,8 @@ def apply_global_css() -> None:
         div[class*="st-key-home_open_smt_kpi"] button { background:#0D7A45 !important; border-color:#0D7A45 !important; }
         div[class*="st-key-home_open_assembly_kpi"] button { background:#6532C8 !important; border-color:#6532C8 !important; }
         .weekly-review-period { color:#526781; font-size:.82rem; font-weight:850; margin:.15rem 0 .55rem; }
+        .jovi-copy-kpi-table { align-items:center; background:#FFF; border:1px solid #C9D7E7; border-radius:.45rem; box-shadow:0 2px 6px rgba(20,48,86,.10); color:#173A67; cursor:pointer; display:flex; font-size:.76rem; font-weight:850; gap:.35rem; margin:0 0 .38rem auto; padding:.38rem .62rem; }
+        .jovi-copy-kpi-table:hover { background:#F2F7FD; border-color:#2F80ED; }
         .weekly-review-wrap { border:1px solid #B9C8DB; border-radius:.65rem; margin:.15rem 0 1rem; overflow:auto; }
         .weekly-review-table { border-collapse:collapse; font-size:.76rem; min-width:1080px; width:100%; }
         .weekly-review-table th { background:#072964; border:1px solid #244776; color:#FFF; font-weight:850; padding:.48rem .5rem; text-align:center; white-space:nowrap; }
@@ -4417,6 +4419,66 @@ def install_chart_copy_controls() -> None:
     )
 
 
+def install_kpi_table_copy_controls() -> None:
+    """Add a user-initiated clipboard button to each KPI review table."""
+    import streamlit.components.v1 as components
+
+    components.html(
+        """
+        <script>
+        (() => {
+            const parentWindow = window.parent;
+            const parentDocument = parentWindow.document;
+            const buttonClass = "jovi-copy-kpi-table";
+            parentDocument.querySelectorAll(`.${buttonClass}`).forEach((button) => button.remove());
+
+            const tableText = (table) => Array.from(table.querySelectorAll("tr"))
+                .map((row) => Array.from(row.cells).map((cell) => cell.innerText.trim()).join("\\t"))
+                .join("\\n");
+            const copyText = async (text) => {
+                if (parentWindow.navigator?.clipboard?.writeText) {
+                    await parentWindow.navigator.clipboard.writeText(text);
+                    return;
+                }
+                const textarea = parentDocument.createElement("textarea");
+                textarea.value = text;
+                textarea.style.position = "fixed";
+                textarea.style.opacity = "0";
+                parentDocument.body.appendChild(textarea);
+                textarea.select();
+                parentDocument.execCommand("copy");
+                textarea.remove();
+            };
+
+            parentDocument.querySelectorAll(".weekly-review-wrap").forEach((wrapper) => {
+                const table = wrapper.querySelector("table");
+                if (!table) return;
+                const button = parentDocument.createElement("button");
+                button.type = "button";
+                button.className = buttonClass;
+                button.textContent = "⧉ Copy table";
+                button.title = "Copy to clipboard";
+                button.setAttribute("aria-label", "Copy table to clipboard");
+                button.addEventListener("click", async () => {
+                    try {
+                        await copyText(tableText(table));
+                        button.textContent = "✓ Copied";
+                        parentWindow.setTimeout(() => { button.textContent = "⧉ Copy table"; }, 1600);
+                    } catch (_error) {
+                        button.textContent = "Copy unavailable";
+                        parentWindow.setTimeout(() => { button.textContent = "⧉ Copy table"; }, 1800);
+                    }
+                });
+                wrapper.parentNode.insertBefore(button, wrapper);
+            });
+        })();
+        </script>
+        """,
+        height=0,
+        scrolling=False,
+    )
+
+
 def skd_line_chart(df, x_col: str, y_cols: list[str], title: str, color: str):
     import pandas as pd
     import plotly.graph_objects as go
@@ -5595,6 +5657,7 @@ def kpi_review_table(
         "<div class='weekly-review-wrap'><table class='weekly-review-table'><thead><tr>" + "".join(f"<th>{header}</th>" for header in headers) + "</tr></thead><tbody>" + "".join(rows) + "</tbody></table></div>",
         unsafe_allow_html=True,
     )
+    install_kpi_table_copy_controls()
 
 
 def kpi_review_email(
