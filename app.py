@@ -5620,21 +5620,15 @@ def weekly_kpi_review_data(start_date: date, end_date: date) -> tuple[dict[str, 
 
 def kpi_review_table(
     directory: tuple[dict, ...],
-    previous_totals: dict[str, float | None],
-    totals: dict[str, float | None],
+    summary_columns: list[tuple[str, dict[str, float | None]]],
     daily: dict[str, dict[date, float | None]],
     days: list[date],
-    previous_label: str,
-    current_label: str,
 ) -> None:
-    headers = ["Area", "KPI", "Brazil<br>Goal", "GBR", "Jovi", previous_label, current_label] + [f"{day.day}-{day.strftime('%b')}" for day in days]
+    headers = ["Area", "KPI", "Brazil<br>Goal", "GBR", "Jovi"] + [label for label, _ in summary_columns] + [f"{day.day}-{day.strftime('%b')}" for day in days]
     rows = []
     area_counts = {area: sum(item["area"] == area for item in directory) for area in {item["area"] for item in directory}}
     seen_areas = set()
     for item in directory:
-        value = totals.get(item["source"])
-        below = weekly_kpi_is_below_target(value, item["target"], item["direction"])
-        status_class = " below" if below else " on-target" if value is not None else " unavailable"
         area_cell = ""
         if item["area"] not in seen_areas:
             area_cell = f"<td class='weekly-area' rowspan='{area_counts[item['area']]}'>{escape(item['area'])}</td>"
@@ -5645,9 +5639,11 @@ def kpi_review_table(
             f"<td>{escape(weekly_kpi_value_label(item['target'], item['direction']))}</td>",
             f"<td>{escape(item['gbr'])}</td>",
             f"<td>{escape(item['jovi'])}</td>",
-            f"<td class='weekly-value {'below' if weekly_kpi_is_below_target(previous_totals.get(item['source']), item['target'], item['direction']) else 'on-target' if previous_totals.get(item['source']) is not None else 'unavailable'}'>{escape(weekly_kpi_value_label(previous_totals.get(item['source']), item['direction']))}</td>",
-            f"<td class='weekly-value{status_class}'>{escape(weekly_kpi_value_label(value, item['direction']))}</td>",
         ]
+        for _, summary in summary_columns:
+            summary_value = summary.get(item["source"])
+            summary_class = " below" if weekly_kpi_is_below_target(summary_value, item["target"], item["direction"]) else " on-target" if summary_value is not None else " unavailable"
+            cells.append(f"<td class='weekly-value{summary_class}'>{escape(weekly_kpi_value_label(summary_value, item['direction']))}</td>")
         for day in days:
             daily_value = daily.get(item["source"], {}).get(day)
             daily_class = " below" if weekly_kpi_is_below_target(daily_value, item["target"], item["direction"]) else " on-target" if daily_value is not None else " unavailable"
@@ -5753,7 +5749,12 @@ def weekly_kpi_review_page() -> None:
     previous_start = start_date - timedelta(days=7)
     previous_end = week_end - timedelta(days=7)
     previous_totals, _, previous_errors = weekly_kpi_review_data(previous_start, previous_end)
-    kpi_review_table(directory, previous_totals, totals, daily, days, f"WK{previous_end.isocalendar().week:02d}", f"WK{week_end.isocalendar().week:02d}")
+    kpi_review_table(
+        directory,
+        [(f"WK{previous_end.isocalendar().week:02d}", previous_totals), (f"WK{week_end.isocalendar().week:02d}", totals)],
+        daily,
+        days,
+    )
     for area, error in errors.items():
         st.info(f"{area}: {error}")
     for area, error in previous_errors.items():
@@ -5797,13 +5798,24 @@ def monthly_kpi_review_page() -> None:
     end_date = following_month - timedelta(days=1)
     previous_end = start_date - timedelta(days=1)
     previous_start = previous_end.replace(day=1)
-    days = [start_date + timedelta(days=offset) for offset in range((end_date - start_date).days + 1)]
     period_label = start_date.strftime("%b %Y")
     directory = tuple(item for item in configured_kpi_directory() if item["area"] == area)
     st.markdown(f"<div class='weekly-review-period'>{escape(area)} · {escape(period_label)} · {start_date.strftime('%d/%m')} – {end_date.strftime('%d/%m/%Y')}</div>", unsafe_allow_html=True)
     totals, daily, errors = weekly_kpi_review_data(start_date, end_date)
     previous_totals, _, previous_errors = weekly_kpi_review_data(previous_start, previous_end)
-    kpi_review_table(directory, previous_totals, totals, daily, days, previous_start.strftime("%b"), start_date.strftime("%b"))
+    two_months_ago_end = previous_start - timedelta(days=1)
+    two_months_ago_start = two_months_ago_end.replace(day=1)
+    two_months_ago_totals, _, _ = weekly_kpi_review_data(two_months_ago_start, two_months_ago_end)
+    kpi_review_table(
+        directory,
+        [
+            (two_months_ago_start.strftime("%b"), two_months_ago_totals),
+            (previous_start.strftime("%b"), previous_totals),
+            (start_date.strftime("%b"), totals),
+        ],
+        {},
+        [],
+    )
     if errors.get(area):
         st.info(f"{area}: {errors[area]}")
     if previous_errors.get(area):
