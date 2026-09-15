@@ -6319,8 +6319,18 @@ def calculate_assembly_smt_duty_kpi(start_date: date, end_date: date) -> dict:
 
 
 def assembly_input_bounds(input_paths: list[Path]) -> tuple[date, date]:
+    signatures = tuple(path_signature(path) for path in input_paths)
+    return assembly_input_bounds_cached(signatures)
+
+
+@st.cache_data(show_spinner=False)
+def assembly_input_bounds_cached(
+    input_signatures: tuple[tuple[str, int, int], ...],
+) -> tuple[date, date]:
+    """Avoid reopening every daily input file just to populate the date filter."""
     starts = []
-    for input_path in input_paths:
+    for signature in input_signatures:
+        input_path = Path(signature[0])
         try:
             frame = assembly_kpi_v2.read_daily_input(input_path)
         except Exception:
@@ -6332,11 +6342,36 @@ def assembly_input_bounds(input_paths: list[Path]) -> tuple[date, date]:
 
 
 def calculate_assembly_kpi_metrics(start_date: date, end_date: date) -> dict:
-    import pandas as pd
-
     sources = stored_assembly_sources_v2()
     if not sources["input"] or not sources["defects"] or not sources["repair"]:
         raise RuntimeError("Carregue inputs diários, defeitos gerais cumulativos e reparo cumulativo de Assembly.")
+
+    input_signatures = tuple(path_signature(path) for path in sources["input"])
+    defect_signatures = tuple(path_signature(path) for path in sources["defects"])
+    repair_signatures = tuple(path_signature(path) for path in sources["repair"])
+    return calculate_assembly_kpi_metrics_cached(
+        input_signatures,
+        defect_signatures,
+        repair_signatures,
+        start_date.isoformat(),
+        end_date.isoformat(),
+    )
+
+
+@st.cache_data(show_spinner=False)
+def calculate_assembly_kpi_metrics_cached(
+    input_signatures: tuple[tuple[str, int, int], ...],
+    defect_signatures: tuple[tuple[str, int, int], ...],
+    repair_signatures: tuple[tuple[str, int, int], ...],
+    start_text: str,
+    end_text: str,
+) -> dict:
+    """Read Assembly source workbooks once per source revision and period."""
+    import pandas as pd
+
+    input_paths = [Path(signature[0]) for signature in input_signatures]
+    defect_paths = [Path(signature[0]) for signature in defect_signatures]
+    repair_paths = [Path(signature[0]) for signature in repair_signatures]
 
     def latest_valid(paths, reader, label):
         errors = []
@@ -6348,10 +6383,10 @@ def calculate_assembly_kpi_metrics(start_date: date, end_date: date) -> dict:
                 errors.append(f"{path.name}: {exc}")
         raise RuntimeError(f"Nenhum arquivo válido de {label} foi encontrado. " + " | ".join(errors[:2]))
 
-    defect_path = latest_valid(sources["defects"], assembly_kpi_v2.read_fpy_defects, "defeitos gerais")
-    repair_path = latest_valid(sources["repair"], assembly_kpi_v2.read_repair, "reparo")
+    defect_path = latest_valid(defect_paths, assembly_kpi_v2.read_fpy_defects, "defeitos gerais")
+    repair_path = latest_valid(repair_paths, assembly_kpi_v2.read_repair, "reparo")
     valid_inputs = []
-    for path in sources["input"]:
+    for path in input_paths:
         try:
             assembly_kpi_v2.read_daily_input(path)
         except Exception:
@@ -6360,7 +6395,13 @@ def calculate_assembly_kpi_metrics(start_date: date, end_date: date) -> dict:
     if not valid_inputs:
         raise RuntimeError("Nenhum input diário válido de Assembly foi encontrado.")
 
-    result = assembly_kpi_v2.calculate(valid_inputs, defect_path, repair_path, start_date, end_date)
+    result = assembly_kpi_v2.calculate(
+        valid_inputs,
+        defect_path,
+        repair_path,
+        date.fromisoformat(start_text),
+        date.fromisoformat(end_text),
+    )
     trend = result["daily"].rename(
         columns={
             "Date": "PeriodDate",
@@ -6407,11 +6448,9 @@ def build_assembly_oqc_fqc_trend(records, start_date: date, end_date: date):
 
 
 def smt_kpi_track_page(color: str) -> None:
-    import importlib
     import pandas as pd
     from tools import smt_quality_dashboard
 
-    importlib.reload(smt_quality_dashboard)
     st.markdown(f"<h1 class='section-title' style='color:{color};'>SMT KPI Track</h1>", unsafe_allow_html=True)
 
     input_paths, defect_paths = smt_quality_dashboard.stored_smt_sources()

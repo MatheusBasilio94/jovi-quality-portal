@@ -258,7 +258,14 @@ def remote_object_exists(path: str) -> bool:
     return any(str(row.get("name")) == name for row in _list_objects(parent))
 
 
+@st.cache_data(show_spinner=False, ttl=60)
 def cloud_store_status() -> dict[str, str | bool]:
+    """Cache the small storage health check across page reruns.
+
+    The durable-store state only changes after an upload, deletion, or initial
+    migration.  Those paths explicitly clear this cache, so a short TTL avoids
+    a Storage listing on every navigation click without delaying real updates.
+    """
     if not supabase_is_configured():
         return {
             "mode": "Local fallback",
@@ -289,6 +296,7 @@ def cloud_store_is_active() -> bool:
     return bool(cloud_store_status()["active"])
 
 
+@st.cache_data(show_spinner=False, ttl=60)
 def cloud_data_version() -> str:
     """Read the compact revision marker without listing every stored source file."""
     if not supabase_is_configured():
@@ -321,6 +329,13 @@ def bump_cloud_data_version(reason: str = "data update") -> str:
         )
     except Exception as exc:
         raise RuntimeError("Supabase could not publish the portal data revision.") from exc
+    # Writes are the only normal source of a new revision.  Do not wait for
+    # the periodic cache expiry before the same session sees that revision.
+    for cached_function in (cloud_data_version, cloud_store_status):
+        try:
+            cached_function.clear()
+        except AttributeError:  # Lightweight test doubles do not expose clear.
+            pass
     return version
 
 
