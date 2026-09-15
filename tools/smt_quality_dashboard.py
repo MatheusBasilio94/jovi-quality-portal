@@ -480,6 +480,7 @@ def persist_smt_source(uploaded, data_type: str) -> dict:
     target.write_bytes(data)
     if cloud_active:
         bump_cloud_data_version("SMT source upload")
+    st.cache_data.clear()
     message = "Saved to Supabase persistent storage." if cloud_active else "Saved to the local SMT data store."
     return {"status": "imported", "file": uploaded.name, "message": message}
 
@@ -527,6 +528,7 @@ def delete_smt_source(data_type: str, stored_name: str) -> dict:
         raise RuntimeError(f"Unable to delete the selected SMT source file: {exc}") from exc
     if cloud_active:
         bump_cloud_data_version("SMT source deletion")
+    st.cache_data.clear()
     return {"data_type": data_type, "original_name": re.sub(r"^[0-9a-f]{12}_", "", stored_name)}
 
 
@@ -554,7 +556,7 @@ def render_smt_source_manager() -> None:
                 for record in records
             ]
         )
-        st.dataframe(table, width="stretch", hide_index=True, height="content")
+        st.dataframe(table, use_container_width=True, hide_index=True, height="content")
 
         record_by_key = {record["key"]: record for record in records}
         selected_key = st.selectbox(
@@ -575,7 +577,7 @@ def render_smt_source_manager() -> None:
             "Delete selected source file",
             type="secondary",
             disabled=not confirmed,
-            width="stretch",
+            use_container_width=True,
             key="smt_source_delete_button",
         ):
             try:
@@ -640,23 +642,6 @@ def distribute_smt_input_to_days(input_rows: pd.DataFrame) -> pd.DataFrame:
             daily_row["Granularity"] = "daily"
             daily_rows.append(daily_row)
     return pd.DataFrame(daily_rows)
-
-
-def clipped_trend_period_bounds(
-    trend_period: pd.Period,
-    trend_grain: str,
-    selected_start: pd.Timestamp,
-    selected_end_exclusive: pd.Timestamp,
-) -> tuple[pd.Timestamp, pd.Timestamp]:
-    """Keep boundary trend periods inside the user-selected date range."""
-    raw_begin = trend_period.start_time
-    if trend_grain == "day":
-        raw_end = raw_begin + pd.Timedelta(days=1)
-    elif trend_grain == "week":
-        raw_end = raw_begin + pd.Timedelta(days=7)
-    else:
-        raw_end = raw_begin + pd.offsets.MonthBegin(1)
-    return max(raw_begin, selected_start), min(raw_end, selected_end_exclusive)
 
 
 def select_smt_input_period(
@@ -803,9 +788,13 @@ def analyze_smt_quality_paths(
     trend_input = distribute_smt_input_to_days(selected_input) if input_distributed else selected_input.copy()
     trend_input["TrendPeriod"] = trend_input["BeginDate"].dt.to_period(trend_frequency)
     for trend_period, period_input in trend_input.groupby("TrendPeriod", sort=True):
-        begin, end = clipped_trend_period_bounds(
-            trend_period, trend_grain, start, end_exclusive
-        )
+        begin = trend_period.start_time
+        if trend_grain == "day":
+            end = begin + pd.Timedelta(days=1)
+        elif trend_grain == "week":
+            end = begin + pd.Timedelta(days=7)
+        else:
+            end = begin + pd.offsets.MonthBegin(1)
         period_label = begin.strftime("%m/%y") if trend_grain == "month" else begin.strftime("%d/%m")
         period_defects = covered_defects[
             covered_defects["KPIDate"].ge(begin)
@@ -1054,7 +1043,7 @@ def show_table(frame: pd.DataFrame) -> None:
     for column in ["ConfirmedPPM", "FunctionalPPM", "AppearancePPM"]:
         if column in view.columns:
             view[column] = view[column].round(0)
-    st.dataframe(view, width="stretch", hide_index=True, height="content")
+    st.dataframe(view, use_container_width=True, hide_index=True, height="content")
 
 
 def trend_chart(frame: pd.DataFrame, color: str):
@@ -1209,33 +1198,29 @@ def bar_chart(frame: pd.DataFrame, category: str, value: str, title: str, color:
 
 def _upload_section(color: str) -> None:
     status = smt_store_status()
-    st.markdown("#### Files and validation")
+    st.markdown("### Upload Data")
     st.caption("Carregue inputs FPY diariamente. Para defeitos FPY e reparo, use sempre o snapshot MTD/YTD mais recente.")
-    upload_columns = st.columns(3)
-    with upload_columns[0]:
-        with st.container(key="upload_slot_smt_input"):
-            st.markdown("**Input FPY**")
-            st.caption("Arquivo diário de produção.")
-            uploaded_inputs = st.file_uploader(
-                "Input FPY — SMT", type=["xls", "xlsx"], accept_multiple_files=True, key="smt_summary_inputs_upload"
-            )
-    with upload_columns[1]:
-        with st.container(key="upload_slot_smt_fpy"):
-            st.markdown("**FPY Defects MTD/YTD**")
-            st.caption("Snapshot cumulativo de defeitos FPY.")
-            uploaded_defect = st.file_uploader(
-                "Defeitos FPY — SMT (MTD/YTD)", type=["xls", "xlsx"], key="smt_defect_upload"
-            )
-    with upload_columns[2]:
-        with st.container(key="upload_slot_smt_repair"):
-            st.markdown("**Repair Defects MTD/YTD**")
-            st.caption("Snapshot cumulativo de reparo.")
-            uploaded_repair = st.file_uploader(
-                "Defeitos de reparo — SMT (MTD/YTD)", type=["xls", "xlsx"], key="smt_repair_upload"
-            )
+    columns = st.columns(4)
+    with columns[0]:
+        metric_card("FPY Input", fmt_int(status["inputs"]), "Arquivos diários", color)
+    with columns[1]:
+        metric_card("FPY Defects", fmt_int(status["defects"]), "Snapshots MTD/YTD", color)
+    with columns[2]:
+        metric_card("Repair Defects", fmt_int(status["repair"]), "Snapshots MTD/YTD", color)
+    with columns[3]:
+        metric_card("Stored size", f"{status['bytes'] / 1024 / 1024:.2f} MB", status["latest"], color)
+    uploaded_inputs = st.file_uploader(
+        "Input FPY — SMT", type=["xls", "xlsx"], accept_multiple_files=True, key="smt_summary_inputs_upload"
+    )
+    uploaded_defect = st.file_uploader(
+        "Defeitos FPY — SMT (MTD/YTD)", type=["xls", "xlsx"], key="smt_defect_upload"
+    )
+    uploaded_repair = st.file_uploader(
+        "Defeitos de reparo — SMT (MTD/YTD)", type=["xls", "xlsx"], key="smt_repair_upload"
+    )
     if st.button(
         "Salvar arquivos de SMT",
-        width="stretch",
+        use_container_width=True,
         disabled=not (uploaded_inputs or uploaded_defect or uploaded_repair),
     ):
         from tools import assembly_kpi_v2
@@ -1257,20 +1242,10 @@ def _upload_section(color: str) -> None:
             st.session_state["smt_last_import_results"] = results
             st.success("Arquivos de SMT processados.")
             st.rerun()
-    st.markdown("#### Current stored files")
-    columns = st.columns(4)
-    with columns[0]:
-        metric_card("FPY Input", fmt_int(status["inputs"]), "Arquivos diários", color)
-    with columns[1]:
-        metric_card("FPY Defects", fmt_int(status["defects"]), "Snapshots MTD/YTD", color)
-    with columns[2]:
-        metric_card("Repair Defects", fmt_int(status["repair"]), "Snapshots MTD/YTD", color)
-    with columns[3]:
-        metric_card("Stored size", f"{status['bytes'] / 1024 / 1024:.2f} MB", status["latest"], color)
     if "smt_last_import_results" in st.session_state:
         st.dataframe(
             pd.DataFrame(st.session_state["smt_last_import_results"]),
-            width="stretch",
+            use_container_width=True,
             hide_index=True,
             height="content",
         )
@@ -1351,7 +1326,7 @@ def render_smt_quality_dashboard(color: str) -> None:
         with columns[3]:
             metric_card("Input files", fmt_int(totals["InputFiles"]), "No overlapping periods", color)
         if not analysis["trend"].empty:
-            st.plotly_chart(trend_chart(analysis["trend"], color), width="stretch", config={"displayModeBar": False})
+            st.plotly_chart(trend_chart(analysis["trend"], color), use_container_width=True, config={"displayModeBar": False})
             show_table(analysis["trend"][["Period", "Granularity", "Input", "DefectRecords", "ConfirmedDefectPCBs", "RejudgeOKRecords", "ConfirmedPPM", "PPMStatus"]])
 
     if active_section == "Failure Types":
@@ -1406,7 +1381,7 @@ def render_smt_quality_dashboard(color: str) -> None:
         if not analysis["trend"].empty:
             st.plotly_chart(
                 failure_type_trend_chart(analysis["trend"]),
-                width="stretch",
+                use_container_width=True,
                 config={"displayModeBar": False},
             )
         left, right = st.columns(2)
@@ -1419,7 +1394,7 @@ def render_smt_quality_dashboard(color: str) -> None:
                     "Functional failure phenomena",
                     SMT_FAILURE_TYPE_COLORS["Functional Failure"],
                 ),
-                width="stretch",
+                use_container_width=True,
                 config={"displayModeBar": False},
             )
         with right:
@@ -1431,7 +1406,7 @@ def render_smt_quality_dashboard(color: str) -> None:
                     "Appearance failure phenomena",
                     SMT_FAILURE_TYPE_COLORS["Appearance Failure"],
                 ),
-                width="stretch",
+                use_container_width=True,
                 config={"displayModeBar": False},
             )
         st.markdown("#### Classification summary")
@@ -1442,25 +1417,25 @@ def render_smt_quality_dashboard(color: str) -> None:
     if active_section == "Models":
         model_view = analysis["models"].copy()
         eligible = model_view[model_view["Input"] > 0].copy()
-        st.plotly_chart(bar_chart(eligible, "Model", "ConfirmedPPM", "Models by confirmed PPM", color), width="stretch", config={"displayModeBar": False})
+        st.plotly_chart(bar_chart(eligible, "Model", "ConfirmedPPM", "Models by confirmed PPM", color), use_container_width=True, config={"displayModeBar": False})
         show_table(model_view)
 
     if active_section == "Defects / Pareto":
         left, right = st.columns(2)
         with left:
-            st.plotly_chart(bar_chart(analysis["phenomenon_pareto"], "Phenomenon", "DefectRecords", "Confirmed defect phenomena", color), width="stretch", config={"displayModeBar": False})
+            st.plotly_chart(bar_chart(analysis["phenomenon_pareto"], "Phenomenon", "DefectRecords", "Confirmed defect phenomena", color), use_container_width=True, config={"displayModeBar": False})
         with right:
-            st.plotly_chart(bar_chart(analysis["reason_pareto"], "FaultReason", "DefectRecords", "Confirmed fault reasons", color), width="stretch", config={"displayModeBar": False})
+            st.plotly_chart(bar_chart(analysis["reason_pareto"], "FaultReason", "DefectRecords", "Confirmed fault reasons", color), use_container_width=True, config={"displayModeBar": False})
         show_table(analysis["phenomenon_pareto"])
 
     if active_section == "Process":
         st.info("PPM by line is not calculated because monthly input is not broken down by production line. These views show confirmed defect volume and share.")
         left, right = st.columns(2)
         with left:
-            st.plotly_chart(bar_chart(analysis["operation_summary"], "Operation", "DefectRecords", "Confirmed defects by operation", color), width="stretch", config={"displayModeBar": False})
+            st.plotly_chart(bar_chart(analysis["operation_summary"], "Operation", "DefectRecords", "Confirmed defects by operation", color), use_container_width=True, config={"displayModeBar": False})
             show_table(analysis["operation_summary"])
         with right:
-            st.plotly_chart(bar_chart(analysis["line_summary"], "Line", "DefectRecords", "Confirmed defects by test line", color), width="stretch", config={"displayModeBar": False})
+            st.plotly_chart(bar_chart(analysis["line_summary"], "Line", "DefectRecords", "Confirmed defects by test line", color), use_container_width=True, config={"displayModeBar": False})
             show_table(analysis["line_summary"])
         st.markdown("#### Responsibility / duty type")
         show_table(analysis["duty_summary"])
@@ -1475,7 +1450,7 @@ def render_smt_quality_dashboard(color: str) -> None:
             metric_card("Repeated PCBs", fmt_int(totals["RepeatedPCBs"]), "All covered records", color)
         left, right = st.columns(2)
         with left:
-            st.plotly_chart(bar_chart(analysis["rejudge_pareto"], "Phenomenon", "DefectRecords", "Excluded MES phenomena", color), width="stretch", config={"displayModeBar": False})
+            st.plotly_chart(bar_chart(analysis["rejudge_pareto"], "Phenomenon", "DefectRecords", "Excluded MES phenomena", color), use_container_width=True, config={"displayModeBar": False})
         with right:
             show_table(analysis["rejudge_pareto"])
         repeat_columns = ["PCB", "Model", "TestTime", "Operation", "FailureType", "Phenomenon", "Maintenance", "OccurrencesInPeriod"]
@@ -1551,8 +1526,8 @@ def render_smt_quality_dashboard(color: str) -> None:
             page_number = 1
         page_start = (page_number - 1) * page_size
         page_view = visible.iloc[page_start : page_start + page_size]
-        st.dataframe(page_view, width="stretch", hide_index=True, height="content")
-        st.download_button("Download filtered SMT detail CSV", data=visible.to_csv(index=False).encode("utf-8-sig"), file_name="smt_quality_filtered_detail.csv", mime="text/csv", width="stretch")
+        st.dataframe(page_view, use_container_width=True, hide_index=True, height="content")
+        st.download_button("Download filtered SMT detail CSV", data=visible.to_csv(index=False).encode("utf-8-sig"), file_name="smt_quality_filtered_detail.csv", mime="text/csv", use_container_width=True)
 
     if active_section == "About":
         st.markdown(

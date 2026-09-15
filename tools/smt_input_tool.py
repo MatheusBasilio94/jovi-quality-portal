@@ -302,15 +302,15 @@ def render_smt_quality_dashboard(color: str) -> None:
 
     overview_tab, model_tab, duplicates_tab, details_tab = st.tabs(["Daily Input", "Models", "Duplicate Audit", "Unique Detail"])
     with overview_tab:
-        st.plotly_chart(input_chart(analysis["daily"], color), width="stretch", config={"displayModeBar": False})
+        st.plotly_chart(input_chart(analysis["daily"], color), use_container_width=True, config={"displayModeBar": False})
         daily_view = analysis["daily"].copy()
         daily_view["Input Date"] = daily_view["Input Date"].dt.strftime("%d/%m/%Y")
-        st.dataframe(daily_view, width="stretch", hide_index=True)
+        st.dataframe(daily_view, use_container_width=True, hide_index=True)
     with model_tab:
-        st.dataframe(analysis["by_model"], width="stretch", hide_index=True, height=390)
+        st.dataframe(analysis["by_model"], use_container_width=True, hide_index=True, height=390)
         model_daily_view = analysis["daily_by_model"].copy()
         model_daily_view["Input Date"] = model_daily_view["Input Date"].dt.strftime("%d/%m/%Y")
-        st.dataframe(model_daily_view, width="stretch", hide_index=True, height=390)
+        st.dataframe(model_daily_view, use_container_width=True, hide_index=True, height=390)
     with duplicates_tab:
         if analysis["duplicate_detail"].empty:
             st.success("No repeated PCB No. values were found.")
@@ -318,23 +318,23 @@ def render_smt_quality_dashboard(color: str) -> None:
             duplicate_view = analysis["duplicate_detail"].copy()
             for column in ["Operate Time", "First Operate Time"]:
                 duplicate_view[column] = duplicate_view[column].dt.strftime("%Y-%m-%d %H:%M:%S")
-            st.dataframe(duplicate_view, width="stretch", hide_index=True, height=430)
+            st.dataframe(duplicate_view, use_container_width=True, hide_index=True, height=430)
             st.download_button(
                 "Download duplicate audit CSV",
                 data=duplicate_view.to_csv(index=False).encode("utf-8-sig"),
                 file_name="smt_input_duplicate_audit.csv",
                 mime="text/csv",
-                width="stretch",
+                use_container_width=True,
             )
     with details_tab:
         unique_view = analysis["unique_detail"].copy()
         unique_view["Operate Time"] = unique_view["Operate Time"].dt.strftime("%Y-%m-%d %H:%M:%S")
         unique_view["Input Date"] = unique_view["Input Date"].dt.strftime("%Y-%m-%d")
-        st.dataframe(unique_view, width="stretch", hide_index=True, height=430)
+        st.dataframe(unique_view, use_container_width=True, hide_index=True, height=430)
         st.download_button(
             "Download unique SMT input CSV",
             data=unique_view.to_csv(index=False).encode("utf-8-sig"),
             file_name="smt_unique_daily_input.csv",
             mime="text/csv",
-            width="stretch",
+            use_container_width=True,
         )

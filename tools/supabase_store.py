@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import json
 import os
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -22,10 +21,8 @@ import streamlit as st
 
 try:  # Kept optional so local development works before cloud setup is complete.
     from supabase import Client, create_client
-    from supabase.client import ClientOptions
 except ImportError:  # pragma: no cover - exercised by Streamlit after requirements install.
     Client = Any  # type: ignore[misc,assignment]
-    ClientOptions = None  # type: ignore[assignment]
     create_client = None
 
 
@@ -38,7 +35,6 @@ DATABASE_OBJECT = "state/jovi_quality.db"
 DATA_VERSION_OBJECT = "state/data_version.json"
 SYNC_MANIFEST_FILENAME = ".supabase_sync_manifest.json"
 DATA_VERSION_FILENAME = ".supabase_data_version"
-CLOUD_METADATA_CACHE_TTL_SECONDS = 300
 
 
 def _setting(name: str, default: str = "") -> str:
@@ -67,16 +63,7 @@ def supabase_is_configured() -> bool:
 def _client(url: str, key: str) -> Client:
     if create_client is None:
         raise RuntimeError("Supabase support is not installed. Add the 'supabase' package and restart the app.")
-    if ClientOptions is None:
-        return create_client(url, key)
-    return create_client(
-        url,
-        key,
-        options=ClientOptions(
-            postgrest_client_timeout=30,
-            storage_client_timeout=60,
-        ),
-    )
+    return create_client(url, key)
 
 
 def _get_client() -> tuple[Client, dict[str, str]]:
@@ -204,51 +191,12 @@ def _object_fingerprint(row: dict) -> str:
 
 
 def _list_objects(prefix: str) -> list[dict]:
-    last_error: Exception | None = None
-    rows: list[Any] = []
-    for attempt in range(3):
-        try:
-            store, _ = _storage()
-            rows = store.list(_remote_object_path(prefix), {"limit": 1000, "offset": 0})
-            break
-        except Exception as exc:
-            last_error = exc
-            if attempt + 1 < 3:
-                try:
-                    _bucket_store.clear()
-                except AttributeError:
-                    pass
-                time.sleep(0.5 * (attempt + 1))
-    else:
-        raise RuntimeError("Supabase Storage could not list the portal data files.") from last_error
-    return [
-        row
-        for row in rows
-        if (
-            isinstance(row, dict)
-            and str(row.get("name", "")).strip()
-            and str(row.get("name", "")).strip() != ".emptyFolderPlaceholder"
-            and isinstance(row.get("metadata"), dict)
-        )
-    ]
-
-
-def _download_with_retry(store: Any, path: str, *, attempts: int = 3) -> bytes:
-    """Download one object while tolerating brief Storage wake-up delays."""
-    last_error: Exception | None = None
-    for attempt in range(attempts):
-        try:
-            return bytes(store.download(_remote_object_path(path)))
-        except Exception as exc:  # Network clients expose several timeout subclasses.
-            last_error = exc
-            if attempt + 1 < attempts:
-                try:
-                    _bucket_store.clear()
-                    store, _ = _storage()
-                except (AttributeError, RuntimeError):
-                    pass
-                time.sleep(0.5 * (attempt + 1))
-    raise RuntimeError("Supabase could not retrieve the portal data file.") from last_error
+    store, _ = _storage()
+    try:
+        rows = store.list(_remote_object_path(prefix), {"limit": 1000, "offset": 0})
+    except Exception as exc:
+        raise RuntimeError("Supabase Storage could not list the portal data files.") from exc
+    return [row for row in rows if isinstance(row, dict) and str(row.get("name", "")).strip()]
 
 
 def remote_object_exists(path: str) -> bool:
@@ -259,7 +207,6 @@ def remote_object_exists(path: str) -> bool:
     return any(str(row.get("name")) == name for row in _list_objects(parent))
 
 
-@st.cache_data(ttl=CLOUD_METADATA_CACHE_TTL_SECONDS, show_spinner=False)
 def cloud_store_status() -> dict[str, str | bool]:
     if not supabase_is_configured():
         return {
@@ -291,7 +238,6 @@ def cloud_store_is_active() -> bool:
     return bool(cloud_store_status()["active"])
 
 
-@st.cache_data(ttl=CLOUD_METADATA_CACHE_TTL_SECONDS, show_spinner=False)
 def cloud_data_version() -> str:
     """Read the compact revision marker without listing every stored source file."""
     if not supabase_is_configured():
@@ -324,13 +270,6 @@ def bump_cloud_data_version(reason: str = "data update") -> str:
         )
     except Exception as exc:
         raise RuntimeError("Supabase could not publish the portal data revision.") from exc
-    # A portal write must invalidate the metadata snapshot immediately. Normal
-    # navigation reuses it for five minutes, avoiding a cloud request per rerun.
-    for cached_function in (cloud_data_version, cloud_store_status):
-        try:
-            cached_function.clear()
-        except AttributeError:
-            pass
     return version
 
 
@@ -361,7 +300,7 @@ def download_bytes(path: str) -> bytes | None:
         return None
     store, _ = _storage()
     try:
-        return _download_with_retry(store, path)
+        return bytes(store.download(_remote_object_path(path)))
     except Exception as exc:
         raise RuntimeError("Supabase could not retrieve the portal data file.") from exc
 
@@ -407,7 +346,7 @@ def sync_file_from_cloud(
         return True
     store, _ = _storage()
     try:
-        data = _download_with_retry(store, clean)
+        data = bytes(store.download(_remote_object_path(clean)))
     except Exception as exc:
         raise RuntimeError("Supabase could not retrieve the portal data file.") from exc
     if not local_path.is_file() or local_path.read_bytes() != data:
@@ -453,7 +392,7 @@ def sync_prefix_from_cloud(
         fingerprint = _object_fingerprint(row)
         if force or not target.is_file() or manifest.get(remote_path) != fingerprint:
             try:
-                data = _download_with_retry(store, remote_path)
+                data = bytes(store.download(_remote_object_path(remote_path)))
             except Exception as exc:
                 raise RuntimeError("Supabase could not retrieve the portal data file.") from exc
             if not target.is_file() or target.read_bytes() != data:
