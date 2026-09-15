@@ -1439,11 +1439,17 @@ def apply_global_css() -> None:
         /* Streamlit applies a text-fill color to date inputs; override it so the
            selected range has the same white contrast as the quick selector. */
         div[class*="st-key-analysis_period_"] [data-testid="stDateInput"] input,
+        div[class*="st-key-weekly_kpi_week_end"] [data-testid="stDateInput"] input,
         div[class*="st-key-analysis_period_"] [data-testid="stDateInput"] input::placeholder,
+        div[class*="st-key-weekly_kpi_week_end"] [data-testid="stDateInput"] input::placeholder,
         div[class*="st-key-analysis_period_"] [data-testid="stDateInput"] [contenteditable="true"],
+        div[class*="st-key-weekly_kpi_week_end"] [data-testid="stDateInput"] [contenteditable="true"],
         div[class*="st-key-analysis_period_"] [data-testid="stDateInput"] [data-type="literal"],
+        div[class*="st-key-weekly_kpi_week_end"] [data-testid="stDateInput"] [data-type="literal"],
         div[class*="st-key-analysis_period_"] [data-testid="stDateInput"] > div > span,
-        div[class*="st-key-analysis_period_"] [data-testid="stDateInputField"] > span {
+        div[class*="st-key-weekly_kpi_week_end"] [data-testid="stDateInput"] > div > span,
+        div[class*="st-key-analysis_period_"] [data-testid="stDateInputField"] > span,
+        div[class*="st-key-weekly_kpi_week_end"] [data-testid="stDateInputField"] > span {
             color:#F8FBFF !important;
             -webkit-text-fill-color:#F8FBFF !important;
             opacity:1 !important;
@@ -1452,6 +1458,17 @@ def apply_global_css() -> None:
         div[class*="st-key-home_overview_assembly"] { border-top:4px solid #6532C8 !important; }
         div[class*="st-key-home_open_smt_kpi"] button { background:#0D7A45 !important; border-color:#0D7A45 !important; }
         div[class*="st-key-home_open_assembly_kpi"] button { background:#6532C8 !important; border-color:#6532C8 !important; }
+        .weekly-review-period { color:#526781; font-size:.82rem; font-weight:850; margin:.15rem 0 .55rem; }
+        .weekly-review-wrap { border:1px solid #B9C8DB; border-radius:.65rem; margin:.15rem 0 1rem; overflow:auto; }
+        .weekly-review-table { border-collapse:collapse; font-size:.76rem; min-width:1080px; width:100%; }
+        .weekly-review-table th { background:#072964; border:1px solid #244776; color:#FFF; font-weight:850; padding:.48rem .5rem; text-align:center; white-space:nowrap; }
+        .weekly-review-table td { border:1px solid #C8D4E3; color:#152941; padding:.34rem .48rem; text-align:center; white-space:nowrap; }
+        .weekly-review-table .weekly-area { font-weight:900; vertical-align:middle; }
+        .weekly-review-table .weekly-kpi-name { text-align:left; font-weight:800; }
+        .weekly-review-table .weekly-value { font-weight:900; }
+        .weekly-review-table .weekly-value.on-target { background:#9DDD64; color:#123A22; }
+        .weekly-review-table .weekly-value.below { background:#FF9B9B; color:#7A1010; }
+        .weekly-review-table .weekly-value.unavailable { background:#F4F7FB; color:#8795A8; }
         hr { border-color: var(--border) !important; }
         </style>
         """,
@@ -5307,7 +5324,7 @@ def smart_report_kpi_cards(selected_by_area: dict[str, list[dict]], inputs: dict
             )
 
 
-def smart_report_page() -> None:
+def defect_action_report_page() -> None:
     st.markdown("<div class='smart-report-title'>Smart Report</div><div class='smart-report-subtitle'>Fast, actionable reports generated from the stored SMT and Assembly inputs.</div>", unsafe_allow_html=True)
     control_column, area_column, action_column = st.columns([1.8, 1.55, 0.85])
     with control_column:
@@ -5372,6 +5389,204 @@ def smart_report_page() -> None:
     with st.expander("Copyable report text"):
         st.code(message, language=None)
     st.caption("The report reads the existing stored data. Only action details are saved separately in the local quality database.")
+
+
+WEEKLY_KPI_DIRECTORY = (
+    {"area": "Assembly", "kpi": "Functional Pass Rate", "target": 0.9905, "direction": "min", "gbr": "Ewerton", "jovi": "Jeffry", "source": "assembly_function"},
+    {"area": "Assembly", "kpi": "Appearance Pass Rate", "target": 0.9904, "direction": "min", "gbr": "Joao", "jovi": "Key", "source": "assembly_appearance"},
+    {"area": "Assembly", "kpi": "Function Mando (PPM)", "target": 3600.0, "direction": "max", "gbr": "Lene", "jovi": "Jason", "source": "assembly_mando"},
+    {"area": "Assembly", "kpi": "Assembly OQC*FQC Pass Rate", "target": 0.9870, "direction": "min", "gbr": "Douglas", "jovi": "Jason", "source": "assembly_oqc_fqc"},
+    {"area": "SMT", "kpi": "Functional Pass Rate", "target": 0.9956, "direction": "min", "gbr": "Afranio", "jovi": "Jeffry", "source": "smt_function"},
+    {"area": "SMT", "kpi": "SMT Process NG Rate (PPM)", "target": 5000.0, "direction": "max", "gbr": "Felipe - SMT", "jovi": "Hanlin", "source": "smt_process"},
+    {"area": "SMT", "kpi": "Assembly SMT Process Duty NG Rate (PPM)", "target": 700.0, "direction": "max", "gbr": "Alan", "jovi": "Blanc", "source": "smt_assembly_duty"},
+    {"area": "SMT", "kpi": "SMT OQC Pass Rate", "target": 0.9850, "direction": "min", "gbr": "Douglas", "jovi": "Hanlin", "source": "smt_oqc"},
+)
+
+
+def weekly_kpi_value_label(value: float | None, direction: str) -> str:
+    if value is None:
+        return "—"
+    return fmt_ppm(value) if direction == "max" else fmt_kpi_pct(value)
+
+
+def weekly_kpi_is_below_target(value: float | None, target: float, direction: str) -> bool:
+    if value is None:
+        return False
+    return float(value) > target if direction == "max" else float(value) < target
+
+
+def weekly_kpi_review_data(start_date: date, end_date: date) -> tuple[dict[str, float | None], dict[str, dict[date, float | None]], dict[str, str]]:
+    """Use the same validated KPI engines to prepare a weekly review table."""
+    import pandas as pd
+    from tools import smt_quality_dashboard
+
+    totals: dict[str, float | None] = {item["source"]: None for item in WEEKLY_KPI_DIRECTORY}
+    daily: dict[str, dict[date, float | None]] = {item["source"]: {} for item in WEEKLY_KPI_DIRECTORY}
+    errors: dict[str, str] = {}
+
+    def add_daily(frame, source: str, value_column: str) -> None:
+        if frame is None or frame.empty or value_column not in frame.columns:
+            return
+        date_column = "PeriodDate" if "PeriodDate" in frame.columns else "Date"
+        if date_column not in frame.columns:
+            return
+        values = frame[[date_column, value_column]].copy()
+        values[date_column] = pd.to_datetime(values[date_column], errors="coerce").dt.date
+        for row in values.dropna(subset=[date_column]).itertuples(index=False):
+            raw_value = getattr(row, value_column)
+            daily[source][getattr(row, date_column)] = None if pd.isna(raw_value) else float(raw_value)
+
+    try:
+        input_paths, defect_paths = smt_quality_dashboard.stored_smt_sources()
+        if not input_paths or not defect_paths:
+            raise RuntimeError("SMT FPY input and defect files are required.")
+        analysis = smt_quality_dashboard.analyze_smt_quality_paths(
+            tuple(smt_quality_dashboard.path_signature(path) for path in input_paths),
+            tuple(smt_quality_dashboard.path_signature(path) for path in defect_paths),
+            start_date.isoformat(),
+            end_date.isoformat(),
+            smt_quality_dashboard.SMT_FAILURE_RULE_VERSION,
+        )
+        smt_totals = analysis["totals"]
+        totals["smt_function"] = smt_totals.get("FunctionPassRate") if smt_totals.get("FunctionPassStatus") == "Valid" else None
+        totals["smt_process"] = smt_totals.get("SMTProcessNGRatePPM") if smt_totals.get("SMTProcessStatus") == "Valid" else None
+        add_daily(analysis.get("trend"), "smt_function", "FunctionPassRate")
+        add_daily(analysis.get("trend"), "smt_process", "SMTProcessNGRatePPM")
+        oqc = load_smt_oqc_inspections(start_date, end_date)
+        if not oqc.empty:
+            inspected = int(oqc["Inspected"].sum())
+            totals["smt_oqc"] = int(oqc["OK"].sum()) / inspected if inspected else None
+            oqc_trend, _ = build_smt_oqc_trend(oqc, start_date, end_date)
+            add_daily(oqc_trend, "smt_oqc", "PassRate")
+    except Exception as exc:
+        errors["SMT"] = str(exc)
+
+    try:
+        assembly = calculate_assembly_kpi_metrics(start_date, end_date)
+        totals["assembly_function"] = assembly.get("function_pass_rate")
+        totals["assembly_appearance"] = assembly.get("appearance_pass_rate")
+        totals["assembly_mando"] = assembly.get("function_mando_ppm")
+        add_daily(assembly.get("trend"), "assembly_function", "FunctionPassRate")
+        add_daily(assembly.get("trend"), "assembly_appearance", "AppearanceTotalPassRate")
+        add_daily(assembly.get("trend"), "assembly_mando", "FunctionMandoPPM")
+        duty = calculate_assembly_smt_duty_kpi(start_date, end_date)
+        totals["smt_assembly_duty"] = duty.get("duty_ppm")
+        add_daily(duty.get("trend"), "smt_assembly_duty", "DutyPPM")
+        oqc_fqc = load_assembly_oqc_fqc_inspections(start_date, end_date)
+        if not oqc_fqc.empty:
+            oqc_inspected = int(oqc_fqc["OQCInspected"].sum())
+            fqc_inspected = int(oqc_fqc["FQCInspected"].sum())
+            if oqc_inspected and fqc_inspected:
+                totals["assembly_oqc_fqc"] = (int(oqc_fqc["OQCOK"].sum()) / oqc_inspected) * (int(oqc_fqc["FQCOK"].sum()) / fqc_inspected)
+            oqc_fqc_trend, _ = build_assembly_oqc_fqc_trend(oqc_fqc, start_date, end_date)
+            add_daily(oqc_fqc_trend, "assembly_oqc_fqc", "CombinedPassRate")
+    except Exception as exc:
+        errors["Assembly"] = str(exc)
+
+    return totals, daily, errors
+
+
+def weekly_kpi_review_table(directory: tuple[dict, ...], totals: dict[str, float | None], daily: dict[str, dict[date, float | None]], days: list[date]) -> None:
+    headers = ["Area", "KPI", "Brazil<br>Goal", "GBR", "Jovi", f"WK{days[-1].isocalendar().week:02d}"] + [f"{day.day}-{day.strftime('%b')}" for day in days]
+    rows = []
+    previous_area = None
+    for item in directory:
+        value = totals.get(item["source"])
+        below = weekly_kpi_is_below_target(value, item["target"], item["direction"])
+        status_class = " below" if below else " on-target" if value is not None else " unavailable"
+        area_cell = item["area"] if item["area"] != previous_area else ""
+        previous_area = item["area"]
+        cells = [
+            f"<td class='weekly-area'>{escape(area_cell)}</td>",
+            f"<td class='weekly-kpi-name'>{escape(item['kpi'])}</td>",
+            f"<td>{escape(weekly_kpi_value_label(item['target'], item['direction']))}</td>",
+            f"<td>{escape(item['gbr'])}</td>",
+            f"<td>{escape(item['jovi'])}</td>",
+            f"<td class='weekly-value{status_class}'>{escape(weekly_kpi_value_label(value, item['direction']))}</td>",
+        ]
+        for day in days:
+            daily_value = daily.get(item["source"], {}).get(day)
+            daily_class = " below" if weekly_kpi_is_below_target(daily_value, item["target"], item["direction"]) else " on-target" if daily_value is not None else " unavailable"
+            cells.append(f"<td class='weekly-value{daily_class}'>{escape(weekly_kpi_value_label(daily_value, item['direction']))}</td>")
+        rows.append("<tr>" + "".join(cells) + "</tr>")
+    st.markdown(
+        "<div class='weekly-review-wrap'><table class='weekly-review-table'><thead><tr>" + "".join(f"<th>{header}</th>" for header in headers) + "</tr></thead><tbody>" + "".join(rows) + "</tbody></table></div>",
+        unsafe_allow_html=True,
+    )
+
+
+def weekly_kpi_review_email(week_label: str, directory: tuple[dict, ...], totals: dict[str, float | None], candidates: dict[str, list[dict]]) -> str:
+    below = [item for item in directory if weekly_kpi_is_below_target(totals.get(item["source"]), item["target"], item["direction"])]
+    lines = ["Hi, Team,", "", f"Please check the results for Major KPIs from last Week ({week_label}).", "", "1. Major KPI Review", ""]
+    if not below:
+        lines.append("All available KPIs achieved their targets for the selected week.")
+    else:
+        lines.extend(["2. Major Problems – Reason for not achieving the KPI", ""])
+        for index, item in enumerate(below, start=1):
+            value = totals.get(item["source"])
+            gap = (float(value) - item["target"]) if item["direction"] == "max" else (item["target"] - float(value))
+            top = candidates.get(item["area"], [])
+            description = f"Top confirmed defect: {top[0]['defect']} ({top[0]['cases']} cases)" if top else "Describe the main defect and containment."
+            lines.extend([
+                f"2.{index}. {item['area']} {item['kpi']}",
+                f"Target: {weekly_kpi_value_label(item['target'], item['direction'])}",
+                f"Achieved: {weekly_kpi_value_label(value, item['direction'])} (gap {weekly_kpi_value_label(gap, item['direction'])})",
+                f"Description: {description}",
+                "",
+            ])
+        lines.extend(["3. Action Plan", ""])
+        for index, item in enumerate(below, start=1):
+            lines.append(f"3.{index}. {item['area']} {item['kpi']}: @{item['gbr']}, @{item['jovi']} — please provide containment and an action plan to recover the target.")
+    lines.extend(["", "Owners, please help provide and share an action plan to bring the KPI to the target."])
+    return "\n".join(lines)
+
+
+def weekly_kpi_review_page() -> None:
+    st.markdown("<div class='smart-report-title'>Weekly KPI Review</div><div class='smart-report-subtitle'>Major KPI achievement status and action follow-up, generated from the same validated portal calculations.</div>", unsafe_allow_html=True)
+    default_week_end = date.today() - timedelta(days=date.today().weekday() + 1)
+    controls, action_column = st.columns([1.5, 0.75])
+    with controls:
+        week_end = st.date_input("Week ending", value=default_week_end, key="weekly_kpi_week_end", help="Select the Sunday that closes the report week.")
+    start_date = week_end - timedelta(days=6)
+    days = [start_date + timedelta(days=offset) for offset in range(7)]
+    week_label = f"WK{week_end.isocalendar().week:02d} · {start_date.strftime('%d/%m')} – {week_end.strftime('%d/%m/%Y')}"
+    with action_column:
+        st.markdown("<div class='smart-control-label'>&nbsp;</div>", unsafe_allow_html=True)
+        if st.button("Refresh weekly review", key="weekly_kpi_refresh", type="primary", use_container_width=True):
+            st.toast("Weekly KPI review refreshed from the stored source data.")
+    st.markdown(f"<div class='weekly-review-period'>{escape(week_label)}</div>", unsafe_allow_html=True)
+    totals, daily, errors = weekly_kpi_review_data(start_date, week_end)
+    weekly_kpi_review_table(WEEKLY_KPI_DIRECTORY, totals, daily, days)
+    for area, error in errors.items():
+        st.info(f"{area}: {error}")
+
+    candidates = {}
+    for area, loader in (("SMT", smart_report_smt_data), ("Assembly", smart_report_assembly_data)):
+        try:
+            candidates[area] = loader(start_date, week_end)[0]
+        except Exception:
+            candidates[area] = []
+    below = [item for item in WEEKLY_KPI_DIRECTORY if weekly_kpi_is_below_target(totals.get(item["source"]), item["target"], item["direction"])]
+    st.markdown("### Major problems and action follow-up")
+    if below:
+        for item in below:
+            top = candidates.get(item["area"], [])
+            defect = f" Top defect: {top[0]['defect']} ({top[0]['cases']} cases)." if top else ""
+            st.warning(f"**{item['area']} · {item['kpi']}** is below target. Responsible: {item['gbr']} / {item['jovi']}.{defect}")
+    else:
+        st.success("All available KPIs achieved the configured targets in the selected week.")
+    email_text = weekly_kpi_review_email(week_label, WEEKLY_KPI_DIRECTORY, totals, candidates)
+    with st.expander("Copyable weekly e-mail", expanded=True):
+        st.code(email_text, language=None)
+    st.caption("Targets match the validated KPI Track configuration. Empty cells indicate that the corresponding source or manual OQC/FQC record has not yet been loaded.")
+
+
+def smart_report_page() -> None:
+    weekly_tab, defect_tab = st.tabs(["Weekly KPI Review", "Defect Action Report"])
+    with weekly_tab:
+        weekly_kpi_review_page()
+    with defect_tab:
+        defect_action_report_page()
 
 
 def home_overview_kpi(label: str, value: str, note: str, color: str) -> None:
