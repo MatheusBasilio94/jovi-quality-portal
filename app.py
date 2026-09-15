@@ -13,6 +13,7 @@ from io import BytesIO
 from numbers import Number
 from pathlib import Path
 from time import perf_counter
+from urllib.parse import quote
 
 from tools.supabase_store import (
     DATABASE_OBJECT,
@@ -1591,7 +1592,94 @@ def apply_global_css() -> None:
         }
         div[class*="st-key-upload_slot_"] [data-testid="stFileUploader"] section { border: 0 !important; background: transparent !important; }
         div[class*="st-key-upload_slot_"] [data-testid="stFileUploaderDropzoneInstructions"] span { color:#0A68C9 !important; font-weight:800; }
+        /* Faithful desktop shell based on the approved horizontal dashboard reference. */
+        .topnav-shell {
+            display:grid;
+            grid-template-columns: 300px minmax(520px, 1fr) 330px;
+            align-items:stretch;
+            min-height:78px;
+            margin:0 -1.5rem .3rem;
+            padding:0 1.5rem;
+            background:linear-gradient(105deg,#071d3f 0%,#0a396f 54%,#061a39 100%);
+            box-shadow:0 7px 22px rgba(5,25,57,.25);
+        }
+        .topnav-shell .topnav-brand {
+            display:flex;
+            min-height:78px;
+            flex-direction:column;
+            justify-content:center;
+            padding:0;
+            color:#eef7ff;
+            white-space:nowrap;
+        }
+        .topnav-shell .topnav-brand strong { font-size:1.55rem; font-weight:850; letter-spacing:-.04em; line-height:1; }
+        .topnav-shell .topnav-brand strong span { color:#fff; }
+        .topnav-shell .topnav-brand strong::first-letter { color:#fff; }
+        .topnav-shell .topnav-brand small { margin-top:.5rem; color:#a9c9eb; font-size:.57rem; font-weight:800; letter-spacing:.055em; }
+        .topnav-links { display:flex; justify-content:center; align-items:stretch; min-width:0; }
+        .topnav-item {
+            display:flex;
+            min-width:74px;
+            flex:1 1 0;
+            flex-direction:column;
+            align-items:center;
+            justify-content:center;
+            gap:.3rem;
+            padding:.45rem .25rem .35rem;
+            color:#e1efff !important;
+            border:0;
+            border-bottom:3px solid transparent;
+            font-size:.75rem;
+            font-weight:800;
+            line-height:1;
+            text-decoration:none !important;
+            transition:background .16s ease;
+        }
+        .topnav-item:hover { background:rgba(67,155,255,.14); color:#fff !important; }
+        .topnav-item.active { background:linear-gradient(180deg,#1598f1,#1479d9); border-bottom-color:#9ad6ff; color:#fff !important; }
+        .topnav-icon { color:#cfe6ff; font-size:1.25rem; line-height:1; }
+        .topnav-item.active .topnav-icon { color:#fff; }
+        .topnav-tools { display:flex; align-items:center; justify-content:flex-end; gap:.7rem; color:#e3f1ff; }
+        .topnav-search { width:192px; padding:.67rem .7rem; border:1px solid rgba(182,217,255,.25); border-radius:.42rem; background:rgba(5,29,66,.35); color:#b8d2ec; font-size:.67rem; font-weight:700; white-space:nowrap; }
+        .topnav-bell { position:relative; padding:0 .75rem; border-left:1px solid rgba(183,215,249,.25); font-size:1.25rem; }
+        .topnav-bell i { position:absolute; top:0; right:.63rem; width:8px; height:8px; border:1px solid #fff; border-radius:50%; background:#ef3e5e; }
+        .topnav-time { padding-left:.35rem; color:#bcd2e8; font-size:.62rem; font-weight:700; line-height:1.65; white-space:nowrap; }
+        .topnav-time b { color:#fff; font-size:.74rem; }
+        .context-tabs {
+            display:flex;
+            align-items:stretch;
+            min-height:45px;
+            margin:0 -1.5rem 1.05rem;
+            padding:0 1.5rem;
+            border-bottom:1px solid #dfe9f4;
+            background:#fff;
+            box-shadow:0 2px 8px rgba(22,50,89,.07);
+        }
+        .context-tab {
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            min-width:138px;
+            padding:0 1.25rem;
+            border-bottom:3px solid transparent;
+            color:#536881 !important;
+            font-size:.78rem;
+            font-weight:800;
+            text-decoration:none !important;
+        }
+        .context-tab:hover { background:#f4f9ff; color:#0c70cf !important; }
+        .context-tab.active { border-bottom-color:#1286e7; color:#096bc8 !important; }
+        .dashboard-kpi-chart-gap { height:.55rem; }
+        .stPlotlyChart { padding:.2rem; border:1px solid #e1e9f3; border-radius:.62rem; background:#fff; box-shadow:0 5px 16px rgba(24,48,83,.045); }
         @media (max-width: 900px) {
+            .topnav-shell { grid-template-columns:145px 1fr; min-height:62px; margin-left:-1.5rem; margin-right:-1.5rem; padding:0 .85rem; }
+            .topnav-shell .topnav-brand { min-height:62px; }
+            .topnav-shell .topnav-brand strong { font-size:1rem; }
+            .topnav-shell .topnav-brand small, .topnav-tools { display:none; }
+            .topnav-item { min-width:0; padding:.3rem .1rem; font-size:0; }
+            .topnav-item .topnav-icon { font-size:1.15rem; }
+            .context-tabs { margin-left:-1.5rem; margin-right:-1.5rem; padding:0 .55rem; overflow-x:auto; }
+            .context-tab { min-width:104px; padding:0 .55rem; font-size:.68rem; }
             .st-key-top_navigation { min-height: 62px; padding-left:.85rem !important; padding-right:.85rem !important; }
             .topnav-brand { min-height:54px; }
             .topnav-brand strong { font-size:1rem; }
@@ -2009,39 +2097,33 @@ def set_navigation(module: str, tab: str = "") -> None:
 
 
 def top_navigation() -> None:
-    """Render the full-width primary navigation without using Streamlit's sidebar."""
+    """Render the primary workspace navigation as the full-width product header."""
     nav_items = [
-        ("Home", "Home", 0.62),
-        ("Learning Area", "Learning", 0.82),
-        ("SMT", "SMT", 0.54),
-        ("Assembly", "Assembly", 0.72),
-        ("IQC", "IQC", 0.50),
-        ("Smart Report", "Smart Report", 0.90),
+        ("Home", "Overview", "⌂"),
+        ("Learning Area", "Learning", "▤"),
+        ("SMT", "SMT", "▦"),
+        ("Assembly", "Assembly", "⚙"),
+        ("IQC", "QA", "◇"),
+        ("Smart Report", "Reports", "▥"),
     ]
-    with st.container(key="top_navigation"):
-        columns = st.columns([1.65] + [item[2] for item in nav_items] + [0.48], gap="small")
-        with columns[0]:
-            st.markdown(
-                "<div class='topnav-brand'><strong><span>JOVI</span> QUALITY CENTER</strong><small>QUALITY INTELLIGENCE PORTAL</small></div>",
-                unsafe_allow_html=True,
-            )
-        for column, (module, label, _) in zip(columns[1:-1], nav_items):
-            with column:
-                cfg = MODULES[module]
-                st.button(
-                    label,
-                    key=f"top_nav_module_{navigation_key(module)}",
-                    type="primary" if st.session_state.module == module else "secondary",
-                    width="stretch",
-                    on_click=set_navigation,
-                    args=(module, cfg["tabs"][0] if cfg["tabs"] else ""),
-                )
-        with columns[-1]:
-            with st.popover("More", width="stretch"):
-                st.caption(f"{APP_VERSION} · Signed in as {st.session_state.get('authenticated_user', LOGIN_USERNAME)}")
-                st.button("About", key="top_nav_about", width="stretch", on_click=set_navigation, args=("About", ""))
-                if st.button("Sign out", key="top_nav_logout", width="stretch"):
-                    logout()
+    links = []
+    for module, label, icon in nav_items:
+        active = " active" if st.session_state.module == module else ""
+        href = f"?module={quote(module)}"
+        links.append(
+            f"<a class='topnav-item{active}' href='{escape(href, quote=True)}'>"
+            f"<span class='topnav-icon'>{icon}</span><span>{escape(label)}</span></a>"
+        )
+    st.markdown(
+        "<header class='topnav-shell'>"
+        "<div class='topnav-brand'><strong><span>JOVI</span> QUALITY CENTER</strong>"
+        "<small>PEOPLE&nbsp; | &nbsp;PROCESS&nbsp; | &nbsp;QUALITY&nbsp; | &nbsp;A MORE RELIABLE TOMORROW</small></div>"
+        f"<nav class='topnav-links'>{''.join(links)}</nav>"
+        "<div class='topnav-tools'><div class='topnav-search'>⌕&nbsp;&nbsp; Search (model, lot, station, SN...)</div>"
+        "<div class='topnav-bell'>♧<i></i></div><div class='topnav-time'>Mon, Sep 15<br><b>10:24 AM</b></div></div>"
+        "</header>",
+        unsafe_allow_html=True,
+    )
 
 
 def context_navigation() -> None:
@@ -2054,18 +2136,14 @@ def context_navigation() -> None:
         "BOM Comparison Tool - SMT": "BOM Comparison",
         "BOM Comparison Tool - Assembly": "BOM Comparison",
     }
-    with st.container(key="context_navigation"):
-        columns = st.columns(len(tabs), gap="small")
-        for column, tab in zip(columns, tabs):
-            with column:
-                st.button(
-                    tab_labels.get(tab, tab),
-                    key=f"top_nav_tab_{navigation_key(module)}_{navigation_key(tab)}",
-                    type="primary" if st.session_state.tab == tab else "secondary",
-                    width="stretch",
-                    on_click=set_navigation,
-                    args=(module, tab),
-                )
+    links = []
+    for tab in tabs:
+        active = " active" if st.session_state.tab == tab else ""
+        href = f"?module={quote(module)}&tab={quote(tab)}"
+        links.append(
+            f"<a class='context-tab{active}' href='{escape(href, quote=True)}'>{escape(tab_labels.get(tab, tab))}</a>"
+        )
+    st.markdown(f"<nav class='context-tabs'>{''.join(links)}</nav>", unsafe_allow_html=True)
 
 
 def footer() -> None:
