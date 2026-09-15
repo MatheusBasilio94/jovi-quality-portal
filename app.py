@@ -1461,10 +1461,15 @@ def apply_global_css() -> None:
         .weekly-review-period { color:#526781; font-size:.82rem; font-weight:850; margin:.15rem 0 .55rem; }
         .jovi-copy-kpi-table { align-items:center; background:#FFF; border:1px solid #C9D7E7; border-radius:.45rem; box-shadow:0 2px 6px rgba(20,48,86,.10); color:#173A67; cursor:pointer; display:flex; font-size:.76rem; font-weight:850; gap:.35rem; margin:0 0 .38rem auto; padding:.38rem .62rem; }
         .jovi-copy-kpi-table:hover { background:#F2F7FD; border-color:#2F80ED; }
-        .weekly-review-wrap { border:1px solid #B9C8DB; border-radius:.65rem; margin:.15rem 0 1rem; overflow:auto; }
-        .weekly-review-table { border-collapse:collapse; font-size:.76rem; min-width:1080px; width:100%; }
+        .weekly-review-wrap { border:1px solid #B9C8DB; border-radius:.65rem; margin:.15rem 0 1rem; max-width:100%; overflow:auto; width:fit-content; }
+        .weekly-review-table { border-collapse:collapse; font-size:.76rem; min-width:0; table-layout:fixed; width:max-content; }
         .weekly-review-table th { background:#072964; border:1px solid #244776; color:#FFF; font-weight:850; padding:.48rem .5rem; text-align:center; white-space:nowrap; }
         .weekly-review-table td { border:1px solid #C8D4E3; color:#152941; padding:.34rem .48rem; text-align:center; white-space:nowrap; }
+        .weekly-review-table col.weekly-col-area { width:86px; }
+        .weekly-review-table col.weekly-col-kpi { width:390px; }
+        .weekly-review-table col.weekly-col-meta { width:112px; }
+        .weekly-review-table col.weekly-col-summary,
+        .weekly-review-table col.weekly-col-day { width:82px; }
         .weekly-review-table .weekly-area { font-weight:900; vertical-align:middle; }
         .weekly-review-table .weekly-kpi-name { text-align:left; font-weight:800; }
         .weekly-review-table .weekly-value { font-weight:900; }
@@ -4432,22 +4437,39 @@ def install_kpi_table_copy_controls() -> None:
             const buttonClass = "jovi-copy-kpi-table";
             parentDocument.querySelectorAll(`.${buttonClass}`).forEach((button) => button.remove());
 
-            const tableText = (table) => Array.from(table.querySelectorAll("tr"))
-                .map((row) => Array.from(row.cells).map((cell) => cell.innerText.trim()).join("\\t"))
-                .join("\\n");
-            const copyText = async (text) => {
-                if (parentWindow.navigator?.clipboard?.writeText) {
-                    await parentWindow.navigator.clipboard.writeText(text);
-                    return;
-                }
-                const textarea = parentDocument.createElement("textarea");
-                textarea.value = text;
-                textarea.style.position = "fixed";
-                textarea.style.opacity = "0";
-                parentDocument.body.appendChild(textarea);
-                textarea.select();
-                parentDocument.execCommand("copy");
-                textarea.remove();
+            const tableImage = async (table) => {
+                const rect = table.getBoundingClientRect();
+                const scale = 2;
+                const canvas = parentDocument.createElement("canvas");
+                canvas.width = Math.ceil(rect.width * scale);
+                canvas.height = Math.ceil(rect.height * scale);
+                const context = canvas.getContext("2d");
+                context.scale(scale, scale);
+                context.fillStyle = "#FFFFFF";
+                context.fillRect(0, 0, rect.width, rect.height);
+                const drawCell = (cell) => {
+                    const cellRect = cell.getBoundingClientRect();
+                    const x = cellRect.left - rect.left;
+                    const y = cellRect.top - rect.top;
+                    const style = parentWindow.getComputedStyle(cell);
+                    context.fillStyle = style.backgroundColor && style.backgroundColor !== "rgba(0, 0, 0, 0)" ? style.backgroundColor : "#FFFFFF";
+                    context.fillRect(x, y, cellRect.width, cellRect.height);
+                    context.strokeStyle = style.borderColor || "#C8D4E3";
+                    context.lineWidth = 1;
+                    context.strokeRect(x, y, cellRect.width, cellRect.height);
+                    context.fillStyle = style.color || "#152941";
+                    context.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+                    context.textBaseline = "middle";
+                    context.textAlign = cell.classList.contains("weekly-kpi-name") ? "left" : "center";
+                    const lines = cell.innerText.split("\\n");
+                    const lineHeight = parseFloat(style.fontSize) * 1.25;
+                    const textY = y + cellRect.height / 2 - ((lines.length - 1) * lineHeight) / 2;
+                    lines.forEach((line, index) => context.fillText(line, context.textAlign === "left" ? x + 8 : x + cellRect.width / 2, textY + index * lineHeight, cellRect.width - 12));
+                };
+                Array.from(table.querySelectorAll("th, td")).forEach(drawCell);
+                const png = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+                if (!png || !parentWindow.ClipboardItem || !parentWindow.navigator?.clipboard?.write) throw new Error("Clipboard image unavailable");
+                await parentWindow.navigator.clipboard.write([new parentWindow.ClipboardItem({"image/png": png})]);
             };
 
             parentDocument.querySelectorAll(".weekly-review-wrap").forEach((wrapper) => {
@@ -4456,17 +4478,17 @@ def install_kpi_table_copy_controls() -> None:
                 const button = parentDocument.createElement("button");
                 button.type = "button";
                 button.className = buttonClass;
-                button.textContent = "⧉ Copy table";
-                button.title = "Copy to clipboard";
-                button.setAttribute("aria-label", "Copy table to clipboard");
+                button.textContent = "⧉ Copy as image";
+                button.title = "Copy table as image";
+                button.setAttribute("aria-label", "Copy table as image to clipboard");
                 button.addEventListener("click", async () => {
                     try {
-                        await copyText(tableText(table));
-                        button.textContent = "✓ Copied";
-                        parentWindow.setTimeout(() => { button.textContent = "⧉ Copy table"; }, 1600);
+                        await tableImage(table);
+                        button.textContent = "✓ Image copied";
+                        parentWindow.setTimeout(() => { button.textContent = "⧉ Copy as image"; }, 1600);
                     } catch (_error) {
                         button.textContent = "Copy unavailable";
-                        parentWindow.setTimeout(() => { button.textContent = "⧉ Copy table"; }, 1800);
+                        parentWindow.setTimeout(() => { button.textContent = "⧉ Copy as image"; }, 1800);
                     }
                 });
                 wrapper.parentNode.insertBefore(button, wrapper);
@@ -5625,6 +5647,13 @@ def kpi_review_table(
     days: list[date],
 ) -> None:
     headers = ["Area", "KPI", "Brazil<br>Goal", "GBR", "Jovi"] + [label for label, _ in summary_columns] + [f"{day.day}-{day.strftime('%b')}" for day in days]
+    colgroup = (
+        "<colgroup><col class='weekly-col-area'><col class='weekly-col-kpi'>"
+        "<col class='weekly-col-meta'><col class='weekly-col-meta'><col class='weekly-col-meta'>"
+        + "<col class='weekly-col-summary'>" * len(summary_columns)
+        + "<col class='weekly-col-day'>" * len(days)
+        + "</colgroup>"
+    )
     rows = []
     area_counts = {area: sum(item["area"] == area for item in directory) for area in {item["area"] for item in directory}}
     seen_areas = set()
@@ -5650,7 +5679,7 @@ def kpi_review_table(
             cells.append(f"<td class='weekly-value{daily_class}'>{escape(weekly_kpi_value_label(daily_value, item['direction']))}</td>")
         rows.append("<tr>" + "".join(cells) + "</tr>")
     st.markdown(
-        "<div class='weekly-review-wrap'><table class='weekly-review-table'><thead><tr>" + "".join(f"<th>{header}</th>" for header in headers) + "</tr></thead><tbody>" + "".join(rows) + "</tbody></table></div>",
+        "<div class='weekly-review-wrap'><table class='weekly-review-table'>" + colgroup + "<thead><tr>" + "".join(f"<th>{header}</th>" for header in headers) + "</tr></thead><tbody>" + "".join(rows) + "</tbody></table></div>",
         unsafe_allow_html=True,
     )
     install_kpi_table_copy_controls()
