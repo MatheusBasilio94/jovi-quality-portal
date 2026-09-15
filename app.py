@@ -1461,15 +1461,23 @@ def apply_global_css() -> None:
         .weekly-review-period { color:#526781; font-size:.82rem; font-weight:850; margin:.15rem 0 .55rem; }
         .jovi-copy-kpi-table { align-items:center; background:#FFF; border:1px solid #C9D7E7; border-radius:.45rem; box-shadow:0 2px 6px rgba(20,48,86,.10); color:#173A67; cursor:pointer; display:flex; font-size:.76rem; font-weight:850; gap:.35rem; margin:0 0 .38rem auto; padding:.38rem .62rem; }
         .jovi-copy-kpi-table:hover { background:#F2F7FD; border-color:#2F80ED; }
-        .weekly-review-wrap { border:1px solid #B9C8DB; border-radius:.65rem; margin:.15rem 0 1rem; max-width:100%; overflow:auto; width:fit-content; }
+        .weekly-review-wrap { border:1px solid #B9C8DB; border-radius:.65rem; margin:.15rem 0 1rem; max-width:100%; overflow:visible; width:fit-content; }
+        .weekly-review-wrap.weekly-layout { width:100%; }
         .weekly-review-table { border-collapse:collapse; font-size:.76rem; min-width:0; table-layout:fixed; width:max-content; }
+        .weekly-review-table.weekly-layout { width:100%; }
         .weekly-review-table th { background:#072964; border:1px solid #244776; color:#FFF; font-weight:850; padding:.48rem .5rem; text-align:center; white-space:nowrap; }
         .weekly-review-table td { border:1px solid #C8D4E3; color:#152941; padding:.34rem .48rem; text-align:center; white-space:nowrap; }
-        .weekly-review-table col.weekly-col-area { width:86px; }
-        .weekly-review-table col.weekly-col-kpi { width:390px; }
-        .weekly-review-table col.weekly-col-meta { width:112px; }
+        .weekly-review-table col.weekly-col-area { width:72px; }
+        .weekly-review-table col.weekly-col-kpi { width:260px; }
+        .weekly-review-table col.weekly-col-meta { width:92px; }
         .weekly-review-table col.weekly-col-summary,
-        .weekly-review-table col.weekly-col-day { width:82px; }
+        .weekly-review-table col.weekly-col-day { width:68px; }
+        .weekly-review-table.weekly-layout col.weekly-col-area { width:6%; }
+        .weekly-review-table.weekly-layout col.weekly-col-kpi { width:16%; }
+        .weekly-review-table.weekly-layout col.weekly-col-meta { width:8%; }
+        .weekly-review-table.weekly-layout col.weekly-col-summary,
+        .weekly-review-table.weekly-layout col.weekly-col-day { width:6%; }
+        .weekly-review-table.weekly-layout .weekly-kpi-name { white-space:normal; }
         .weekly-review-table .weekly-area { font-weight:900; vertical-align:middle; }
         .weekly-review-table .weekly-kpi-name { text-align:left; font-weight:800; }
         .weekly-review-table .weekly-value { font-weight:900; }
@@ -5654,6 +5662,7 @@ def kpi_review_table(
         + "<col class='weekly-col-day'>" * len(days)
         + "</colgroup>"
     )
+    layout_class = "weekly-layout" if days else "monthly-layout"
     rows = []
     area_counts = {area: sum(item["area"] == area for item in directory) for area in {item["area"] for item in directory}}
     seen_areas = set()
@@ -5679,7 +5688,7 @@ def kpi_review_table(
             cells.append(f"<td class='weekly-value{daily_class}'>{escape(weekly_kpi_value_label(daily_value, item['direction']))}</td>")
         rows.append("<tr>" + "".join(cells) + "</tr>")
     st.markdown(
-        "<div class='weekly-review-wrap'><table class='weekly-review-table'>" + colgroup + "<thead><tr>" + "".join(f"<th>{header}</th>" for header in headers) + "</tr></thead><tbody>" + "".join(rows) + "</tbody></table></div>",
+        f"<div class='weekly-review-wrap {layout_class}'><table class='weekly-review-table {layout_class}'>" + colgroup + "<thead><tr>" + "".join(f"<th>{header}</th>" for header in headers) + "</tr></thead><tbody>" + "".join(rows) + "</tbody></table></div>",
         unsafe_allow_html=True,
     )
     install_kpi_table_copy_controls()
