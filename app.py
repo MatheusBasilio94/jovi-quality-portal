@@ -2953,6 +2953,16 @@ def init_quality_store() -> tuple[bool, str]:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS weekly_kpi_owners (
+                kpi_key TEXT PRIMARY KEY,
+                gbr_owner TEXT NOT NULL DEFAULT '',
+                jovi_owner TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
     if initialize_clean_cloud:
         upload_local_file(DATABASE_OBJECT, QUALITY_DB_PATH, upsert=True)
         data_version = bump_cloud_data_version("initialize clean Quality Center 2.0 baseline")
@@ -3186,6 +3196,38 @@ def save_smart_report_action(area: str, period_key: str, item: dict, action: dic
                 datetime.now().isoformat(timespec="seconds"),
             ),
         )
+    sync_quality_database_to_cloud()
+
+
+def load_weekly_kpi_owners() -> dict[str, dict[str, str]]:
+    import pandas as pd
+
+    init_quality_store()
+    with sqlite3.connect(QUALITY_DB_PATH) as conn:
+        frame = pd.read_sql_query("SELECT kpi_key, gbr_owner, jovi_owner FROM weekly_kpi_owners", conn)
+    return {
+        str(row.kpi_key): {"gbr": str(row.gbr_owner or ""), "jovi": str(row.jovi_owner or "")}
+        for row in frame.itertuples(index=False)
+    }
+
+
+def save_weekly_kpi_owners(rows: list[dict]) -> None:
+    init_quality_store()
+    require_persistent_store_for_writes()
+    updated_at = datetime.now().isoformat(timespec="seconds")
+    with sqlite3.connect(QUALITY_DB_PATH) as conn:
+        for row in rows:
+            conn.execute(
+                """
+                INSERT INTO weekly_kpi_owners (kpi_key, gbr_owner, jovi_owner, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(kpi_key) DO UPDATE SET
+                    gbr_owner = excluded.gbr_owner,
+                    jovi_owner = excluded.jovi_owner,
+                    updated_at = excluded.updated_at
+                """,
+                (str(row["source"]), str(row.get("gbr", "")).strip(), str(row.get("jovi", "")).strip(), updated_at),
+            )
     sync_quality_database_to_cloud()
 
 
@@ -5396,7 +5438,7 @@ WEEKLY_KPI_DIRECTORY = (
     {"area": "Assembly", "kpi": "Appearance Pass Rate", "target": 0.9904, "direction": "min", "gbr": "Joao", "jovi": "Key", "source": "assembly_appearance"},
     {"area": "Assembly", "kpi": "Function Mando (PPM)", "target": 3600.0, "direction": "max", "gbr": "Lene", "jovi": "Jason", "source": "assembly_mando"},
     {"area": "Assembly", "kpi": "Assembly OQC*FQC Pass Rate", "target": 0.9870, "direction": "min", "gbr": "Douglas", "jovi": "Jason", "source": "assembly_oqc_fqc"},
-    {"area": "SMT", "kpi": "Functional Pass Rate", "target": 0.9956, "direction": "min", "gbr": "Afranio", "jovi": "Jeffry", "source": "smt_function"},
+    {"area": "SMT", "kpi": "Functional Pass Rate", "target": 0.9966, "direction": "min", "gbr": "Afranio", "jovi": "Jeffry", "source": "smt_function"},
     {"area": "SMT", "kpi": "SMT Process NG Rate (PPM)", "target": 5000.0, "direction": "max", "gbr": "Felipe - SMT", "jovi": "Hanlin", "source": "smt_process"},
     {"area": "SMT", "kpi": "Assembly SMT Process Duty NG Rate (PPM)", "target": 700.0, "direction": "max", "gbr": "Alan", "jovi": "Blanc", "source": "smt_assembly_duty"},
     {"area": "SMT", "kpi": "SMT OQC Pass Rate", "target": 0.9850, "direction": "min", "gbr": "Douglas", "jovi": "Hanlin", "source": "smt_oqc"},
@@ -5486,8 +5528,14 @@ def weekly_kpi_review_data(start_date: date, end_date: date) -> tuple[dict[str, 
     return totals, daily, errors
 
 
-def weekly_kpi_review_table(directory: tuple[dict, ...], totals: dict[str, float | None], daily: dict[str, dict[date, float | None]], days: list[date]) -> None:
-    headers = ["Area", "KPI", "Brazil<br>Goal", "GBR", "Jovi", f"WK{days[-1].isocalendar().week:02d}"] + [f"{day.day}-{day.strftime('%b')}" for day in days]
+def weekly_kpi_review_table(
+    directory: tuple[dict, ...],
+    previous_totals: dict[str, float | None],
+    totals: dict[str, float | None],
+    daily: dict[str, dict[date, float | None]],
+    days: list[date],
+) -> None:
+    headers = ["Area", "KPI", "Brazil<br>Goal", "GBR", "Jovi", f"WK{(days[0] - timedelta(days=1)).isocalendar().week:02d}", f"WK{days[-1].isocalendar().week:02d}"] + [f"{day.day}-{day.strftime('%b')}" for day in days]
     rows = []
     previous_area = None
     for item in directory:
@@ -5502,6 +5550,7 @@ def weekly_kpi_review_table(directory: tuple[dict, ...], totals: dict[str, float
             f"<td>{escape(weekly_kpi_value_label(item['target'], item['direction']))}</td>",
             f"<td>{escape(item['gbr'])}</td>",
             f"<td>{escape(item['jovi'])}</td>",
+            f"<td class='weekly-value {'below' if weekly_kpi_is_below_target(previous_totals.get(item['source']), item['target'], item['direction']) else 'on-target' if previous_totals.get(item['source']) is not None else 'unavailable'}'>{escape(weekly_kpi_value_label(previous_totals.get(item['source']), item['direction']))}</td>",
             f"<td class='weekly-value{status_class}'>{escape(weekly_kpi_value_label(value, item['direction']))}</td>",
         ]
         for day in days:
@@ -5515,7 +5564,13 @@ def weekly_kpi_review_table(directory: tuple[dict, ...], totals: dict[str, float
     )
 
 
-def weekly_kpi_review_email(week_label: str, directory: tuple[dict, ...], totals: dict[str, float | None], candidates: dict[str, list[dict]]) -> str:
+def weekly_kpi_review_email(
+    week_label: str,
+    directory: tuple[dict, ...],
+    previous_totals: dict[str, float | None],
+    totals: dict[str, float | None],
+    candidates: dict[str, list[dict]],
+) -> str:
     below = [item for item in directory if weekly_kpi_is_below_target(totals.get(item["source"]), item["target"], item["direction"])]
     lines = ["Hi, Team,", "", f"Please check the results for Major KPIs from last Week ({week_label}).", "", "1. Major KPI Review", ""]
     if not below:
@@ -5530,6 +5585,7 @@ def weekly_kpi_review_email(week_label: str, directory: tuple[dict, ...], totals
             lines.extend([
                 f"2.{index}. {item['area']} {item['kpi']}",
                 f"Target: {weekly_kpi_value_label(item['target'], item['direction'])}",
+                f"Previous week: {weekly_kpi_value_label(previous_totals.get(item['source']), item['direction'])}",
                 f"Achieved: {weekly_kpi_value_label(value, item['direction'])} (gap {weekly_kpi_value_label(gap, item['direction'])})",
                 f"Description: {description}",
                 "",
@@ -5542,6 +5598,8 @@ def weekly_kpi_review_email(week_label: str, directory: tuple[dict, ...], totals
 
 
 def weekly_kpi_review_page() -> None:
+    import pandas as pd
+
     st.markdown("<div class='smart-report-title'>Weekly KPI Review</div><div class='smart-report-subtitle'>Major KPI achievement status and action follow-up, generated from the same validated portal calculations.</div>", unsafe_allow_html=True)
     default_week_end = date.today() - timedelta(days=date.today().weekday() + 1)
     controls, action_column = st.columns([1.5, 0.75])
@@ -5554,11 +5612,44 @@ def weekly_kpi_review_page() -> None:
         st.markdown("<div class='smart-control-label'>&nbsp;</div>", unsafe_allow_html=True)
         if st.button("Refresh weekly review", key="weekly_kpi_refresh", type="primary", use_container_width=True):
             st.toast("Weekly KPI review refreshed from the stored source data.")
+    owner_overrides = load_weekly_kpi_owners()
+    directory = tuple(
+        {
+            **item,
+            "gbr": owner_overrides.get(item["source"], {}).get("gbr") or item["gbr"],
+            "jovi": owner_overrides.get(item["source"], {}).get("jovi") or item["jovi"],
+        }
+        for item in WEEKLY_KPI_DIRECTORY
+    )
+    with st.expander("Edit GBR and Jovi responsible owners"):
+        owner_rows = pd.DataFrame(
+            [{"Area": item["area"], "KPI": item["kpi"], "GBR": item["gbr"], "Jovi": item["jovi"], "source": item["source"]} for item in directory]
+        )
+        edited_owners = st.data_editor(
+            owner_rows,
+            key="weekly_kpi_owner_directory",
+            hide_index=True,
+            disabled=["Area", "KPI", "source"],
+            column_config={"source": None},
+            use_container_width=True,
+        )
+        if st.button("Save responsible owners", key="save_weekly_kpi_owners", type="primary"):
+            try:
+                save_weekly_kpi_owners(edited_owners.rename(columns={"GBR": "gbr", "Jovi": "jovi"}).to_dict("records"))
+                st.success("Responsible owners saved for future weekly reviews.")
+                st.rerun()
+            except Exception as exc:
+                st.error(str(exc))
     st.markdown(f"<div class='weekly-review-period'>{escape(week_label)}</div>", unsafe_allow_html=True)
     totals, daily, errors = weekly_kpi_review_data(start_date, week_end)
-    weekly_kpi_review_table(WEEKLY_KPI_DIRECTORY, totals, daily, days)
+    previous_start = start_date - timedelta(days=7)
+    previous_end = week_end - timedelta(days=7)
+    previous_totals, _, previous_errors = weekly_kpi_review_data(previous_start, previous_end)
+    weekly_kpi_review_table(directory, previous_totals, totals, daily, days)
     for area, error in errors.items():
         st.info(f"{area}: {error}")
+    for area, error in previous_errors.items():
+        st.info(f"Previous week · {area}: {error}")
 
     candidates = {}
     for area, loader in (("SMT", smart_report_smt_data), ("Assembly", smart_report_assembly_data)):
@@ -5566,7 +5657,7 @@ def weekly_kpi_review_page() -> None:
             candidates[area] = loader(start_date, week_end)[0]
         except Exception:
             candidates[area] = []
-    below = [item for item in WEEKLY_KPI_DIRECTORY if weekly_kpi_is_below_target(totals.get(item["source"]), item["target"], item["direction"])]
+    below = [item for item in directory if weekly_kpi_is_below_target(totals.get(item["source"]), item["target"], item["direction"])]
     st.markdown("### Major problems and action follow-up")
     if below:
         for item in below:
@@ -5575,7 +5666,7 @@ def weekly_kpi_review_page() -> None:
             st.warning(f"**{item['area']} · {item['kpi']}** is below target. Responsible: {item['gbr']} / {item['jovi']}.{defect}")
     else:
         st.success("All available KPIs achieved the configured targets in the selected week.")
-    email_text = weekly_kpi_review_email(week_label, WEEKLY_KPI_DIRECTORY, totals, candidates)
+    email_text = weekly_kpi_review_email(week_label, directory, previous_totals, totals, candidates)
     with st.expander("Copyable weekly e-mail", expanded=True):
         st.code(email_text, language=None)
     st.caption("Targets match the validated KPI Track configuration. Empty cells indicate that the corresponding source or manual OQC/FQC record has not yet been loaded.")
