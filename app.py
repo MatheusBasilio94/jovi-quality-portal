@@ -34,7 +34,7 @@ from tools import assembly_kpi_v2
 from tools.historical_inspection_archive import apply_archive as apply_historical_inspection_archive
 
 
-APP_VERSION = "v0.5.17"
+APP_VERSION = "v0.5.18"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -88,6 +88,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.18", "Replaced the Monthly KPI Review calendar picker with a compact Start date field using the YYYY-MM month format."),
     ("v0.5.17", "Cached the consolidated Assembly input, FPY and repair source data so Monthly KPI Review reuses it across the three monthly columns."),
     ("v0.5.16", "Made Assembly FPY and repair uploads incremental: partial files add new events and update only matching events, preserving earlier stored history."),
     ("v0.5.15", "Combined archived Assembly FPY defect snapshots by date, so August and earlier defects remain in KPI calculations after a newer September snapshot is uploaded."),
@@ -5896,13 +5897,23 @@ def weekly_kpi_review_page() -> None:
 def monthly_kpi_review_page() -> None:
     st.markdown("<div class='smart-report-title'>Monthly KPI Review</div><div class='smart-report-subtitle'>Independent SMT or Assembly monthly review, with the same KPI status, problem and action-plan structure used in the weekly report.</div>", unsafe_allow_html=True)
     today = date.today()
-    default_reference = today.replace(day=1) - timedelta(days=1)
+    default_month = (today.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
     controls, area_control = st.columns([1.25, 1.0])
     with controls:
-        reference_date = st.date_input("Reference month", value=default_reference, key="monthly_kpi_reference_month", help="Choose any date in the month to be reviewed.")
+        selected_month = st.text_input(
+            "Start date",
+            value=default_month,
+            key="monthly_kpi_start_month",
+            help="Enter the first month of the review in YYYY-MM format, for example 2026-08.",
+            max_chars=7,
+        ).strip()
     with area_control:
         area = st.segmented_control("Area", ["SMT", "Assembly"], default="SMT", selection_mode="single", key="monthly_kpi_area") or "SMT"
-    start_date = reference_date.replace(day=1)
+    try:
+        start_date = datetime.strptime(selected_month, "%Y-%m").date().replace(day=1)
+    except ValueError:
+        st.error("Start date must use the YYYY-MM format, for example 2026-08.")
+        return
     following_month = (start_date.replace(day=28) + timedelta(days=4)).replace(day=1)
     end_date = following_month - timedelta(days=1)
     previous_end = start_date - timedelta(days=1)
