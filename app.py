@@ -34,7 +34,7 @@ from tools import assembly_kpi_v2
 from tools.historical_inspection_archive import apply_archive as apply_historical_inspection_archive
 
 
-APP_VERSION = "v0.5.20"
+APP_VERSION = "v0.5.21"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -88,6 +88,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.21", "Moved the Monthly KPI Review Start date styling into the authenticated portal theme and targeted Streamlit's actual text-input root element."),
     ("v0.5.20", "Matched the Monthly KPI Review Start date control to the portal's blue period-selector styling through its dedicated layout container."),
     ("v0.5.19", "Styled the Monthly KPI Review Start date selector with the portal's blue period-control background and white text."),
     ("v0.5.18", "Replaced the Monthly KPI Review calendar picker with a compact Start date field using the YYYY-MM month format."),
@@ -702,6 +703,37 @@ def apply_global_css() -> None:
         [data-testid="stSelectbox"] > div > div:hover,
         [data-testid="stMultiSelect"] > div > div:hover,
         [data-testid="stDateInput"] > div > div:hover {
+            border-color: #93C5FD !important;
+            box-shadow: 0 5px 14px rgba(37, 99, 235, 0.28);
+        }
+        div[class*="st-key-monthly_kpi_start_month_control"] {
+            max-width: 245px;
+        }
+        div[class*="st-key-monthly_kpi_start_month_control"] [data-testid="stTextInput"] {
+            max-width: 245px;
+        }
+        div[class*="st-key-monthly_kpi_start_month_control"] [data-testid="stTextInput"] label {
+            color: #52657F !important;
+            display: block;
+            font-size: 0.72rem !important;
+            font-weight: 800 !important;
+            text-align: center;
+        }
+        div[class*="st-key-monthly_kpi_start_month_control"] [data-testid="stTextInputRootElement"] {
+            background: linear-gradient(135deg, #2F80ED 0%, #1D5FBF 100%) !important;
+            border: 1px solid #4B8DEF !important;
+            border-radius: 0.55rem !important;
+            box-shadow: 0 4px 12px rgba(8, 45, 97, 0.18);
+        }
+        div[class*="st-key-monthly_kpi_start_month_control"] [data-testid="stTextInputField"] {
+            background: transparent !important;
+            color: #F8FBFF !important;
+            -webkit-text-fill-color: #F8FBFF !important;
+            font-weight: 750 !important;
+            text-align: center !important;
+        }
+        div[class*="st-key-monthly_kpi_start_month_control"] [data-testid="stTextInputRootElement"]:hover,
+        div[class*="st-key-monthly_kpi_start_month_control"] [data-testid="stTextInputRootElement"]:focus-within {
             border-color: #93C5FD !important;
             box-shadow: 0 5px 14px rgba(37, 99, 235, 0.28);
         }
@@ -1671,37 +1703,6 @@ def apply_login_css() -> None:
         div[data-testid="stTextInput"] input:focus {
             border-color: #1D5FBF;
             box-shadow: 0 0 0 3px rgba(29, 95, 191, 0.13);
-        }
-
-        div[class*="st-key-monthly_kpi_start_month_control"] {
-            max-width: 245px;
-        }
-        div[class*="st-key-monthly_kpi_start_month_control"] [data-testid="stTextInput"] {
-            max-width: 245px;
-        }
-        div[class*="st-key-monthly_kpi_start_month_control"] [data-testid="stTextInput"] label {
-            color:#163D75 !important;
-            font-size:.78rem !important;
-            font-weight:850 !important;
-        }
-        div[class*="st-key-monthly_kpi_start_month_control"] [data-baseweb="input"] {
-            background:#246CCB !important;
-            border:1px solid #246CCB !important;
-            border-radius:0.72rem !important;
-            box-shadow:0 4px 10px rgba(29,95,191,.2);
-        }
-        div[class*="st-key-monthly_kpi_start_month_control"] [data-testid="stTextInput"] input {
-            min-height:2.55rem;
-            background:transparent !important;
-            border:0 !important;
-            color:#F8FBFF !important;
-            -webkit-text-fill-color:#F8FBFF !important;
-            font-weight:750;
-            letter-spacing:.02em;
-        }
-        div[class*="st-key-monthly_kpi_start_month_control"] [data-testid="stTextInput"] input:focus {
-            border-color:#93C5FD !important;
-            box-shadow:0 0 0 3px rgba(147,197,253,.32);
         }
 
         div[data-testid="stFormSubmitButton"] button {
