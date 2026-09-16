@@ -34,7 +34,7 @@ from tools import assembly_kpi_v2
 from tools.historical_inspection_archive import apply_archive as apply_historical_inspection_archive
 
 
-APP_VERSION = "v0.5.18"
+APP_VERSION = "v0.5.19"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -88,6 +88,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.19", "Styled the Monthly KPI Review Start date selector with the portal's blue period-control background and white text."),
     ("v0.5.18", "Replaced the Monthly KPI Review calendar picker with a compact Start date field using the YYYY-MM month format."),
     ("v0.5.17", "Cached the consolidated Assembly input, FPY and repair source data so Monthly KPI Review reuses it across the three monthly columns."),
     ("v0.5.16", "Made Assembly FPY and repair uploads incremental: partial files add new events and update only matching events, preserving earlier stored history."),
@@ -1669,6 +1670,27 @@ def apply_login_css() -> None:
         div[data-testid="stTextInput"] input:focus {
             border-color: #1D5FBF;
             box-shadow: 0 0 0 3px rgba(29, 95, 191, 0.13);
+        }
+
+        div[class*="st-key-monthly_kpi_start_month"] { max-width: 245px; }
+        div[class*="st-key-monthly_kpi_start_month"] [data-testid="stTextInput"] label {
+            color:#163D75 !important;
+            font-size:.78rem !important;
+            font-weight:850 !important;
+        }
+        div[class*="st-key-monthly_kpi_start_month"] [data-testid="stTextInput"] input {
+            min-height:2.55rem;
+            background:#246CCB !important;
+            border:1px solid #246CCB !important;
+            color:#F8FBFF !important;
+            -webkit-text-fill-color:#F8FBFF !important;
+            font-weight:750;
+            letter-spacing:.02em;
+            box-shadow:0 4px 10px rgba(29,95,191,.2);
+        }
+        div[class*="st-key-monthly_kpi_start_month"] [data-testid="stTextInput"] input:focus {
+            border-color:#93C5FD !important;
+            box-shadow:0 0 0 3px rgba(147,197,253,.32);
         }
 
         div[data-testid="stFormSubmitButton"] button {
