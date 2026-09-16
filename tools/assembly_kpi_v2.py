@@ -19,6 +19,7 @@ FUNCTIONAL_OPERATIONS = (
     "Camera",
     "Camera17",
     "Camera_4",
+    "Camera-auxiliary-tester",
     "Current",
     "MMI_auxiliary_test_bit",
     "Photosensor_test_Dark",
@@ -36,6 +37,8 @@ APPEARANCE_OPERATIONS = (
     "Assembly seal test Station",
     "Assembly-collection(5)",
     "Assembly_seal_test_Station_1",
+    "Glue_dispensing",
+    "PCB-Assembly",
     "finish product seal test Station",
 )
 

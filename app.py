@@ -33,7 +33,7 @@ from tools.trend_rules import analysis_period_days, requested_trend_grain, trend
 from tools import assembly_kpi_v2
 
 
-APP_VERSION = "v0.5.8"
+APP_VERSION = "v0.5.9"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -87,6 +87,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.9", "Aligned the Assembly functional and appearance operation groups with the September MES FPY extracts: Camera-auxiliary-tester is functional, while Glue_dispensing and PCB-Assembly are appearance failures."),
     ("v0.5.8", "Clipped SMT weekly trend boundary labels to the selected analysis range, so partial weeks never display dates before or after the chosen period."),
     ("v0.5.7", "Added retry with fresh Supabase Storage connections when listing cloud folders after a paused project resumes."),
     ("v0.5.6", "Hardened Supabase Storage synchronization after project wake-up by ignoring internal empty-folder entries, extending Storage timeouts and retrying transient downloads."),

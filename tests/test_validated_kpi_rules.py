@@ -127,6 +127,12 @@ class AssemblyValidatedRulesTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "somente inputs diários"):
                 assembly_kpi_v2.read_daily_input(path)
 
+    def test_september_mes_operation_mapping(self) -> None:
+        """Keep the operation names reconciled with the validated 14–15 September FPY extracts."""
+        self.assertIn("Camera-auxiliary-tester", assembly_kpi_v2.FUNCTIONAL_OPERATIONS)
+        self.assertIn("Glue_dispensing", assembly_kpi_v2.APPEARANCE_OPERATIONS)
+        self.assertIn("PCB-Assembly", assembly_kpi_v2.APPEARANCE_OPERATIONS)
+
 
 class SMTValidatedRulesTest(unittest.TestCase):
     def test_weekly_trend_boundaries_stay_inside_selected_period(self) -> None:
