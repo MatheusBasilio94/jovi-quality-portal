@@ -770,6 +770,9 @@ def analyze_smt_quality_paths(
     defects = defects.copy()
     defects["FailureType"] = defects["Operation"].map(classify_smt_failure_type)
     defects = defects[defects["ValidDefect"]].copy()
+    source_defect_dates = pd.to_datetime(defects["KPIDate"], errors="coerce").dropna()
+    source_defect_start = source_defect_dates.min().normalize() if not source_defect_dates.empty else pd.NaT
+    source_defect_end = source_defect_dates.max().normalize() if not source_defect_dates.empty else pd.NaT
     start = pd.Timestamp(start_text).normalize()
     end_exclusive = pd.Timestamp(end_text).normalize() + pd.Timedelta(days=1)
     input_source_rows_in_scope = input_model[
@@ -1013,6 +1016,8 @@ def analyze_smt_quality_paths(
         "covered_raw": covered_defects,
         "selected_input": selected_input,
         "selected_org": selected_org,
+        "source_defect_start": source_defect_start,
+        "source_defect_end": source_defect_end,
         "quality": quality,
         "date_start": start,
         "date_end": end_exclusive - pd.Timedelta(days=1),

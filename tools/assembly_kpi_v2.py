@@ -260,6 +260,7 @@ def calculate(
     if selected_input.empty:
         raise RuntimeError("Nenhum input diário foi encontrado no período selecionado.")
     input_daily = selected_input.groupby("Date", as_index=False)["Input"].sum()
+    source_defect_dates = pd.to_datetime(defects["DefectDate"], errors="coerce").dropna()
 
     def pcb_count(frame: pd.DataFrame) -> int:
         return int(frame["PCBNormalized"].nunique()) if not frame.empty else 0
@@ -323,4 +324,6 @@ def calculate(
         "defects": selected_defects,
         "inputs": selected_input,
         "unclassified": selected_defects[selected_defects["FailureType"].eq("Fora do escopo")].copy(),
+        "source_defect_start": source_defect_dates.min().date() if not source_defect_dates.empty else None,
+        "source_defect_end": source_defect_dates.max().date() if not source_defect_dates.empty else None,
     }

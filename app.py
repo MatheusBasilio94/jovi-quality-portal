@@ -34,7 +34,7 @@ from tools import assembly_kpi_v2
 from tools.historical_inspection_archive import apply_archive as apply_historical_inspection_archive
 
 
-APP_VERSION = "v0.5.12"
+APP_VERSION = "v0.5.13"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -88,6 +88,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.13", "Prevented Weekly and Monthly KPI Reviews from reporting false 100% pass rates or 0 PPM when the FPY defect source does not cover the selected input dates."),
     ("v0.5.12", "Imported the one-time July-to-September OQC/FQC historical archive into the existing SMT OQC and Assembly OQC/FQC records, preserving the daily manual workflow for future entries."),
     ("v0.5.11", "Refreshed the Assembly calculation revision after the current September repair snapshot was uploaded, ensuring Function Mando recomputes from the active FPY and repair files."),
     ("v0.5.10", "Added the Assembly MES rule revision to the calculation-cache key, so functional and appearance results recalculate immediately after a validated operation mapping changes."),
@@ -5615,6 +5616,27 @@ def weekly_kpi_review_data(start_date: date, end_date: date) -> tuple[dict[str, 
             raw_value = getattr(row, value_column)
             daily[source][getattr(row, date_column)] = None if pd.isna(raw_value) else float(raw_value)
 
+    def source_dates_cover_inputs(inputs, input_date_column: str, defect_start, defect_end) -> tuple[bool, date | None, date | None]:
+        if inputs is None or inputs.empty or input_date_column not in inputs.columns:
+            return False, None, None
+        input_dates = pd.to_datetime(inputs[input_date_column], errors="coerce").dropna()
+        if input_dates.empty or defect_start is None or defect_end is None or pd.isna(defect_start) or pd.isna(defect_end):
+            return False, None, None
+        input_start = input_dates.min().date()
+        input_end = input_dates.max().date()
+        defect_start_date = pd.Timestamp(defect_start).date()
+        defect_end_date = pd.Timestamp(defect_end).date()
+        return defect_start_date <= input_start and defect_end_date >= input_end, defect_start_date, defect_end_date
+
+    def restrict_daily_to_defect_coverage(source: str, defect_start: date | None, defect_end: date | None) -> None:
+        if defect_start is None or defect_end is None:
+            daily[source] = {day: None for day in daily[source]}
+            return
+        daily[source] = {
+            day: value if defect_start <= day <= defect_end else None
+            for day, value in daily[source].items()
+        }
+
     try:
         input_paths, defect_paths = smt_quality_dashboard.stored_smt_sources()
         if not input_paths or not defect_paths:
@@ -5627,10 +5649,20 @@ def weekly_kpi_review_data(start_date: date, end_date: date) -> tuple[dict[str, 
             smt_quality_dashboard.SMT_FAILURE_RULE_VERSION,
         )
         smt_totals = analysis["totals"]
-        totals["smt_function"] = smt_totals.get("FunctionPassRate") if smt_totals.get("FunctionPassStatus") == "Valid" else None
-        totals["smt_process"] = smt_totals.get("SMTProcessNGRatePPM") if smt_totals.get("SMTProcessStatus") == "Valid" else None
+        smt_covered, smt_defect_start, smt_defect_end = source_dates_cover_inputs(
+            analysis.get("selected_input"),
+            "BeginDate",
+            analysis.get("source_defect_start"),
+            analysis.get("source_defect_end"),
+        )
+        totals["smt_function"] = smt_totals.get("FunctionPassRate") if smt_covered and smt_totals.get("FunctionPassStatus") == "Valid" else None
+        totals["smt_process"] = smt_totals.get("SMTProcessNGRatePPM") if smt_covered and smt_totals.get("SMTProcessStatus") == "Valid" else None
         add_daily(analysis.get("trend"), "smt_function", "FunctionPassRate")
         add_daily(analysis.get("trend"), "smt_process", "SMTProcessNGRatePPM")
+        restrict_daily_to_defect_coverage("smt_function", smt_defect_start, smt_defect_end)
+        restrict_daily_to_defect_coverage("smt_process", smt_defect_start, smt_defect_end)
+        if not smt_covered:
+            errors["SMT"] = "Functional and Process KPIs require an FPY defect file whose dates cover every selected SMT input day."
         oqc = load_smt_oqc_inspections(start_date, end_date)
         if not oqc.empty:
             inspected = int(oqc["Inspected"].sum())
@@ -5642,12 +5674,23 @@ def weekly_kpi_review_data(start_date: date, end_date: date) -> tuple[dict[str, 
 
     try:
         assembly = calculate_assembly_kpi_metrics(start_date, end_date)
-        totals["assembly_function"] = assembly.get("function_pass_rate")
-        totals["assembly_appearance"] = assembly.get("appearance_pass_rate")
-        totals["assembly_mando"] = assembly.get("function_mando_ppm")
+        assembly_covered, assembly_defect_start, assembly_defect_end = source_dates_cover_inputs(
+            assembly.get("inputs"),
+            "Date",
+            assembly.get("source_defect_start"),
+            assembly.get("source_defect_end"),
+        )
+        totals["assembly_function"] = assembly.get("function_pass_rate") if assembly_covered else None
+        totals["assembly_appearance"] = assembly.get("appearance_pass_rate") if assembly_covered else None
+        totals["assembly_mando"] = assembly.get("function_mando_ppm") if assembly_covered else None
         add_daily(assembly.get("trend"), "assembly_function", "FunctionPassRate")
         add_daily(assembly.get("trend"), "assembly_appearance", "AppearanceTotalPassRate")
         add_daily(assembly.get("trend"), "assembly_mando", "FunctionMandoPPM")
+        restrict_daily_to_defect_coverage("assembly_function", assembly_defect_start, assembly_defect_end)
+        restrict_daily_to_defect_coverage("assembly_appearance", assembly_defect_start, assembly_defect_end)
+        restrict_daily_to_defect_coverage("assembly_mando", assembly_defect_start, assembly_defect_end)
+        if not assembly_covered:
+            errors["Assembly"] = "Functional, Appearance and Mando KPIs require an FPY defect file whose dates cover every selected Assembly input day."
         duty = calculate_assembly_smt_duty_kpi(start_date, end_date)
         totals["smt_assembly_duty"] = duty.get("duty_ppm")
         add_daily(duty.get("trend"), "smt_assembly_duty", "DutyPPM")
