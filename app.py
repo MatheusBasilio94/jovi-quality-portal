@@ -33,7 +33,7 @@ from tools.trend_rules import analysis_period_days, requested_trend_grain, trend
 from tools import assembly_kpi_v2
 
 
-APP_VERSION = "v0.5.10"
+APP_VERSION = "v0.5.11"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -87,6 +87,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.11", "Refreshed the Assembly calculation revision after the current September repair snapshot was uploaded, ensuring Function Mando recomputes from the active FPY and repair files."),
     ("v0.5.10", "Added the Assembly MES rule revision to the calculation-cache key, so functional and appearance results recalculate immediately after a validated operation mapping changes."),
     ("v0.5.9", "Aligned the Assembly functional and appearance operation groups with the September MES FPY extracts: Camera-auxiliary-tester is functional, while Glue_dispensing and PCB-Assembly are appearance failures."),
     ("v0.5.8", "Clipped SMT weekly trend boundary labels to the selected analysis range, so partial weeks never display dates before or after the chosen period."),

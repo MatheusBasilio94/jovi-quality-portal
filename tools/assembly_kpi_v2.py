@@ -9,7 +9,9 @@ from typing import Iterable
 import pandas as pd
 
 
-ASSEMBLY_KPI_RULE_VERSION = "mes-operation-map-2026-09-16.2"
+# Bump whenever a validated Assembly classification or responsibility rule
+# changes.  It is part of the dashboard cache key in app.py.
+ASSEMBLY_KPI_RULE_VERSION = "mes-operation-map-2026-09-16.3"
 
 
 FUNCTIONAL_OPERATIONS = (
