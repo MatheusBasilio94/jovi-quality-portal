@@ -5603,8 +5603,11 @@ def weekly_kpi_review_data(start_date: date, end_date: date) -> tuple[dict[str, 
     def add_daily(frame, source: str, value_column: str) -> None:
         if frame is None or frame.empty or value_column not in frame.columns:
             return
-        date_column = "PeriodDate" if "PeriodDate" in frame.columns else "Date"
-        if date_column not in frame.columns:
+        date_column = next(
+            (column for column in ("PeriodDate", "PeriodStart", "Date") if column in frame.columns),
+            None,
+        )
+        if date_column is None:
             return
         values = frame[[date_column, value_column]].copy()
         values[date_column] = pd.to_datetime(values[date_column], errors="coerce").dt.date
