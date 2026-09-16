@@ -34,7 +34,7 @@ from tools import assembly_kpi_v2
 from tools.historical_inspection_archive import apply_archive as apply_historical_inspection_archive
 
 
-APP_VERSION = "v0.5.19"
+APP_VERSION = "v0.5.20"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -88,6 +88,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.20", "Matched the Monthly KPI Review Start date control to the portal's blue period-selector styling through its dedicated layout container."),
     ("v0.5.19", "Styled the Monthly KPI Review Start date selector with the portal's blue period-control background and white text."),
     ("v0.5.18", "Replaced the Monthly KPI Review calendar picker with a compact Start date field using the YYYY-MM month format."),
     ("v0.5.17", "Cached the consolidated Assembly input, FPY and repair source data so Monthly KPI Review reuses it across the three monthly columns."),
@@ -1672,23 +1673,33 @@ def apply_login_css() -> None:
             box-shadow: 0 0 0 3px rgba(29, 95, 191, 0.13);
         }
 
-        div[class*="st-key-monthly_kpi_start_month"] { max-width: 245px; }
-        div[class*="st-key-monthly_kpi_start_month"] [data-testid="stTextInput"] label {
+        div[class*="st-key-monthly_kpi_start_month_control"] {
+            max-width: 245px;
+        }
+        div[class*="st-key-monthly_kpi_start_month_control"] [data-testid="stTextInput"] {
+            max-width: 245px;
+        }
+        div[class*="st-key-monthly_kpi_start_month_control"] [data-testid="stTextInput"] label {
             color:#163D75 !important;
             font-size:.78rem !important;
             font-weight:850 !important;
         }
-        div[class*="st-key-monthly_kpi_start_month"] [data-testid="stTextInput"] input {
-            min-height:2.55rem;
+        div[class*="st-key-monthly_kpi_start_month_control"] [data-baseweb="input"] {
             background:#246CCB !important;
             border:1px solid #246CCB !important;
+            border-radius:0.72rem !important;
+            box-shadow:0 4px 10px rgba(29,95,191,.2);
+        }
+        div[class*="st-key-monthly_kpi_start_month_control"] [data-testid="stTextInput"] input {
+            min-height:2.55rem;
+            background:transparent !important;
+            border:0 !important;
             color:#F8FBFF !important;
             -webkit-text-fill-color:#F8FBFF !important;
             font-weight:750;
             letter-spacing:.02em;
-            box-shadow:0 4px 10px rgba(29,95,191,.2);
         }
-        div[class*="st-key-monthly_kpi_start_month"] [data-testid="stTextInput"] input:focus {
+        div[class*="st-key-monthly_kpi_start_month_control"] [data-testid="stTextInput"] input:focus {
             border-color:#93C5FD !important;
             box-shadow:0 0 0 3px rgba(147,197,253,.32);
         }
@@ -5922,13 +5933,14 @@ def monthly_kpi_review_page() -> None:
     default_month = (today.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
     controls, area_control = st.columns([1.25, 1.0])
     with controls:
-        selected_month = st.text_input(
-            "Start date",
-            value=default_month,
-            key="monthly_kpi_start_month",
-            help="Enter the first month of the review in YYYY-MM format, for example 2026-08.",
-            max_chars=7,
-        ).strip()
+        with st.container(key="monthly_kpi_start_month_control"):
+            selected_month = st.text_input(
+                "Start date",
+                value=default_month,
+                key="monthly_kpi_start_month",
+                help="Enter the first month of the review in YYYY-MM format, for example 2026-08.",
+                max_chars=7,
+            ).strip()
     with area_control:
         area = st.segmented_control("Area", ["SMT", "Assembly"], default="SMT", selection_mode="single", key="monthly_kpi_area") or "SMT"
     try:
