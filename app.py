@@ -34,7 +34,7 @@ from tools import assembly_kpi_v2
 from tools.historical_inspection_archive import apply_archive as apply_historical_inspection_archive
 
 
-APP_VERSION = "v0.5.23"
+APP_VERSION = "v0.5.24"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -88,6 +88,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.24", "Removed the segmented Area control's internal padding so its lower border is fully visible."),
     ("v0.5.23", "Harmonized the Monthly KPI Review controls with matching widths, heights, centered labels and blue selected-area styling."),
     ("v0.5.22", "Brought the Monthly KPI Review Area selector next to Start date for a compact control row."),
     ("v0.5.21", "Moved the Monthly KPI Review Start date styling into the authenticated portal theme and targeted Streamlit's actual text-input root element."),
@@ -758,6 +759,8 @@ def apply_global_css() -> None:
         }
         div[class*="st-key-monthly_kpi_area"] [role="radiogroup"] {
             height: 40px;
+            overflow: hidden;
+            padding: 0 !important;
             width: 245px;
         }
         div[class*="st-key-monthly_kpi_area"] [role="radio"] {
