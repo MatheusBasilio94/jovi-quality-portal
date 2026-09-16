@@ -33,7 +33,7 @@ from tools.trend_rules import analysis_period_days, requested_trend_grain, trend
 from tools import assembly_kpi_v2
 
 
-APP_VERSION = "v0.5.9"
+APP_VERSION = "v0.5.10"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -87,6 +87,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.10", "Added the Assembly MES rule revision to the calculation-cache key, so functional and appearance results recalculate immediately after a validated operation mapping changes."),
     ("v0.5.9", "Aligned the Assembly functional and appearance operation groups with the September MES FPY extracts: Camera-auxiliary-tester is functional, while Glue_dispensing and PCB-Assembly are appearance failures."),
     ("v0.5.8", "Clipped SMT weekly trend boundary labels to the selected analysis range, so partial weeks never display dates before or after the chosen period."),
     ("v0.5.7", "Added retry with fresh Supabase Storage connections when listing cloud folders after a paused project resumes."),
@@ -6356,6 +6357,7 @@ def calculate_assembly_kpi_metrics(start_date: date, end_date: date) -> dict:
         repair_signatures,
         start_date.isoformat(),
         end_date.isoformat(),
+        assembly_kpi_v2.ASSEMBLY_KPI_RULE_VERSION,
     )
 
 
@@ -6366,8 +6368,10 @@ def calculate_assembly_kpi_metrics_cached(
     repair_signatures: tuple[tuple[str, int, int], ...],
     start_text: str,
     end_text: str,
+    rule_version: str,
 ) -> dict:
     """Read Assembly source workbooks once per source revision and period."""
+    _ = rule_version  # Cache key: rules may change without changing a source file.
     import pandas as pd
 
     input_paths = [Path(signature[0]) for signature in input_signatures]

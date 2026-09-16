@@ -9,6 +9,9 @@ from typing import Iterable
 import pandas as pd
 
 
+ASSEMBLY_KPI_RULE_VERSION = "mes-operation-map-2026-09-16.2"
+
+
 FUNCTIONAL_OPERATIONS = (
     "Antenna_Non_Signaling_2",
     "Audio-Testing",
