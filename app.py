@@ -34,7 +34,7 @@ from tools import assembly_kpi_v2
 from tools.historical_inspection_archive import apply_archive as apply_historical_inspection_archive
 
 
-APP_VERSION = "v0.5.21"
+APP_VERSION = "v0.5.22"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -88,6 +88,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.22", "Brought the Monthly KPI Review Area selector next to Start date for a compact control row."),
     ("v0.5.21", "Moved the Monthly KPI Review Start date styling into the authenticated portal theme and targeted Streamlit's actual text-input root element."),
     ("v0.5.20", "Matched the Monthly KPI Review Start date control to the portal's blue period-selector styling through its dedicated layout container."),
     ("v0.5.19", "Styled the Monthly KPI Review Start date selector with the portal's blue period-control background and white text."),
@@ -5932,7 +5933,7 @@ def monthly_kpi_review_page() -> None:
     st.markdown("<div class='smart-report-title'>Monthly KPI Review</div><div class='smart-report-subtitle'>Independent SMT or Assembly monthly review, with the same KPI status, problem and action-plan structure used in the weekly report.</div>", unsafe_allow_html=True)
     today = date.today()
     default_month = (today.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
-    controls, area_control = st.columns([1.25, 1.0])
+    controls, area_control, _ = st.columns([0.6, 0.4, 2.0], gap="small")
     with controls:
         with st.container(key="monthly_kpi_start_month_control"):
             selected_month = st.text_input(
