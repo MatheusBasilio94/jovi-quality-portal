@@ -34,7 +34,7 @@ from tools import assembly_kpi_v2
 from tools.historical_inspection_archive import apply_archive as apply_historical_inspection_archive
 
 
-APP_VERSION = "v0.5.22"
+APP_VERSION = "v0.5.23"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -88,6 +88,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.23", "Harmonized the Monthly KPI Review controls with matching widths, heights, centered labels and blue selected-area styling."),
     ("v0.5.22", "Brought the Monthly KPI Review Area selector next to Start date for a compact control row."),
     ("v0.5.21", "Moved the Monthly KPI Review Start date styling into the authenticated portal theme and targeted Streamlit's actual text-input root element."),
     ("v0.5.20", "Matched the Monthly KPI Review Start date control to the portal's blue period-selector styling through its dedicated layout container."),
@@ -737,6 +738,48 @@ def apply_global_css() -> None:
         div[class*="st-key-monthly_kpi_start_month_control"] [data-testid="stTextInputRootElement"]:focus-within {
             border-color: #93C5FD !important;
             box-shadow: 0 5px 14px rgba(37, 99, 235, 0.28);
+        }
+        div[class*="st-key-monthly_kpi_area"] {
+            max-width: 245px;
+            width: 245px;
+        }
+        div[class*="st-key-monthly_kpi_area"] [data-testid="stButtonGroup"] {
+            max-width: 245px;
+            width: 245px;
+        }
+        div[class*="st-key-monthly_kpi_area"] [data-testid="stWidgetLabel"] {
+            display: flex;
+            justify-content: center;
+        }
+        div[class*="st-key-monthly_kpi_area"] [data-testid="stWidgetLabel"] p {
+            color: #52657F !important;
+            font-size: 0.72rem !important;
+            font-weight: 800 !important;
+        }
+        div[class*="st-key-monthly_kpi_area"] [role="radiogroup"] {
+            height: 40px;
+            width: 245px;
+        }
+        div[class*="st-key-monthly_kpi_area"] [role="radio"] {
+            background: #F8FBFF !important;
+            border-color: #B8CBE3 !important;
+            color: #274463 !important;
+            flex: 1 1 50%;
+            height: 40px;
+            justify-content: center;
+        }
+        div[class*="st-key-monthly_kpi_area"] [role="radio"] p {
+            color: inherit !important;
+            font-weight: 750 !important;
+        }
+        div[class*="st-key-monthly_kpi_area"] [role="radio"][data-selected="true"] {
+            background: linear-gradient(135deg, #2F80ED 0%, #1D5FBF 100%) !important;
+            border-color: #4B8DEF !important;
+            color: #F8FBFF !important;
+            box-shadow: 0 4px 12px rgba(8, 45, 97, 0.18);
+        }
+        div[class*="st-key-monthly_kpi_area"] [role="radio"]:hover {
+            border-color: #93C5FD !important;
         }
         @media (max-width: 900px) {
             [data-testid="stMainBlockContainer"] { padding-left: 0.7rem !important; padding-right: 0.7rem !important; }
@@ -5933,14 +5976,13 @@ def monthly_kpi_review_page() -> None:
     st.markdown("<div class='smart-report-title'>Monthly KPI Review</div><div class='smart-report-subtitle'>Independent SMT or Assembly monthly review, with the same KPI status, problem and action-plan structure used in the weekly report.</div>", unsafe_allow_html=True)
     today = date.today()
     default_month = (today.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
-    controls, area_control, _ = st.columns([0.6, 0.4, 2.0], gap="small")
+    controls, area_control, _ = st.columns([0.6, 0.6, 1.8], gap="small")
     with controls:
         with st.container(key="monthly_kpi_start_month_control"):
             selected_month = st.text_input(
                 "Start date",
                 value=default_month,
                 key="monthly_kpi_start_month",
-                help="Enter the first month of the review in YYYY-MM format, for example 2026-08.",
                 max_chars=7,
             ).strip()
     with area_control:
