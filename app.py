@@ -34,7 +34,7 @@ from tools import assembly_kpi_v2
 from tools.historical_inspection_archive import apply_archive as apply_historical_inspection_archive
 
 
-APP_VERSION = "v0.5.15"
+APP_VERSION = "v0.5.16"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -88,6 +88,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.16", "Made Assembly FPY and repair uploads incremental: partial files add new events and update only matching events, preserving earlier stored history."),
     ("v0.5.15", "Combined archived Assembly FPY defect snapshots by date, so August and earlier defects remain in KPI calculations after a newer September snapshot is uploaded."),
     ("v0.5.14", "Restored Weekly KPI Review parity with KPI Track: weekly SMT and Assembly KPI cells now use the validated calculator values without historical-source coverage gating."),
     ("v0.5.13", "Prevented Weekly and Monthly KPI Reviews from reporting false 100% pass rates or 0 PPM when the FPY defect source does not cover the selected input dates."),
@@ -6443,16 +6444,6 @@ def calculate_assembly_kpi_metrics_cached(
     defect_paths = [Path(signature[0]) for signature in defect_signatures]
     repair_paths = [Path(signature[0]) for signature in repair_signatures]
 
-    def latest_valid(paths, reader, label):
-        errors = []
-        for path in reversed(paths):
-            try:
-                reader(path)
-                return path
-            except Exception as exc:
-                errors.append(f"{path.name}: {exc}")
-        raise RuntimeError(f"Nenhum arquivo válido de {label} foi encontrado. " + " | ".join(errors[:2]))
-
     def all_valid(paths, reader, label):
         valid = []
         errors = []
@@ -6467,7 +6458,7 @@ def calculate_assembly_kpi_metrics_cached(
         raise RuntimeError(f"Nenhum arquivo válido de {label} foi encontrado. " + " | ".join(errors[:2]))
 
     valid_defects = all_valid(defect_paths, assembly_kpi_v2.read_fpy_defects, "defeitos gerais")
-    repair_path = latest_valid(repair_paths, assembly_kpi_v2.read_repair, "reparo")
+    valid_repairs = all_valid(repair_paths, assembly_kpi_v2.read_repair, "reparo")
     valid_inputs = []
     for path in input_paths:
         try:
@@ -6481,7 +6472,7 @@ def calculate_assembly_kpi_metrics_cached(
     result = assembly_kpi_v2.calculate(
         valid_inputs,
         valid_defects,
-        repair_path,
+        valid_repairs,
         date.fromisoformat(start_text),
         date.fromisoformat(end_text),
     )
@@ -6497,7 +6488,7 @@ def calculate_assembly_kpi_metrics_cached(
     trend["Period"] = trend["PeriodDate"].map(lambda value: pd.Timestamp(value).strftime("%d/%m"))
     result.update(
         {
-            "source": f"{len(valid_defects)} FPY defect snapshot(s) + {repair_path.name}",
+            "source": f"{len(valid_defects)} FPY defect file(s) + {len(valid_repairs)} repair file(s)",
             "operations": sorted(set(result["defects"]["Operation"])),
             "functional_operations": list(assembly_kpi_v2.FUNCTIONAL_OPERATIONS),
             "appearance_operations": list(assembly_kpi_v2.APPEARANCE_OPERATIONS),
@@ -8033,15 +8024,15 @@ def _build_assembly_dashboard_view(
 
 def _assembly_upload_section_v2(store_status: dict) -> None:
     st.caption(
-        "Carregue inputs FPY diariamente. Para defeitos FPY e reparo, carregue sempre o snapshot MTD/YTD mais recente."
+        "Carregue inputs FPY diariamente. Defeitos FPY e reparo aceitam arquivos de qualquer período: o portal preserva o histórico e atualiza apenas eventos repetidos."
     )
     cards = st.columns(4)
     with cards[0]:
         smt_kpi_card("FPY Input", fmt_int(store_status["input"]), "Arquivos diários", "#6532C8")
     with cards[1]:
-        smt_kpi_card("FPY Defects", fmt_int(store_status["defects"]), "Snapshots MTD/YTD", "#6532C8")
+        smt_kpi_card("FPY Defects", fmt_int(store_status["defects"]), "Arquivos incrementais", "#6532C8")
     with cards[2]:
-        smt_kpi_card("Repair Defects", fmt_int(store_status["repair"]), "Snapshots MTD/YTD", "#6532C8")
+        smt_kpi_card("Repair Defects", fmt_int(store_status["repair"]), "Arquivos incrementais", "#6532C8")
     with cards[3]:
         smt_kpi_card("Stored size", f"{store_status['bytes'] / 1024 / 1024:.1f} MB", "Local files", "#6532C8")
     st.caption(f"Última importação: {store_status['latest']}")
@@ -8052,10 +8043,10 @@ def _assembly_upload_section_v2(store_status: dict) -> None:
         key="assembly_quality_v2_inputs_upload",
     )
     uploaded_defects = st.file_uploader(
-        "Defeitos FPY — Assembly (MTD/YTD)", type=["xls", "xlsx"], key="assembly_quality_v2_defects_upload"
+        "Defeitos FPY — Assembly (qualquer período)", type=["xls", "xlsx"], key="assembly_quality_v2_defects_upload"
     )
     uploaded_repair = st.file_uploader(
-        "Defeitos de reparo — Assembly (MTD/YTD)", type=["xls", "xlsx"], key="assembly_quality_v2_repair_upload"
+        "Defeitos de reparo — Assembly (qualquer período)", type=["xls", "xlsx"], key="assembly_quality_v2_repair_upload"
     )
     if st.button(
         "Salvar arquivos de Assembly",

@@ -1221,24 +1221,24 @@ def bar_chart(frame: pd.DataFrame, category: str, value: str, title: str, color:
 def _upload_section(color: str) -> None:
     status = smt_store_status()
     st.markdown("### Upload Data")
-    st.caption("Carregue inputs FPY diariamente. Para defeitos FPY e reparo, use sempre o snapshot MTD/YTD mais recente.")
+    st.caption("Carregue inputs FPY diariamente. Defeitos FPY e reparo aceitam arquivos de qualquer período; o histórico é preservado e apenas eventos repetidos são atualizados.")
     columns = st.columns(4)
     with columns[0]:
         metric_card("FPY Input", fmt_int(status["inputs"]), "Arquivos diários", color)
     with columns[1]:
-        metric_card("FPY Defects", fmt_int(status["defects"]), "Snapshots MTD/YTD", color)
+        metric_card("FPY Defects", fmt_int(status["defects"]), "Arquivos incrementais", color)
     with columns[2]:
-        metric_card("Repair Defects", fmt_int(status["repair"]), "Snapshots MTD/YTD", color)
+        metric_card("Repair Defects", fmt_int(status["repair"]), "Arquivos incrementais", color)
     with columns[3]:
         metric_card("Stored size", f"{status['bytes'] / 1024 / 1024:.2f} MB", status["latest"], color)
     uploaded_inputs = st.file_uploader(
         "Input FPY — SMT", type=["xls", "xlsx"], accept_multiple_files=True, key="smt_summary_inputs_upload"
     )
     uploaded_defect = st.file_uploader(
-        "Defeitos FPY — SMT (MTD/YTD)", type=["xls", "xlsx"], key="smt_defect_upload"
+        "Defeitos FPY — SMT (qualquer período)", type=["xls", "xlsx"], key="smt_defect_upload"
     )
     uploaded_repair = st.file_uploader(
-        "Defeitos de reparo — SMT (MTD/YTD)", type=["xls", "xlsx"], key="smt_repair_upload"
+        "Defeitos de reparo — SMT (qualquer período)", type=["xls", "xlsx"], key="smt_repair_upload"
     )
     if st.button(
         "Salvar arquivos de SMT",
@@ -1274,7 +1274,7 @@ def _upload_section(color: str) -> None:
     render_smt_source_manager()
     st.info(
         "Os três grupos ficam armazenados separadamente por área e tipo de fonte. "
-        "Os snapshots cumulativos mais recentes substituem a visão usada nos cálculos."
+        "Arquivos novos são incorporados ao histórico; somente eventos repetidos são atualizados."
     )
 
 

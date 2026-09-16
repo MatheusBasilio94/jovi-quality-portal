@@ -178,6 +178,45 @@ class AssemblyValidatedRulesTest(unittest.TestCase):
             self.assertEqual(result["smt_duty_pcbs"], 1)
             self.assertEqual(result["smt_duty_ppm"], 10_000)
 
+    def test_partial_repair_upload_keeps_prior_event_classifications(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            input_path = root / "input.xlsx"
+            self.write_book(
+                input_path, "ModelData",
+                pd.DataFrame([{"model": "M1", "Input": 100, "BeginDate": "2026-08-10", "EndDate": "2026-08-10"}]),
+            )
+            defect_path = root / "defects.xlsx"
+            self.write_book(
+                defect_path, "Detail",
+                pd.DataFrame([{
+                    "PCB": "AUG-1", "BadMachEntryTime": "2026-08-10 08:00", "TestTime": "2026-08-10 08:00",
+                    "TestOperation": "Audio-Testing", "Fault Phenomenon": "Failure", "DutyType": "SMT Process", "model": "M1",
+                }]),
+            )
+            first_repair = root / "repair-first.xlsx"
+            self.write_book(
+                first_repair, "QueryData",
+                pd.DataFrame([{
+                    "PCB": "AUG-1", "TestTime": "2026-08-10 08:00", "TestOperation": "Audio-Testing",
+                    "Fault Phenomenon": "Failure", "DutyType": "Dayshift assembly group mando", "RepairDate": "2026-08-11 08:00",
+                }]),
+            )
+            second_repair = root / "repair-partial.xlsx"
+            self.write_book(
+                second_repair, "QueryData",
+                pd.DataFrame([{
+                    "PCB": "OTHER", "TestTime": "2026-08-12 08:00", "TestOperation": "Audio-Testing",
+                    "Fault Phenomenon": "Failure", "DutyType": "SMT Process", "RepairDate": "2026-08-12 08:00",
+                }]),
+            )
+
+            result = assembly_kpi_v2.calculate(
+                [input_path], defect_path, [first_repair, second_repair], date(2026, 8, 1), date(2026, 8, 31)
+            )
+            self.assertEqual(result["smt_duty_pcbs"], 0)
+            self.assertEqual(result["function_mando_pcbs"], 1)
+
 
 class SMTValidatedRulesTest(unittest.TestCase):
     def test_weekly_trend_boundaries_stay_inside_selected_period(self) -> None:
