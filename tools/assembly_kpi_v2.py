@@ -11,7 +11,7 @@ import pandas as pd
 
 # Bump whenever a validated Assembly classification or responsibility rule
 # changes.  It is part of the dashboard cache key in app.py.
-ASSEMBLY_KPI_RULE_VERSION = "mes-operation-map-2026-09-16.3"
+ASSEMBLY_KPI_RULE_VERSION = "mes-operation-map-2026-09-16.4"
 
 
 FUNCTIONAL_OPERATIONS = (
@@ -179,6 +179,30 @@ def read_fpy_defects(source) -> pd.DataFrame:
     return result
 
 
+def combine_fpy_defects(sources: Iterable) -> pd.DataFrame:
+    """Combine archived monthly snapshots, letting newer snapshots replace overlapping dates."""
+    source_list = [sources] if isinstance(sources, (str, Path, bytes, bytearray)) else list(sources)
+    frames = []
+    for source_order, source in enumerate(source_list):
+        frame = read_fpy_defects(source).copy()
+        frame["SourceOrder"] = source_order
+        frames.append(frame)
+    if not frames:
+        raise RuntimeError("Carregue ao menos um arquivo FPY de defeitos de Assembly.")
+
+    active = pd.DataFrame(columns=frames[0].columns)
+    for frame in frames:
+        dates = frame["DefectDate"].dropna()
+        if not dates.empty and not active.empty:
+            active = active[
+                ~active["DefectDate"].between(dates.min(), dates.max())
+            ].copy()
+        active = pd.concat([active, frame], ignore_index=True)
+    return active.sort_values(["DefectDate", "SourceOrder", "EventKey"]).drop_duplicates(
+        "EventKey", keep="last"
+    ).reset_index(drop=True)
+
+
 def read_repair(source) -> pd.DataFrame:
     frame = _read_excel(source, "QueryData")
     required = set(EVENT_KEY_COLUMNS) | {"DutyType", "RepairDate"}
@@ -250,7 +274,7 @@ def calculate(
     end_date,
 ) -> dict:
     inputs = combine_daily_inputs(input_sources)
-    defects = read_fpy_defects(defect_source)
+    defects = combine_fpy_defects(defect_source)
     repair = read_repair(repair_source) if repair_source is not None else None
     defects = enrich_responsibility(defects, repair)
     start = pd.Timestamp(start_date).normalize()

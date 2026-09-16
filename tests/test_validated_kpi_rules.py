@@ -134,6 +134,50 @@ class AssemblyValidatedRulesTest(unittest.TestCase):
         self.assertIn("Glue_dispensing", assembly_kpi_v2.APPEARANCE_OPERATIONS)
         self.assertIn("PCB-Assembly", assembly_kpi_v2.APPEARANCE_OPERATIONS)
 
+    def test_archived_fpy_monthly_snapshots_are_combined(self) -> None:
+        """An August snapshot must remain available after a September snapshot is uploaded."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            input_path = root / "input-aug.xlsx"
+            self.write_book(
+                input_path,
+                "ModelData",
+                pd.DataFrame([{"model": "M1", "Input": 100, "BeginDate": "2026-08-10", "EndDate": "2026-08-10"}]),
+            )
+            august_defects = root / "defects-aug.xlsx"
+            self.write_book(
+                august_defects,
+                "Detail",
+                pd.DataFrame([{
+                    "PCB": "AUG-SMT-1", "BadMachEntryTime": "2026-08-10 08:00", "TestTime": "2026-08-10 08:00",
+                    "TestOperation": "Audio-Testing", "Fault Phenomenon": "Failure", "DutyType": "SMT Process", "model": "M1",
+                }]),
+            )
+            september_defects = root / "defects-sep.xlsx"
+            self.write_book(
+                september_defects,
+                "Detail",
+                pd.DataFrame([{
+                    "PCB": "SEP-1", "BadMachEntryTime": "2026-09-01 08:00", "TestTime": "2026-09-01 08:00",
+                    "TestOperation": "Audio-Testing", "Fault Phenomenon": "Failure", "DutyType": "Dayshift assembly group mando", "model": "M1",
+                }]),
+            )
+            repair_path = root / "repair.xlsx"
+            self.write_book(
+                repair_path,
+                "QueryData",
+                pd.DataFrame([{
+                    "PCB": "UNRELATED", "TestTime": "2026-09-02 08:00", "TestOperation": "Audio-Testing",
+                    "Fault Phenomenon": "Failure", "DutyType": "", "RepairDate": "",
+                }]),
+            )
+
+            result = assembly_kpi_v2.calculate(
+                [input_path], [august_defects, september_defects], repair_path, date(2026, 8, 1), date(2026, 8, 31)
+            )
+            self.assertEqual(result["smt_duty_pcbs"], 1)
+            self.assertEqual(result["smt_duty_ppm"], 10_000)
+
 
 class SMTValidatedRulesTest(unittest.TestCase):
     def test_weekly_trend_boundaries_stay_inside_selected_period(self) -> None:

@@ -34,7 +34,7 @@ from tools import assembly_kpi_v2
 from tools.historical_inspection_archive import apply_archive as apply_historical_inspection_archive
 
 
-APP_VERSION = "v0.5.14"
+APP_VERSION = "v0.5.15"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -88,6 +88,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.15", "Combined archived Assembly FPY defect snapshots by date, so August and earlier defects remain in KPI calculations after a newer September snapshot is uploaded."),
     ("v0.5.14", "Restored Weekly KPI Review parity with KPI Track: weekly SMT and Assembly KPI cells now use the validated calculator values without historical-source coverage gating."),
     ("v0.5.13", "Prevented Weekly and Monthly KPI Reviews from reporting false 100% pass rates or 0 PPM when the FPY defect source does not cover the selected input dates."),
     ("v0.5.12", "Imported the one-time July-to-September OQC/FQC historical archive into the existing SMT OQC and Assembly OQC/FQC records, preserving the daily manual workflow for future entries."),
@@ -6452,7 +6453,20 @@ def calculate_assembly_kpi_metrics_cached(
                 errors.append(f"{path.name}: {exc}")
         raise RuntimeError(f"Nenhum arquivo válido de {label} foi encontrado. " + " | ".join(errors[:2]))
 
-    defect_path = latest_valid(defect_paths, assembly_kpi_v2.read_fpy_defects, "defeitos gerais")
+    def all_valid(paths, reader, label):
+        valid = []
+        errors = []
+        for path in paths:
+            try:
+                reader(path)
+                valid.append(path)
+            except Exception as exc:
+                errors.append(f"{path.name}: {exc}")
+        if valid:
+            return valid
+        raise RuntimeError(f"Nenhum arquivo válido de {label} foi encontrado. " + " | ".join(errors[:2]))
+
+    valid_defects = all_valid(defect_paths, assembly_kpi_v2.read_fpy_defects, "defeitos gerais")
     repair_path = latest_valid(repair_paths, assembly_kpi_v2.read_repair, "reparo")
     valid_inputs = []
     for path in input_paths:
@@ -6466,7 +6480,7 @@ def calculate_assembly_kpi_metrics_cached(
 
     result = assembly_kpi_v2.calculate(
         valid_inputs,
-        defect_path,
+        valid_defects,
         repair_path,
         date.fromisoformat(start_text),
         date.fromisoformat(end_text),
@@ -6483,7 +6497,7 @@ def calculate_assembly_kpi_metrics_cached(
     trend["Period"] = trend["PeriodDate"].map(lambda value: pd.Timestamp(value).strftime("%d/%m"))
     result.update(
         {
-            "source": f"{defect_path.name} + {repair_path.name}",
+            "source": f"{len(valid_defects)} FPY defect snapshot(s) + {repair_path.name}",
             "operations": sorted(set(result["defects"]["Operation"])),
             "functional_operations": list(assembly_kpi_v2.FUNCTIONAL_OPERATIONS),
             "appearance_operations": list(assembly_kpi_v2.APPEARANCE_OPERATIONS),
