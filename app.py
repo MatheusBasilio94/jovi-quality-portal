@@ -31,9 +31,10 @@ from tools.supabase_store import (
 )
 from tools.trend_rules import analysis_period_days, requested_trend_grain, trend_grain_labels
 from tools import assembly_kpi_v2
+from tools.historical_inspection_archive import apply_archive as apply_historical_inspection_archive
 
 
-APP_VERSION = "v0.5.11"
+APP_VERSION = "v0.5.12"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -87,6 +88,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.12", "Imported the one-time July-to-September OQC/FQC historical archive into the existing SMT OQC and Assembly OQC/FQC records, preserving the daily manual workflow for future entries."),
     ("v0.5.11", "Refreshed the Assembly calculation revision after the current September repair snapshot was uploaded, ensuring Function Mando recomputes from the active FPY and repair files."),
     ("v0.5.10", "Added the Assembly MES rule revision to the calculation-cache key, so functional and appearance results recalculate immediately after a validated operation mapping changes."),
     ("v0.5.9", "Aligned the Assembly functional and appearance operation groups with the September MES FPY extracts: Camera-auxiliary-tester is functional, while Glue_dispensing and PCB-Assembly are appearance failures."),
@@ -2904,6 +2906,7 @@ def init_quality_store() -> tuple[bool, str]:
         data_version=data_version,
         cloud_active=cloud_active,
     )
+    historical_archive_applied = False
     with sqlite3.connect(QUALITY_DB_PATH) as conn:
         conn.execute(
             """
@@ -2989,10 +2992,14 @@ def init_quality_store() -> tuple[bool, str]:
         weekly_owner_columns = {row[1] for row in conn.execute("PRAGMA table_info(weekly_kpi_owners)")}
         if "target_value" not in weekly_owner_columns:
             conn.execute("ALTER TABLE weekly_kpi_owners ADD COLUMN target_value REAL")
+        historical_archive_applied = apply_historical_inspection_archive(conn)
     if initialize_clean_cloud:
         upload_local_file(DATABASE_OBJECT, QUALITY_DB_PATH, upsert=True)
         data_version = bump_cloud_data_version("initialize clean Quality Center 2.0 baseline")
         cloud_active = True
+    elif historical_archive_applied and cloud_active:
+        upload_local_file(DATABASE_OBJECT, QUALITY_DB_PATH, upsert=True)
+        data_version = bump_cloud_data_version("import OQC/FQC historical archive")
     return cloud_active, data_version
 
 
