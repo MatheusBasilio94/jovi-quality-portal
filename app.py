@@ -34,7 +34,7 @@ from tools import assembly_kpi_v2
 from tools.historical_inspection_archive import apply_archive as apply_historical_inspection_archive
 
 
-APP_VERSION = "v0.5.13"
+APP_VERSION = "v0.5.14"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -88,6 +88,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.14", "Restored Weekly KPI Review parity with KPI Track: weekly SMT and Assembly KPI cells now use the validated calculator values without historical-source coverage gating."),
     ("v0.5.13", "Prevented Weekly and Monthly KPI Reviews from reporting false 100% pass rates or 0 PPM when the FPY defect source does not cover the selected input dates."),
     ("v0.5.12", "Imported the one-time July-to-September OQC/FQC historical archive into the existing SMT OQC and Assembly OQC/FQC records, preserving the daily manual workflow for future entries."),
     ("v0.5.11", "Refreshed the Assembly calculation revision after the current September repair snapshot was uploaded, ensuring Function Mando recomputes from the active FPY and repair files."),
@@ -5592,8 +5593,13 @@ def weekly_kpi_is_below_target(value: float | None, target: float, direction: st
     return float(value) > target if direction == "max" else float(value) < target
 
 
-def weekly_kpi_review_data(start_date: date, end_date: date) -> tuple[dict[str, float | None], dict[str, dict[date, float | None]], dict[str, str]]:
-    """Use the same validated KPI engines to prepare a weekly review table."""
+def weekly_kpi_review_data(
+    start_date: date,
+    end_date: date,
+    *,
+    require_defect_coverage: bool = False,
+) -> tuple[dict[str, float | None], dict[str, dict[date, float | None]], dict[str, str]]:
+    """Use the same validated KPI engines to prepare weekly or monthly review tables."""
     import pandas as pd
     from tools import smt_quality_dashboard
 
@@ -5655,13 +5661,14 @@ def weekly_kpi_review_data(start_date: date, end_date: date) -> tuple[dict[str, 
             analysis.get("source_defect_start"),
             analysis.get("source_defect_end"),
         )
-        totals["smt_function"] = smt_totals.get("FunctionPassRate") if smt_covered and smt_totals.get("FunctionPassStatus") == "Valid" else None
-        totals["smt_process"] = smt_totals.get("SMTProcessNGRatePPM") if smt_covered and smt_totals.get("SMTProcessStatus") == "Valid" else None
+        totals["smt_function"] = smt_totals.get("FunctionPassRate") if (smt_covered or not require_defect_coverage) and smt_totals.get("FunctionPassStatus") == "Valid" else None
+        totals["smt_process"] = smt_totals.get("SMTProcessNGRatePPM") if (smt_covered or not require_defect_coverage) and smt_totals.get("SMTProcessStatus") == "Valid" else None
         add_daily(analysis.get("trend"), "smt_function", "FunctionPassRate")
         add_daily(analysis.get("trend"), "smt_process", "SMTProcessNGRatePPM")
-        restrict_daily_to_defect_coverage("smt_function", smt_defect_start, smt_defect_end)
-        restrict_daily_to_defect_coverage("smt_process", smt_defect_start, smt_defect_end)
-        if not smt_covered:
+        if require_defect_coverage:
+            restrict_daily_to_defect_coverage("smt_function", smt_defect_start, smt_defect_end)
+            restrict_daily_to_defect_coverage("smt_process", smt_defect_start, smt_defect_end)
+        if require_defect_coverage and not smt_covered:
             errors["SMT"] = "Functional and Process KPIs require an FPY defect file whose dates cover every selected SMT input day."
         oqc = load_smt_oqc_inspections(start_date, end_date)
         if not oqc.empty:
@@ -5680,16 +5687,17 @@ def weekly_kpi_review_data(start_date: date, end_date: date) -> tuple[dict[str, 
             assembly.get("source_defect_start"),
             assembly.get("source_defect_end"),
         )
-        totals["assembly_function"] = assembly.get("function_pass_rate") if assembly_covered else None
-        totals["assembly_appearance"] = assembly.get("appearance_pass_rate") if assembly_covered else None
-        totals["assembly_mando"] = assembly.get("function_mando_ppm") if assembly_covered else None
+        totals["assembly_function"] = assembly.get("function_pass_rate") if assembly_covered or not require_defect_coverage else None
+        totals["assembly_appearance"] = assembly.get("appearance_pass_rate") if assembly_covered or not require_defect_coverage else None
+        totals["assembly_mando"] = assembly.get("function_mando_ppm") if assembly_covered or not require_defect_coverage else None
         add_daily(assembly.get("trend"), "assembly_function", "FunctionPassRate")
         add_daily(assembly.get("trend"), "assembly_appearance", "AppearanceTotalPassRate")
         add_daily(assembly.get("trend"), "assembly_mando", "FunctionMandoPPM")
-        restrict_daily_to_defect_coverage("assembly_function", assembly_defect_start, assembly_defect_end)
-        restrict_daily_to_defect_coverage("assembly_appearance", assembly_defect_start, assembly_defect_end)
-        restrict_daily_to_defect_coverage("assembly_mando", assembly_defect_start, assembly_defect_end)
-        if not assembly_covered:
+        if require_defect_coverage:
+            restrict_daily_to_defect_coverage("assembly_function", assembly_defect_start, assembly_defect_end)
+            restrict_daily_to_defect_coverage("assembly_appearance", assembly_defect_start, assembly_defect_end)
+            restrict_daily_to_defect_coverage("assembly_mando", assembly_defect_start, assembly_defect_end)
+        if require_defect_coverage and not assembly_covered:
             errors["Assembly"] = "Functional, Appearance and Mando KPIs require an FPY defect file whose dates cover every selected Assembly input day."
         duty = calculate_assembly_smt_duty_kpi(start_date, end_date)
         totals["smt_assembly_duty"] = duty.get("duty_ppm")
@@ -5899,11 +5907,13 @@ def monthly_kpi_review_page() -> None:
     period_label = start_date.strftime("%b %Y")
     directory = tuple(item for item in configured_kpi_directory() if item["area"] == area)
     st.markdown(f"<div class='weekly-review-period'>{escape(area)} · {escape(period_label)} · {start_date.strftime('%d/%m')} – {end_date.strftime('%d/%m/%Y')}</div>", unsafe_allow_html=True)
-    totals, daily, errors = weekly_kpi_review_data(start_date, end_date)
-    previous_totals, _, previous_errors = weekly_kpi_review_data(previous_start, previous_end)
+    totals, daily, errors = weekly_kpi_review_data(start_date, end_date, require_defect_coverage=True)
+    previous_totals, _, previous_errors = weekly_kpi_review_data(previous_start, previous_end, require_defect_coverage=True)
     two_months_ago_end = previous_start - timedelta(days=1)
     two_months_ago_start = two_months_ago_end.replace(day=1)
-    two_months_ago_totals, _, _ = weekly_kpi_review_data(two_months_ago_start, two_months_ago_end)
+    two_months_ago_totals, _, _ = weekly_kpi_review_data(
+        two_months_ago_start, two_months_ago_end, require_defect_coverage=True
+    )
     kpi_review_table(
         directory,
         [
