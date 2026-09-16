@@ -884,7 +884,11 @@ def analyze_smt_quality_paths(
                 "PPMStatus": "Valid" if ppm_valid else "Blocked: confirmed PCB exceeds input",
             }
         )
-    model_summary = pd.DataFrame(model_rows).sort_values(["ConfirmedDefectPCBs", "ConfirmedPPM"], ascending=[False, False])
+    model_summary = pd.DataFrame(model_rows)
+    if not model_summary.empty:
+        model_summary = model_summary.sort_values(
+            ["ConfirmedDefectPCBs", "ConfirmedPPM"], ascending=[False, False]
+        )
 
     operation_summary = _pareto(confirmed, "Operation")
     line_summary = _pareto(confirmed, "Line")
