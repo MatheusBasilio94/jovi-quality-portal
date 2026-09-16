@@ -11,7 +11,7 @@ import pandas as pd
 
 # Bump whenever a validated Assembly classification or responsibility rule
 # changes.  It is part of the dashboard cache key in app.py.
-ASSEMBLY_KPI_RULE_VERSION = "mes-operation-map-2026-09-16.5"
+ASSEMBLY_KPI_RULE_VERSION = "mes-operation-map-2026-09-16.6"
 
 
 FUNCTIONAL_OPERATIONS = (
@@ -275,17 +275,17 @@ def enrich_responsibility(defects: pd.DataFrame, repair: pd.DataFrame | None) ->
     return result
 
 
-def calculate(
-    input_sources: Iterable,
-    defect_source,
-    repair_source,
-    start_date,
-    end_date,
-) -> dict:
+def prepare_sources(input_sources: Iterable, defect_source, repair_source) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Read and consolidate the active source files once, before period-level KPI calculations."""
     inputs = combine_daily_inputs(input_sources)
     defects = combine_fpy_defects(defect_source)
     repair = combine_repairs(repair_source)
     defects = enrich_responsibility(defects, repair)
+    return inputs, defects
+
+
+def calculate_from_prepared(inputs: pd.DataFrame, defects: pd.DataFrame, start_date, end_date) -> dict:
+    """Calculate one period from the already consolidated source data."""
     start = pd.Timestamp(start_date).normalize()
     end = pd.Timestamp(end_date).normalize()
     selected_input = inputs[inputs["Date"].between(start, end)].copy()
@@ -360,3 +360,14 @@ def calculate(
         "source_defect_start": source_defect_dates.min().date() if not source_defect_dates.empty else None,
         "source_defect_end": source_defect_dates.max().date() if not source_defect_dates.empty else None,
     }
+
+
+def calculate(
+    input_sources: Iterable,
+    defect_source,
+    repair_source,
+    start_date,
+    end_date,
+) -> dict:
+    inputs, defects = prepare_sources(input_sources, defect_source, repair_source)
+    return calculate_from_prepared(inputs, defects, start_date, end_date)
