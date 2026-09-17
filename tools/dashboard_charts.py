@@ -42,6 +42,20 @@ def shorten_label(value: object, limit: int = 20) -> str:
     return compact[: max(limit - 1, 1)].rstrip() + "…"
 
 
+def unique_short_labels(values: pd.Series, limit: int = 20) -> pd.Series:
+    """Shorten labels without collapsing distinct categories on a Plotly axis."""
+    labels = values.map(lambda item: shorten_label(item, limit)).astype(str)
+    occurrences = labels.groupby(labels, sort=False).cumcount() + 1
+    totals = labels.map(labels.value_counts())
+    return pd.Series(
+        [
+            f"{label} · {occurrence}" if total > 1 else label
+            for label, occurrence, total in zip(labels, occurrences, totals)
+        ],
+        index=values.index,
+    )
+
+
 def _base_layout(
     chart: go.Figure,
     title: str,
@@ -248,11 +262,16 @@ def pareto_chart(
 ) -> go.Figure:
     data = frame[[category, value]].copy()
     data[value] = pd.to_numeric(data[value], errors="coerce").fillna(0)
-    data = data.sort_values(value, ascending=False)
+    # A Pareto must have one x-axis point per defect category.  Distinct long
+    # names can share a shortened display label, so retain the full category
+    # for aggregation and give any shortened duplicates a unique suffix.
+    data[category] = data[category].fillna("Unknown").astype(str)
+    data = data.groupby(category, as_index=False, sort=False)[value].sum()
+    data = data.sort_values([value, category], ascending=[False, True], kind="stable")
     total = float(data[value].sum())
     data = data.head(max_items)
     data["CumulativeShare"] = data[value].cumsum() / total if total else 0.0
-    data["AxisLabel"] = data[category].map(lambda item: shorten_label(item, 18))
+    data["AxisLabel"] = unique_short_labels(data[category], 18)
     chart = make_subplots(specs=[[{"secondary_y": True}]])
     chart.add_trace(
         go.Bar(
