@@ -23,7 +23,7 @@ from tools.smt_fpy_sources import read_detail, validate_pair, active_pairs
 
 
 TOOL_VERSION = "v2.0.0"
-SMT_FAILURE_RULE_VERSION = "mes-fpy-authoritative-entry-date-2026-09-11.1"
+SMT_FAILURE_RULE_VERSION = "mes-fpy-authoritative-entry-date-2026-09-17.1"
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 SMT_STORE_DIR = PROJECT_DIR / "data_store" / "smt"
 SMT_INPUT_DIR = SMT_STORE_DIR / "fpy" / "input"
