@@ -34,7 +34,7 @@ from tools import assembly_kpi_v2
 from tools.historical_inspection_archive import apply_archive as apply_historical_inspection_archive
 
 
-APP_VERSION = "v0.5.28"
+APP_VERSION = "v0.5.29"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -88,6 +88,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.29", "Replaced invalid daily KPI points with true chart gaps and a red ×, while retaining the valid weekly and monthly aggregate results."),
     ("v0.5.28", "Extended red × input-versus-defect exception markers to the Assembly Quality Dashboard PPM trends."),
     ("v0.5.27", "Marked invalid daily input-versus-defect KPI results with a red × in trend charts and a × in Weekly and Monthly KPI Review tables, preventing misleading negative pass rates or PPM above one million."),
     ("v0.5.26", "Ranked Smart Report, Weekly KPI Review and Monthly KPI Review detractors solely by affected PCB count, without functional-versus-appearance preference."),
@@ -5777,10 +5778,6 @@ def weekly_kpi_review_data(
         )
         totals["smt_function"] = smt_totals.get("FunctionPassRate") if (smt_covered or not require_defect_coverage) and smt_totals.get("FunctionPassStatus") == "Valid" else None
         totals["smt_process"] = smt_totals.get("SMTProcessNGRatePPM") if (smt_covered or not require_defect_coverage) and smt_totals.get("SMTProcessStatus") == "Valid" else None
-        if smt_totals.get("FunctionPassStatus") != "Valid":
-            total_exceptions["smt_function"] = str(smt_totals.get("FunctionPassStatus"))
-        if smt_totals.get("SMTProcessStatus") != "Valid":
-            total_exceptions["smt_process"] = str(smt_totals.get("SMTProcessStatus"))
         add_daily(analysis.get("trend"), "smt_function", "FunctionPassRate", "FunctionPassStatus")
         add_daily(analysis.get("trend"), "smt_process", "SMTProcessNGRatePPM", "SMTProcessStatus")
         if require_defect_coverage:
@@ -5808,13 +5805,6 @@ def weekly_kpi_review_data(
         totals["assembly_function"] = assembly.get("function_pass_rate") if assembly_covered or not require_defect_coverage else None
         totals["assembly_appearance"] = assembly.get("appearance_pass_rate") if assembly_covered or not require_defect_coverage else None
         totals["assembly_mando"] = assembly.get("function_mando_ppm") if assembly_covered or not require_defect_coverage else None
-        for source, status_key in (
-            ("assembly_function", "function_pass_status"),
-            ("assembly_appearance", "appearance_pass_status"),
-            ("assembly_mando", "function_mando_status"),
-        ):
-            if assembly.get(status_key) != "Valid":
-                total_exceptions[source] = str(assembly.get(status_key))
         add_daily(assembly.get("trend"), "assembly_function", "FunctionPassRate", "FunctionPassStatus")
         add_daily(assembly.get("trend"), "assembly_appearance", "AppearanceTotalPassRate", "AppearancePassStatus")
         add_daily(assembly.get("trend"), "assembly_mando", "FunctionMandoPPM", "FunctionMandoStatus")
@@ -5826,8 +5816,6 @@ def weekly_kpi_review_data(
             errors["Assembly"] = "Functional, Appearance and Mando KPIs require an FPY defect file whose dates cover every selected Assembly input day."
         duty = calculate_assembly_smt_duty_kpi(start_date, end_date)
         totals["smt_assembly_duty"] = duty.get("duty_ppm")
-        if duty.get("smt_duty_status") != "Valid":
-            total_exceptions["smt_assembly_duty"] = str(duty.get("smt_duty_status"))
         add_daily(duty.get("trend"), "smt_assembly_duty", "DutyPPM", "SMTDutyStatus")
         oqc_fqc = load_assembly_oqc_fqc_inspections(start_date, end_date)
         if not oqc_fqc.empty:
@@ -6389,6 +6377,9 @@ def smt_kpi_line_chart(
     import plotly.graph_objects as go
 
     values = pd.to_numeric(frame[y_column], errors="coerce")
+    # Plotly treats an explicit null as a gap.  Keep it distinct from zero so
+    # an invalid daily denominator never draws a line down to the x-axis.
+    chart_values = values.astype(object).where(values.notna(), None)
     valid_values = values.dropna()
     axis_values = valid_values.copy()
     if target_value is not None:
@@ -6424,8 +6415,9 @@ def smt_kpi_line_chart(
         data=[
             go.Scatter(
                 x=frame[x_column],
-                y=values,
+                y=chart_values,
                 mode="lines+markers+text",
+                connectgaps=False,
                 line=dict(color=color, width=3),
                 marker=dict(color=color, size=8),
                 text=labels,
@@ -8095,21 +8087,17 @@ def _build_assembly_dashboard_view(
         trend.loc[trend["ConfirmedPCBs"] > trend["Input"], "Status"] = (
             "Blocked: confirmed NG PCB exceeds input"
         )
-        for count_column, status_column, label in [
-            ("FunctionalPCBs", "FunctionalStatus", "functional NG PCB"),
-            ("AppearancePCBs", "AppearanceStatus", "appearance NG PCB"),
-            ("MandoPCBs", "MandoStatus", "Function Mando NG PCB"),
-            ("SMTOriginPCBs", "SMTOriginStatus", "SMT-origin NG PCB"),
-        ]:
-            trend[status_column] = "Valid"
-            trend.loc[trend[count_column] > trend["Input"], status_column] = (
-                f"Blocked: {label} exceeds input"
-            )
+        # A daily denominator inconsistency blocks every input-based PPM
+        # series.  The red × becomes the only mark for that day.
+        blocked = trend["Status"].ne("Valid")
+        for ppm_column in ("ConfirmedPPM", "FunctionalPPM", "AppearancePPM", "MandoPPM", "SMTOriginPPM"):
+            trend.loc[blocked, ppm_column] = pd.NA
+        trend["FunctionalStatus"] = trend["Status"]
+        trend["AppearanceStatus"] = trend["Status"]
+        trend["MandoStatus"] = trend["Status"]
+        trend["SMTOriginStatus"] = trend["Status"]
         trend["PPMChartStatus"] = trend["Status"]
-        for status_column in ("MandoStatus", "SMTOriginStatus"):
-            blocked = trend[status_column].ne("Valid")
-            trend.loc[blocked, "PPMChartStatus"] = trend.loc[blocked, status_column]
-        trend["PPMChartDefects"] = trend[["ConfirmedPCBs", "MandoPCBs", "SMTOriginPCBs"]].max(axis=1)
+        trend["PPMChartDefects"] = trend["ConfirmedPCBs"]
 
     input_by_model = (
         production_detail.groupby("Model", as_index=False).agg(Input=("Produced", "sum"))

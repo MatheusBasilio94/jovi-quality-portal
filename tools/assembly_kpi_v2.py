@@ -303,41 +303,43 @@ def calculate_from_prepared(inputs: pd.DataFrame, defects: pd.DataFrame, start_d
         day_defects = selected_defects[selected_defects["DefectDate"].eq(row.Date)]
         functional = day_defects[day_defects["FailureType"].eq("Funcional")]
         appearance = day_defects[day_defects["FailureType"].eq("Aparência")]
+        classified = day_defects[day_defects["FailureType"].isin(["Funcional", "Aparência"])]
         mando = day_defects[day_defects["IsFunctionMando"]]
         smt_duty = day_defects[day_defects["IsSMTDuty"]]
         pending = day_defects[day_defects["ResponsibilityPending"] & day_defects["FailureType"].eq("Funcional")]
         functional_count = pcb_count(functional)
         appearance_count = pcb_count(appearance)
+        classified_count = pcb_count(classified)
         mando_count = pcb_count(mando)
         smt_count = pcb_count(smt_duty)
         produced = int(row.Input)
-        functional_valid = bool(produced and functional_count <= produced)
-        appearance_valid = bool(produced and appearance_count <= produced)
-        mando_valid = bool(produced and mando_count <= produced)
-        smt_duty_valid = bool(produced and smt_count <= produced)
+        input_valid = bool(produced and classified_count <= produced)
+        input_status = "Valid" if input_valid else "Blocked: classified NG PCB exceeds input"
         rows.append(
             {
                 "Date": row.Date,
                 "Input": produced,
                 "FunctionalNGPCBs": functional_count,
                 "AppearanceNGPCBs": appearance_count,
+                "ClassifiedNGPCBs": classified_count,
                 "FunctionMandoPCBs": mando_count,
                 "SMTDutyPCBs": smt_count,
                 "PendingResponsibilityPCBs": pcb_count(pending),
-                "FunctionPassRate": (produced - functional_count) / produced if functional_valid else None,
-                "FunctionPassStatus": "Valid" if functional_valid else "Blocked: functional NG PCB exceeds input",
-                "AppearancePassRate": (produced - appearance_count) / produced if appearance_valid else None,
-                "AppearancePassStatus": "Valid" if appearance_valid else "Blocked: appearance NG PCB exceeds input",
-                "FunctionMandoPPM": mando_count / produced * 1_000_000 if mando_valid else None,
-                "FunctionMandoStatus": "Valid" if mando_valid else "Blocked: Function Mando NG PCB exceeds input",
-                "SMTDutyPPM": smt_count / produced * 1_000_000 if smt_duty_valid else None,
-                "SMTDutyStatus": "Valid" if smt_duty_valid else "Blocked: SMT-duty NG PCB exceeds input",
+                "FunctionPassRate": (produced - functional_count) / produced if input_valid else None,
+                "FunctionPassStatus": input_status,
+                "AppearancePassRate": (produced - appearance_count) / produced if input_valid else None,
+                "AppearancePassStatus": input_status,
+                "FunctionMandoPPM": mando_count / produced * 1_000_000 if input_valid else None,
+                "FunctionMandoStatus": input_status,
+                "SMTDutyPPM": smt_count / produced * 1_000_000 if input_valid else None,
+                "SMTDutyStatus": input_status,
             }
         )
     daily = pd.DataFrame(rows)
     produced = int(input_daily["Input"].sum())
     functional = selected_defects[selected_defects["FailureType"].eq("Funcional")]
     appearance = selected_defects[selected_defects["FailureType"].eq("Aparência")]
+    classified = selected_defects[selected_defects["FailureType"].isin(["Funcional", "Aparência"])]
     mando = selected_defects[selected_defects["IsFunctionMando"]]
     smt_duty = selected_defects[selected_defects["IsSMTDuty"]]
     pending = selected_defects[
@@ -346,24 +348,27 @@ def calculate_from_prepared(inputs: pd.DataFrame, defects: pd.DataFrame, start_d
     counts = {
         "functional": pcb_count(functional),
         "appearance": pcb_count(appearance),
+        "classified": pcb_count(classified),
         "mando": pcb_count(mando),
         "smt_duty": pcb_count(smt_duty),
         "pending": pcb_count(pending),
     }
-    function_valid = bool(produced and counts["functional"] <= produced)
-    appearance_valid = bool(produced and counts["appearance"] <= produced)
-    mando_valid = bool(produced and counts["mando"] <= produced)
-    smt_duty_valid = bool(produced and counts["smt_duty"] <= produced)
+    # Daily input must reconcile with the same day's classified defects.  The
+    # selected-period result, however, follows the established MES rule of
+    # unique PCBs over the full period, so a late daily input must not erase a
+    # valid weekly or monthly aggregate.
+    aggregate_valid = bool(produced)
+    aggregate_status = "Valid" if aggregate_valid else "Unavailable: no input in selected period"
     return {
         "produced": produced,
-        "function_pass_rate": (produced - counts["functional"]) / produced if function_valid else None,
-        "function_pass_status": "Valid" if function_valid else "Blocked: functional NG PCB exceeds input",
-        "appearance_pass_rate": (produced - counts["appearance"]) / produced if appearance_valid else None,
-        "appearance_pass_status": "Valid" if appearance_valid else "Blocked: appearance NG PCB exceeds input",
-        "function_mando_ppm": counts["mando"] / produced * 1_000_000 if mando_valid else None,
-        "function_mando_status": "Valid" if mando_valid else "Blocked: Function Mando NG PCB exceeds input",
-        "smt_duty_ppm": counts["smt_duty"] / produced * 1_000_000 if smt_duty_valid else None,
-        "smt_duty_status": "Valid" if smt_duty_valid else "Blocked: SMT-duty NG PCB exceeds input",
+        "function_pass_rate": (produced - counts["functional"]) / produced if aggregate_valid else None,
+        "function_pass_status": aggregate_status,
+        "appearance_pass_rate": (produced - counts["appearance"]) / produced if aggregate_valid else None,
+        "appearance_pass_status": aggregate_status,
+        "function_mando_ppm": counts["mando"] / produced * 1_000_000 if aggregate_valid else None,
+        "function_mando_status": aggregate_status,
+        "smt_duty_ppm": counts["smt_duty"] / produced * 1_000_000 if aggregate_valid else None,
+        "smt_duty_status": aggregate_status,
         "functional_pcbs": counts["functional"],
         "appearance_pcbs": counts["appearance"],
         "function_mando_pcbs": counts["mando"],

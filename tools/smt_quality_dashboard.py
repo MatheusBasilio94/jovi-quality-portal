@@ -829,8 +829,10 @@ def analyze_smt_quality_paths(
             ].nunique()
         )
         ppm_valid = bool(produced and confirmed_pcbs <= produced)
-        function_pass_valid = bool(produced and functional_pcbs <= produced)
         process_ng_valid = bool(produced and classified_pcbs <= produced)
+        # The classified functional + appearance count is the shared daily
+        # denominator validation for every input-based KPI.
+        function_pass_valid = process_ng_valid
         period_rows.append(
             {
                 "PeriodStart": begin,
@@ -850,7 +852,7 @@ def analyze_smt_quality_paths(
                 "FunctionalPPM": (functional_pcbs / produced * 1_000_000) if ppm_valid else None,
                 "AppearancePPM": (appearance_pcbs / produced * 1_000_000) if ppm_valid else None,
                 "FunctionPassRate": ((produced - functional_pcbs) / produced) if function_pass_valid else None,
-                "FunctionPassStatus": "Valid" if function_pass_valid else "Blocked: functional NG PCB exceeds input",
+                "FunctionPassStatus": "Valid" if function_pass_valid else "Blocked: classified NG PCB exceeds input",
                 "SMTProcessNGRate": (classified_pcbs / produced) if process_ng_valid else None,
                 "SMTProcessNGRatePPM": (classified_pcbs / produced * 1_000_000) if process_ng_valid else None,
                 "SMTProcessStatus": "Valid" if process_ng_valid else "Blocked: classified NG PCB exceeds input",
@@ -943,8 +945,8 @@ def analyze_smt_quality_paths(
     unclassified_pcbs = int(unclassified_confirmed["PCB"].nunique())
     classified_pcbs = int(classified_confirmed["PCB"].nunique())
     intervals = selected_input[["BeginDate", "EndDateExclusive"]].drop_duplicates()
-    function_pass_valid = bool(produced and functional_pcbs <= produced)
     process_ng_valid = bool(produced and classified_pcbs <= produced)
+    function_pass_valid = process_ng_valid
     confirmed_ppm_valid = bool(produced and confirmed_pcbs <= produced)
     appearance_ppm_valid = bool(produced and appearance_pcbs <= produced)
     totals = {
@@ -961,7 +963,7 @@ def analyze_smt_quality_paths(
         "UnclassifiedDefectPCBs": unclassified_pcbs,
         "ClassifiedDefectPCBs": classified_pcbs,
         "FunctionPassRate": ((produced - functional_pcbs) / produced) if function_pass_valid else None,
-        "FunctionPassStatus": "Valid" if function_pass_valid else "Blocked: functional NG PCB exceeds input",
+        "FunctionPassStatus": "Valid" if function_pass_valid else "Blocked: classified NG PCB exceeds input",
         "SMTProcessNGRate": (classified_pcbs / produced) if process_ng_valid else None,
         "SMTProcessNGRatePPM": (classified_pcbs / produced * 1_000_000) if process_ng_valid else None,
         "SMTProcessStatus": "Valid" if process_ng_valid else "Blocked: classified NG PCB exceeds input",

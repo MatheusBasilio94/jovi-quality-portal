@@ -145,9 +145,9 @@ class AssemblyValidatedRulesTest(unittest.TestCase):
                 {
                     "DefectDate": day,
                     "PCBNormalized": "PCB-2",
-                    "FailureType": "Funcional",
-                    "IsFunctionMando": True,
-                    "IsSMTDuty": True,
+                    "FailureType": "Aparência",
+                    "IsFunctionMando": False,
+                    "IsSMTDuty": False,
                     "ResponsibilityPending": False,
                     "Operation": "Audio-Testing",
                 },
@@ -160,9 +160,9 @@ class AssemblyValidatedRulesTest(unittest.TestCase):
         self.assertIsNone(daily["FunctionPassRate"])
         self.assertIsNone(daily["FunctionMandoPPM"])
         self.assertIsNone(daily["SMTDutyPPM"])
-        self.assertEqual(daily["FunctionPassStatus"], "Blocked: functional NG PCB exceeds input")
-        self.assertEqual(daily["FunctionMandoStatus"], "Blocked: Function Mando NG PCB exceeds input")
-        self.assertEqual(daily["SMTDutyStatus"], "Blocked: SMT-duty NG PCB exceeds input")
+        self.assertEqual(daily["FunctionPassStatus"], "Blocked: classified NG PCB exceeds input")
+        self.assertEqual(daily["FunctionMandoStatus"], "Blocked: classified NG PCB exceeds input")
+        self.assertEqual(daily["SMTDutyStatus"], "Blocked: classified NG PCB exceeds input")
 
     def test_september_mes_operation_mapping(self) -> None:
         """Keep the operation names reconciled with the validated 14–15 September FPY extracts."""

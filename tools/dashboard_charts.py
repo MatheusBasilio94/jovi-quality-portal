@@ -101,6 +101,7 @@ def ppm_trend_chart(
     palette_series = list(series)
     for series_index, (column, label, color) in enumerate(palette_series):
         values = pd.to_numeric(frame.get(column), errors="coerce")
+        chart_values = values.astype(object).where(values.notna(), None)
         if values.notna().any():
             maximum = max(maximum, float(values.max()))
         positions = [
@@ -114,9 +115,10 @@ def ppm_trend_chart(
         chart.add_trace(
             go.Scatter(
                 x=frame["Period"],
-                y=values,
+                y=chart_values,
                 name=label,
                 mode="lines+markers+text",
+                connectgaps=False,
                 line=dict(color=color, width=3),
                 marker=dict(color=color, size=8),
                 text=["" if pd.isna(value) else f"{float(value):,.0f}" for value in values],
