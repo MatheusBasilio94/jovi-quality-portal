@@ -34,7 +34,7 @@ from tools import assembly_kpi_v2
 from tools.historical_inspection_archive import apply_archive as apply_historical_inspection_archive
 
 
-APP_VERSION = "v0.5.29"
+APP_VERSION = "v0.5.30"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -88,6 +88,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.30", "Restored Assembly KPI Track after accommodating its Produced daily-input field in exception-marker tooltips."),
     ("v0.5.29", "Replaced invalid daily KPI points with true chart gaps and a red ×, while retaining the valid weekly and monthly aggregate results."),
     ("v0.5.28", "Extended red × input-versus-defect exception markers to the Assembly Quality Dashboard PPM trends."),
     ("v0.5.27", "Marked invalid daily input-versus-defect KPI results with a red × in trend charts and a × in Weekly and Monthly KPI Review tables, preventing misleading negative pass rates or PPM above one million."),
@@ -6446,10 +6447,14 @@ def smt_kpi_line_chart(
         axis_range = [0.0, fallback_top]
     if exception_rows is not None and not exception_rows.empty and axis_range is not None:
         exception_y = axis_range[1] - ((axis_range[1] - axis_range[0]) * 0.04)
+        empty_exception_values = pd.Series(0, index=exception_rows.index, dtype="float64")
         exception_counts = pd.to_numeric(
-            exception_rows.get(exception_count_column), errors="coerce"
+            exception_rows.get(exception_count_column, empty_exception_values), errors="coerce"
         ).fillna(0)
-        exception_inputs = pd.to_numeric(exception_rows.get("Input"), errors="coerce").fillna(0)
+        exception_inputs = pd.to_numeric(
+            exception_rows.get("Input", exception_rows.get("Produced", empty_exception_values)),
+            errors="coerce",
+        ).fillna(0)
         exception_reasons = (
             exception_rows.get(exception_reason_column, pd.Series("Data consistency exception", index=exception_rows.index))
             if exception_reason_column
