@@ -34,7 +34,7 @@ from tools import assembly_kpi_v2
 from tools.historical_inspection_archive import apply_archive as apply_historical_inspection_archive
 
 
-APP_VERSION = "v0.5.25"
+APP_VERSION = "v0.5.26"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -88,6 +88,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.26", "Ranked Smart Report, Weekly KPI Review and Monthly KPI Review detractors solely by affected PCB count, without functional-versus-appearance preference."),
     ("v0.5.25", "Aligned the Monthly KPI Review Area selector vertically with Start date by removing Streamlit's negative button-group margins."),
     ("v0.5.24", "Removed the segmented Area control's internal padding so its lower border is fully visible."),
     ("v0.5.23", "Harmonized the Monthly KPI Review controls with matching widths, heights, centered labels and blue selected-area styling."),
@@ -5345,9 +5346,10 @@ def smart_report_candidates(frame, produced: int) -> list[dict]:
         data.groupby(["FailureType", "Phenomenon"], as_index=False)
         .agg(Cases=("_SmartDefectKey", "nunique"))
     )
-    priority = {"Functional Failure": 0, "Appearance Failure": 1, "Unclassified": 2}
-    grouped["Priority"] = grouped["FailureType"].map(priority).fillna(3)
-    grouped = grouped.sort_values(["Priority", "Cases", "Phenomenon"], ascending=[True, False, True]).head(8)
+    grouped = grouped.sort_values(
+        ["Cases", "Phenomenon", "FailureType"],
+        ascending=[False, True, True],
+    ).head(8)
     candidates = []
     for row in grouped.itertuples(index=False):
         cases = int(row.Cases)
@@ -5474,7 +5476,7 @@ def smart_report_area_panel(area: str, color: str, candidates: list[dict], perio
             max_selections=3,
             key=f"smart_report_selection_{area}_{period_key}",
         )
-        st.caption("Functional failures are suggested first. Select an appearance failure only when it is operationally relevant.")
+        st.caption("Suggestions are ranked by affected PCB count. Select the defects that are operationally relevant.")
     selected = [by_label[label] for label in labels if label in selected_labels]
     st.markdown(smart_report_area_html(area, color, selected, actions), unsafe_allow_html=True)
     if candidates:
