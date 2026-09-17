@@ -34,7 +34,7 @@ from tools import assembly_kpi_v2
 from tools.historical_inspection_archive import apply_archive as apply_historical_inspection_archive
 
 
-APP_VERSION = "v0.5.30"
+APP_VERSION = "v0.5.31"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -88,6 +88,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.31", "Kept Assembly SMT Process Duty NG Rate valid when its own SMT-duty defects reconcile with input, independent of unrelated Assembly defects."),
     ("v0.5.30", "Restored Assembly KPI Track after accommodating its Produced daily-input field in exception-marker tooltips."),
     ("v0.5.29", "Replaced invalid daily KPI points with true chart gaps and a red ×, while retaining the valid weekly and monthly aggregate results."),
     ("v0.5.28", "Extended red × input-versus-defect exception markers to the Assembly Quality Dashboard PPM trends."),
@@ -8092,15 +8093,19 @@ def _build_assembly_dashboard_view(
         trend.loc[trend["ConfirmedPCBs"] > trend["Input"], "Status"] = (
             "Blocked: confirmed NG PCB exceeds input"
         )
-        # A daily denominator inconsistency blocks every input-based PPM
-        # series.  The red × becomes the only mark for that day.
+        # The confirmed, functional, appearance and Mando series share the
+        # full Assembly defect denominator. SMT-origin PPM is a separate KPI
+        # and remains valid when its own defect count fits the daily input.
         blocked = trend["Status"].ne("Valid")
-        for ppm_column in ("ConfirmedPPM", "FunctionalPPM", "AppearancePPM", "MandoPPM", "SMTOriginPPM"):
+        for ppm_column in ("ConfirmedPPM", "FunctionalPPM", "AppearancePPM", "MandoPPM"):
             trend.loc[blocked, ppm_column] = pd.NA
         trend["FunctionalStatus"] = trend["Status"]
         trend["AppearanceStatus"] = trend["Status"]
         trend["MandoStatus"] = trend["Status"]
-        trend["SMTOriginStatus"] = trend["Status"]
+        trend["SMTOriginStatus"] = "Valid"
+        trend.loc[trend["SMTOriginPCBs"] > trend["Input"], "SMTOriginStatus"] = (
+            "Blocked: SMT-origin NG PCB exceeds input"
+        )
         trend["PPMChartStatus"] = trend["Status"]
         trend["PPMChartDefects"] = trend["ConfirmedPCBs"]
 

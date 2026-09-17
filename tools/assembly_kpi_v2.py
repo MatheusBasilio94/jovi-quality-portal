@@ -11,7 +11,7 @@ import pandas as pd
 
 # Bump whenever a validated Assembly classification or responsibility rule
 # changes.  It is part of the dashboard cache key in app.py.
-ASSEMBLY_KPI_RULE_VERSION = "mes-operation-map-2026-09-17.1"
+ASSEMBLY_KPI_RULE_VERSION = "mes-operation-map-2026-09-17.2"
 
 
 FUNCTIONAL_OPERATIONS = (
@@ -315,6 +315,8 @@ def calculate_from_prepared(inputs: pd.DataFrame, defects: pd.DataFrame, start_d
         produced = int(row.Input)
         input_valid = bool(produced and classified_count <= produced)
         input_status = "Valid" if input_valid else "Blocked: classified NG PCB exceeds input"
+        smt_duty_valid = bool(produced and smt_count <= produced)
+        smt_duty_status = "Valid" if smt_duty_valid else "Blocked: SMT-duty NG PCB exceeds input"
         rows.append(
             {
                 "Date": row.Date,
@@ -331,8 +333,8 @@ def calculate_from_prepared(inputs: pd.DataFrame, defects: pd.DataFrame, start_d
                 "AppearancePassStatus": input_status,
                 "FunctionMandoPPM": mando_count / produced * 1_000_000 if input_valid else None,
                 "FunctionMandoStatus": input_status,
-                "SMTDutyPPM": smt_count / produced * 1_000_000 if input_valid else None,
-                "SMTDutyStatus": input_status,
+                "SMTDutyPPM": smt_count / produced * 1_000_000 if smt_duty_valid else None,
+                "SMTDutyStatus": smt_duty_status,
             }
         )
     daily = pd.DataFrame(rows)

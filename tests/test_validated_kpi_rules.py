@@ -159,10 +159,10 @@ class AssemblyValidatedRulesTest(unittest.TestCase):
 
         self.assertIsNone(daily["FunctionPassRate"])
         self.assertIsNone(daily["FunctionMandoPPM"])
-        self.assertIsNone(daily["SMTDutyPPM"])
+        self.assertEqual(daily["SMTDutyPPM"], 1_000_000)
         self.assertEqual(daily["FunctionPassStatus"], "Blocked: classified NG PCB exceeds input")
         self.assertEqual(daily["FunctionMandoStatus"], "Blocked: classified NG PCB exceeds input")
-        self.assertEqual(daily["SMTDutyStatus"], "Blocked: classified NG PCB exceeds input")
+        self.assertEqual(daily["SMTDutyStatus"], "Valid")
 
     def test_september_mes_operation_mapping(self) -> None:
         """Keep the operation names reconciled with the validated 14–15 September FPY extracts."""
