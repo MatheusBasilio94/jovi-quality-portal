@@ -311,6 +311,10 @@ def calculate_from_prepared(inputs: pd.DataFrame, defects: pd.DataFrame, start_d
         mando_count = pcb_count(mando)
         smt_count = pcb_count(smt_duty)
         produced = int(row.Input)
+        functional_valid = bool(produced and functional_count <= produced)
+        appearance_valid = bool(produced and appearance_count <= produced)
+        mando_valid = bool(produced and mando_count <= produced)
+        smt_duty_valid = bool(produced and smt_count <= produced)
         rows.append(
             {
                 "Date": row.Date,
@@ -320,10 +324,14 @@ def calculate_from_prepared(inputs: pd.DataFrame, defects: pd.DataFrame, start_d
                 "FunctionMandoPCBs": mando_count,
                 "SMTDutyPCBs": smt_count,
                 "PendingResponsibilityPCBs": pcb_count(pending),
-                "FunctionPassRate": (produced - functional_count) / produced if produced else None,
-                "AppearancePassRate": (produced - appearance_count) / produced if produced else None,
-                "FunctionMandoPPM": mando_count / produced * 1_000_000 if produced else None,
-                "SMTDutyPPM": smt_count / produced * 1_000_000 if produced else None,
+                "FunctionPassRate": (produced - functional_count) / produced if functional_valid else None,
+                "FunctionPassStatus": "Valid" if functional_valid else "Blocked: functional NG PCB exceeds input",
+                "AppearancePassRate": (produced - appearance_count) / produced if appearance_valid else None,
+                "AppearancePassStatus": "Valid" if appearance_valid else "Blocked: appearance NG PCB exceeds input",
+                "FunctionMandoPPM": mando_count / produced * 1_000_000 if mando_valid else None,
+                "FunctionMandoStatus": "Valid" if mando_valid else "Blocked: Function Mando NG PCB exceeds input",
+                "SMTDutyPPM": smt_count / produced * 1_000_000 if smt_duty_valid else None,
+                "SMTDutyStatus": "Valid" if smt_duty_valid else "Blocked: SMT-duty NG PCB exceeds input",
             }
         )
     daily = pd.DataFrame(rows)
@@ -342,12 +350,20 @@ def calculate_from_prepared(inputs: pd.DataFrame, defects: pd.DataFrame, start_d
         "smt_duty": pcb_count(smt_duty),
         "pending": pcb_count(pending),
     }
+    function_valid = bool(produced and counts["functional"] <= produced)
+    appearance_valid = bool(produced and counts["appearance"] <= produced)
+    mando_valid = bool(produced and counts["mando"] <= produced)
+    smt_duty_valid = bool(produced and counts["smt_duty"] <= produced)
     return {
         "produced": produced,
-        "function_pass_rate": (produced - counts["functional"]) / produced if produced else None,
-        "appearance_pass_rate": (produced - counts["appearance"]) / produced if produced else None,
-        "function_mando_ppm": counts["mando"] / produced * 1_000_000 if produced else None,
-        "smt_duty_ppm": counts["smt_duty"] / produced * 1_000_000 if produced else None,
+        "function_pass_rate": (produced - counts["functional"]) / produced if function_valid else None,
+        "function_pass_status": "Valid" if function_valid else "Blocked: functional NG PCB exceeds input",
+        "appearance_pass_rate": (produced - counts["appearance"]) / produced if appearance_valid else None,
+        "appearance_pass_status": "Valid" if appearance_valid else "Blocked: appearance NG PCB exceeds input",
+        "function_mando_ppm": counts["mando"] / produced * 1_000_000 if mando_valid else None,
+        "function_mando_status": "Valid" if mando_valid else "Blocked: Function Mando NG PCB exceeds input",
+        "smt_duty_ppm": counts["smt_duty"] / produced * 1_000_000 if smt_duty_valid else None,
+        "smt_duty_status": "Valid" if smt_duty_valid else "Blocked: SMT-duty NG PCB exceeds input",
         "functional_pcbs": counts["functional"],
         "appearance_pcbs": counts["appearance"],
         "function_mando_pcbs": counts["mando"],

@@ -127,6 +127,43 @@ class AssemblyValidatedRulesTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "somente inputs diários"):
                 assembly_kpi_v2.read_daily_input(path)
 
+    def test_daily_kpis_are_blocked_when_defects_exceed_input(self) -> None:
+        """A late or incomplete input file must never create negative pass rates or PPM above one million."""
+        day = pd.Timestamp("2026-09-14")
+        inputs = pd.DataFrame([{"Date": day, "Input": 1}])
+        defects = pd.DataFrame(
+            [
+                {
+                    "DefectDate": day,
+                    "PCBNormalized": "PCB-1",
+                    "FailureType": "Funcional",
+                    "IsFunctionMando": True,
+                    "IsSMTDuty": True,
+                    "ResponsibilityPending": False,
+                    "Operation": "Audio-Testing",
+                },
+                {
+                    "DefectDate": day,
+                    "PCBNormalized": "PCB-2",
+                    "FailureType": "Funcional",
+                    "IsFunctionMando": True,
+                    "IsSMTDuty": True,
+                    "ResponsibilityPending": False,
+                    "Operation": "Audio-Testing",
+                },
+            ]
+        )
+
+        result = assembly_kpi_v2.calculate_from_prepared(inputs, defects, day.date(), day.date())
+        daily = result["daily"].iloc[0]
+
+        self.assertIsNone(daily["FunctionPassRate"])
+        self.assertIsNone(daily["FunctionMandoPPM"])
+        self.assertIsNone(daily["SMTDutyPPM"])
+        self.assertEqual(daily["FunctionPassStatus"], "Blocked: functional NG PCB exceeds input")
+        self.assertEqual(daily["FunctionMandoStatus"], "Blocked: Function Mando NG PCB exceeds input")
+        self.assertEqual(daily["SMTDutyStatus"], "Blocked: SMT-duty NG PCB exceeds input")
+
     def test_september_mes_operation_mapping(self) -> None:
         """Keep the operation names reconciled with the validated 14–15 September FPY extracts."""
         self.assertTrue(assembly_kpi_v2.ASSEMBLY_KPI_RULE_VERSION)

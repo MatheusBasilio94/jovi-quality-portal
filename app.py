@@ -34,7 +34,7 @@ from tools import assembly_kpi_v2
 from tools.historical_inspection_archive import apply_archive as apply_historical_inspection_archive
 
 
-APP_VERSION = "v0.5.26"
+APP_VERSION = "v0.5.27"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -88,6 +88,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.27", "Marked invalid daily input-versus-defect KPI results with a red × in trend charts and a × in Weekly and Monthly KPI Review tables, preventing misleading negative pass rates or PPM above one million."),
     ("v0.5.26", "Ranked Smart Report, Weekly KPI Review and Monthly KPI Review detractors solely by affected PCB count, without functional-versus-appearance preference."),
     ("v0.5.25", "Aligned the Monthly KPI Review Area selector vertically with Start date by removing Streamlit's negative button-group margins."),
     ("v0.5.24", "Removed the segmented Area control's internal padding so its lower border is fully visible."),
@@ -1583,6 +1584,7 @@ def apply_global_css() -> None:
         .weekly-review-table .weekly-value.on-target { background:#9DDD64; color:#123A22; }
         .weekly-review-table .weekly-value.below { background:#FF9B9B; color:#7A1010; }
         .weekly-review-table .weekly-value.unavailable { background:#F4F7FB; color:#8795A8; }
+        .weekly-review-table .weekly-value.exception { background:#FEF2F2; color:#DC2626; font-size:1rem; }
         hr { border-color: var(--border) !important; }
         </style>
         """,
@@ -5687,7 +5689,13 @@ def weekly_kpi_review_data(
     end_date: date,
     *,
     require_defect_coverage: bool = False,
-) -> tuple[dict[str, float | None], dict[str, dict[date, float | None]], dict[str, str]]:
+) -> tuple[
+    dict[str, float | None],
+    dict[str, dict[date, float | None]],
+    dict[str, str],
+    dict[str, str],
+    dict[str, dict[date, str]],
+]:
     """Use the same validated KPI engines to prepare weekly or monthly review tables."""
     import pandas as pd
     from tools import smt_quality_dashboard
@@ -5695,8 +5703,10 @@ def weekly_kpi_review_data(
     totals: dict[str, float | None] = {item["source"]: None for item in WEEKLY_KPI_DIRECTORY}
     daily: dict[str, dict[date, float | None]] = {item["source"]: {} for item in WEEKLY_KPI_DIRECTORY}
     errors: dict[str, str] = {}
+    total_exceptions: dict[str, str] = {}
+    daily_exceptions: dict[str, dict[date, str]] = {item["source"]: {} for item in WEEKLY_KPI_DIRECTORY}
 
-    def add_daily(frame, source: str, value_column: str) -> None:
+    def add_daily(frame, source: str, value_column: str, status_column: str | None = None) -> None:
         if frame is None or frame.empty or value_column not in frame.columns:
             return
         date_column = next(
@@ -5705,11 +5715,20 @@ def weekly_kpi_review_data(
         )
         if date_column is None:
             return
-        values = frame[[date_column, value_column]].copy()
+        selected_columns = [date_column, value_column]
+        if status_column and status_column in frame.columns:
+            selected_columns.append(status_column)
+        values = frame[selected_columns].copy()
         values[date_column] = pd.to_datetime(values[date_column], errors="coerce").dt.date
-        for row in values.dropna(subset=[date_column]).itertuples(index=False):
-            raw_value = getattr(row, value_column)
-            daily[source][getattr(row, date_column)] = None if pd.isna(raw_value) else float(raw_value)
+        for _, row in values.dropna(subset=[date_column]).iterrows():
+            day = row[date_column]
+            status = str(row.get(status_column, "Valid")) if status_column else "Valid"
+            if status != "Valid":
+                daily[source][day] = None
+                daily_exceptions[source][day] = status
+            else:
+                raw_value = row[value_column]
+                daily[source][day] = None if pd.isna(raw_value) else float(raw_value)
 
     def source_dates_cover_inputs(inputs, input_date_column: str, defect_start, defect_end) -> tuple[bool, date | None, date | None]:
         if inputs is None or inputs.empty or input_date_column not in inputs.columns:
@@ -5726,10 +5745,15 @@ def weekly_kpi_review_data(
     def restrict_daily_to_defect_coverage(source: str, defect_start: date | None, defect_end: date | None) -> None:
         if defect_start is None or defect_end is None:
             daily[source] = {day: None for day in daily[source]}
+            daily_exceptions[source] = {}
             return
         daily[source] = {
             day: value if defect_start <= day <= defect_end else None
             for day, value in daily[source].items()
+        }
+        daily_exceptions[source] = {
+            day: reason for day, reason in daily_exceptions[source].items()
+            if defect_start <= day <= defect_end
         }
 
     try:
@@ -5752,8 +5776,12 @@ def weekly_kpi_review_data(
         )
         totals["smt_function"] = smt_totals.get("FunctionPassRate") if (smt_covered or not require_defect_coverage) and smt_totals.get("FunctionPassStatus") == "Valid" else None
         totals["smt_process"] = smt_totals.get("SMTProcessNGRatePPM") if (smt_covered or not require_defect_coverage) and smt_totals.get("SMTProcessStatus") == "Valid" else None
-        add_daily(analysis.get("trend"), "smt_function", "FunctionPassRate")
-        add_daily(analysis.get("trend"), "smt_process", "SMTProcessNGRatePPM")
+        if smt_totals.get("FunctionPassStatus") != "Valid":
+            total_exceptions["smt_function"] = str(smt_totals.get("FunctionPassStatus"))
+        if smt_totals.get("SMTProcessStatus") != "Valid":
+            total_exceptions["smt_process"] = str(smt_totals.get("SMTProcessStatus"))
+        add_daily(analysis.get("trend"), "smt_function", "FunctionPassRate", "FunctionPassStatus")
+        add_daily(analysis.get("trend"), "smt_process", "SMTProcessNGRatePPM", "SMTProcessStatus")
         if require_defect_coverage:
             restrict_daily_to_defect_coverage("smt_function", smt_defect_start, smt_defect_end)
             restrict_daily_to_defect_coverage("smt_process", smt_defect_start, smt_defect_end)
@@ -5779,9 +5807,16 @@ def weekly_kpi_review_data(
         totals["assembly_function"] = assembly.get("function_pass_rate") if assembly_covered or not require_defect_coverage else None
         totals["assembly_appearance"] = assembly.get("appearance_pass_rate") if assembly_covered or not require_defect_coverage else None
         totals["assembly_mando"] = assembly.get("function_mando_ppm") if assembly_covered or not require_defect_coverage else None
-        add_daily(assembly.get("trend"), "assembly_function", "FunctionPassRate")
-        add_daily(assembly.get("trend"), "assembly_appearance", "AppearanceTotalPassRate")
-        add_daily(assembly.get("trend"), "assembly_mando", "FunctionMandoPPM")
+        for source, status_key in (
+            ("assembly_function", "function_pass_status"),
+            ("assembly_appearance", "appearance_pass_status"),
+            ("assembly_mando", "function_mando_status"),
+        ):
+            if assembly.get(status_key) != "Valid":
+                total_exceptions[source] = str(assembly.get(status_key))
+        add_daily(assembly.get("trend"), "assembly_function", "FunctionPassRate", "FunctionPassStatus")
+        add_daily(assembly.get("trend"), "assembly_appearance", "AppearanceTotalPassRate", "AppearancePassStatus")
+        add_daily(assembly.get("trend"), "assembly_mando", "FunctionMandoPPM", "FunctionMandoStatus")
         if require_defect_coverage:
             restrict_daily_to_defect_coverage("assembly_function", assembly_defect_start, assembly_defect_end)
             restrict_daily_to_defect_coverage("assembly_appearance", assembly_defect_start, assembly_defect_end)
@@ -5790,7 +5825,9 @@ def weekly_kpi_review_data(
             errors["Assembly"] = "Functional, Appearance and Mando KPIs require an FPY defect file whose dates cover every selected Assembly input day."
         duty = calculate_assembly_smt_duty_kpi(start_date, end_date)
         totals["smt_assembly_duty"] = duty.get("duty_ppm")
-        add_daily(duty.get("trend"), "smt_assembly_duty", "DutyPPM")
+        if duty.get("smt_duty_status") != "Valid":
+            total_exceptions["smt_assembly_duty"] = str(duty.get("smt_duty_status"))
+        add_daily(duty.get("trend"), "smt_assembly_duty", "DutyPPM", "SMTDutyStatus")
         oqc_fqc = load_assembly_oqc_fqc_inspections(start_date, end_date)
         if not oqc_fqc.empty:
             oqc_inspected = int(oqc_fqc["OQCInspected"].sum())
@@ -5802,16 +5839,17 @@ def weekly_kpi_review_data(
     except Exception as exc:
         errors["Assembly"] = str(exc)
 
-    return totals, daily, errors
+    return totals, daily, errors, total_exceptions, daily_exceptions
 
 
 def kpi_review_table(
     directory: tuple[dict, ...],
-    summary_columns: list[tuple[str, dict[str, float | None]]],
+    summary_columns: list[tuple[str, dict[str, float | None], dict[str, str]]],
     daily: dict[str, dict[date, float | None]],
     days: list[date],
+    daily_exceptions: dict[str, dict[date, str]] | None = None,
 ) -> None:
-    headers = ["Area", "KPI", "Brazil<br>Goal", "GBR", "Jovi"] + [label for label, _ in summary_columns] + [f"{day.day}-{day.strftime('%b')}" for day in days]
+    headers = ["Area", "KPI", "Brazil<br>Goal", "GBR", "Jovi"] + [column[0] for column in summary_columns] + [f"{day.day}-{day.strftime('%b')}" for day in days]
     colgroup = (
         "<colgroup><col class='weekly-col-area'><col class='weekly-col-kpi'>"
         "<col class='weekly-col-meta'><col class='weekly-col-meta'><col class='weekly-col-meta'>"
@@ -5835,14 +5873,20 @@ def kpi_review_table(
             f"<td>{escape(item['gbr'])}</td>",
             f"<td>{escape(item['jovi'])}</td>",
         ]
-        for _, summary in summary_columns:
+        for _, summary, summary_exceptions in summary_columns:
             summary_value = summary.get(item["source"])
-            summary_class = " below" if weekly_kpi_is_below_target(summary_value, item["target"], item["direction"]) else " on-target" if summary_value is not None else " unavailable"
-            cells.append(f"<td class='weekly-value{summary_class}'>{escape(weekly_kpi_value_label(summary_value, item['direction']))}</td>")
+            exception = (summary_exceptions or {}).get(item["source"])
+            summary_class = " exception" if exception else " below" if weekly_kpi_is_below_target(summary_value, item["target"], item["direction"]) else " on-target" if summary_value is not None else " unavailable"
+            label = "×" if exception else weekly_kpi_value_label(summary_value, item["direction"])
+            tooltip = f" title='{escape(str(exception), quote=True)}'" if exception else ""
+            cells.append(f"<td class='weekly-value{summary_class}'{tooltip}>{escape(label)}</td>")
         for day in days:
             daily_value = daily.get(item["source"], {}).get(day)
-            daily_class = " below" if weekly_kpi_is_below_target(daily_value, item["target"], item["direction"]) else " on-target" if daily_value is not None else " unavailable"
-            cells.append(f"<td class='weekly-value{daily_class}'>{escape(weekly_kpi_value_label(daily_value, item['direction']))}</td>")
+            exception = (daily_exceptions or {}).get(item["source"], {}).get(day)
+            daily_class = " exception" if exception else " below" if weekly_kpi_is_below_target(daily_value, item["target"], item["direction"]) else " on-target" if daily_value is not None else " unavailable"
+            label = "×" if exception else weekly_kpi_value_label(daily_value, item["direction"])
+            tooltip = f" title='{escape(str(exception), quote=True)}'" if exception else ""
+            cells.append(f"<td class='weekly-value{daily_class}'{tooltip}>{escape(label)}</td>")
         rows.append("<tr>" + "".join(cells) + "</tr>")
     st.markdown(
         f"<div class='weekly-review-wrap {layout_class}'><table class='weekly-review-table {layout_class}'>" + colgroup + "<thead><tr>" + "".join(f"<th>{header}</th>" for header in headers) + "</tr></thead><tbody>" + "".join(rows) + "</tbody></table></div>",
@@ -5940,15 +5984,19 @@ def weekly_kpi_review_page() -> None:
             except Exception as exc:
                 st.error(str(exc))
     st.markdown(f"<div class='weekly-review-period'>{escape(week_label)}</div>", unsafe_allow_html=True)
-    totals, daily, errors = weekly_kpi_review_data(start_date, week_end)
+    totals, daily, errors, total_exceptions, daily_exceptions = weekly_kpi_review_data(start_date, week_end)
     previous_start = start_date - timedelta(days=7)
     previous_end = week_end - timedelta(days=7)
-    previous_totals, _, previous_errors = weekly_kpi_review_data(previous_start, previous_end)
+    previous_totals, _, previous_errors, previous_total_exceptions, _ = weekly_kpi_review_data(previous_start, previous_end)
     kpi_review_table(
         directory,
-        [(f"WK{previous_end.isocalendar().week:02d}", previous_totals), (f"WK{week_end.isocalendar().week:02d}", totals)],
+        [
+            (f"WK{previous_end.isocalendar().week:02d}", previous_totals, previous_total_exceptions),
+            (f"WK{week_end.isocalendar().week:02d}", totals, total_exceptions),
+        ],
         daily,
         days,
+        daily_exceptions,
     )
     for area, error in errors.items():
         st.info(f"{area}: {error}")
@@ -5977,6 +6025,7 @@ def weekly_kpi_review_page() -> None:
     with st.expander("Copyable weekly e-mail", expanded=True):
         st.code(email_text, language=None)
     st.caption("Targets match the validated KPI Track configuration. Empty cells indicate that the corresponding source or manual OQC/FQC record has not yet been loaded.")
+    st.caption("× indicates that defects exceeded the available input for that KPI period, so the KPI was intentionally not calculated.")
 
 
 def monthly_kpi_review_page() -> None:
@@ -6006,19 +6055,19 @@ def monthly_kpi_review_page() -> None:
     period_label = start_date.strftime("%b %Y")
     directory = tuple(item for item in configured_kpi_directory() if item["area"] == area)
     st.markdown(f"<div class='weekly-review-period'>{escape(area)} · {escape(period_label)} · {start_date.strftime('%d/%m')} – {end_date.strftime('%d/%m/%Y')}</div>", unsafe_allow_html=True)
-    totals, daily, errors = weekly_kpi_review_data(start_date, end_date, require_defect_coverage=True)
-    previous_totals, _, previous_errors = weekly_kpi_review_data(previous_start, previous_end, require_defect_coverage=True)
+    totals, daily, errors, total_exceptions, _ = weekly_kpi_review_data(start_date, end_date, require_defect_coverage=True)
+    previous_totals, _, previous_errors, previous_total_exceptions, _ = weekly_kpi_review_data(previous_start, previous_end, require_defect_coverage=True)
     two_months_ago_end = previous_start - timedelta(days=1)
     two_months_ago_start = two_months_ago_end.replace(day=1)
-    two_months_ago_totals, _, _ = weekly_kpi_review_data(
+    two_months_ago_totals, _, _, two_months_ago_total_exceptions, _ = weekly_kpi_review_data(
         two_months_ago_start, two_months_ago_end, require_defect_coverage=True
     )
     kpi_review_table(
         directory,
         [
-            (two_months_ago_start.strftime("%b"), two_months_ago_totals),
-            (previous_start.strftime("%b"), previous_totals),
-            (start_date.strftime("%b"), totals),
+            (two_months_ago_start.strftime("%b"), two_months_ago_totals, two_months_ago_total_exceptions),
+            (previous_start.strftime("%b"), previous_totals, previous_total_exceptions),
+            (start_date.strftime("%b"), totals, total_exceptions),
         ],
         {},
         [],
@@ -6048,6 +6097,7 @@ def monthly_kpi_review_page() -> None:
     with st.expander("Copyable monthly e-mail", expanded=True):
         st.code(email_text, language=None)
     st.caption("Targets and responsible owners use the shared directory in Weekly KPI Review. The monthly report shows only the selected area.")
+    st.caption("× indicates that defects exceeded the available input for that KPI period, so the KPI was intentionally not calculated.")
 
 
 def smart_report_page() -> None:
@@ -6330,6 +6380,9 @@ def smt_kpi_line_chart(
     value_type: str,
     target_value: float | None = None,
     exception_rows=None,
+    exception_count_column: str = "ClassifiedDefectPCBs",
+    exception_count_label: str = "Classified NG PCBs",
+    exception_reason_column: str | None = None,
 ):
     import pandas as pd
     import plotly.graph_objects as go
@@ -6395,20 +6448,40 @@ def smt_kpi_line_chart(
         axis_range = [0, float(axis_values.max()) * 1.22]
     else:
         axis_range = None
+    if axis_range is None and exception_rows is not None and not exception_rows.empty:
+        fallback_top = float(target_value) * 1.22 if target_value and target_value > 0 else (1.0 if value_type == "percent" else 1_000_000.0)
+        axis_range = [0.0, fallback_top]
     if exception_rows is not None and not exception_rows.empty and axis_range is not None:
         exception_y = axis_range[1] - ((axis_range[1] - axis_range[0]) * 0.04)
+        exception_counts = pd.to_numeric(
+            exception_rows.get(exception_count_column), errors="coerce"
+        ).fillna(0)
+        exception_inputs = pd.to_numeric(exception_rows.get("Input"), errors="coerce").fillna(0)
+        exception_reasons = (
+            exception_rows.get(exception_reason_column, pd.Series("Data consistency exception", index=exception_rows.index))
+            if exception_reason_column
+            else pd.Series("Data consistency exception", index=exception_rows.index)
+        )
         chart.add_trace(
             go.Scatter(
                 x=exception_rows[x_column],
                 y=[exception_y] * len(exception_rows),
                 mode="markers",
                 marker=dict(color="#DC2626", size=13, symbol="x"),
-                customdata=exception_rows[["Input", "ClassifiedDefectPCBs"]].to_numpy(),
+                customdata=pd.DataFrame(
+                    {
+                        "Input": exception_inputs,
+                        "Defects": exception_counts,
+                        "Reason": exception_reasons,
+                    }
+                ).to_numpy(),
                 hovertemplate=(
                     "<b>Data consistency exception</b><br>"
                     "Input: %{customdata[0]:,.0f}<br>"
-                    "Classified NG PCBs: %{customdata[1]:,.0f}<br>"
-                    "PPM not calculated for this period<extra></extra>"
+                    + escape(exception_count_label)
+                    + ": %{customdata[1]:,.0f}<br>"
+                    "Reason: %{customdata[2]}<br>"
+                    "KPI not calculated for this period<extra></extra>"
                 ),
             )
         )
@@ -6464,7 +6537,7 @@ def build_smt_oqc_trend(oqc_records, start_date: date, end_date: date):
 def calculate_assembly_smt_duty_kpi(start_date: date, end_date: date) -> dict:
     metrics = calculate_assembly_kpi_metrics(start_date, end_date)
     duty_rows = metrics["defects"][metrics["defects"]["IsSMTDuty"]].copy()
-    trend = metrics["trend"][["PeriodDate", "Period", "Produced", "SMTDutyPCBs", "SMTDutyPPM"]].copy()
+    trend = metrics["trend"][["PeriodDate", "Period", "Produced", "SMTDutyPCBs", "SMTDutyPPM", "SMTDutyStatus"]].copy()
     trend = trend.rename(columns={"SMTDutyPCBs": "DutyDefects", "SMTDutyPPM": "DutyPPM"})
     breakdown = (
         duty_rows.groupby("FinalDutyType", as_index=False)["PCBNormalized"]
@@ -6476,6 +6549,7 @@ def calculate_assembly_smt_duty_kpi(start_date: date, end_date: date) -> dict:
         "produced": metrics["produced"],
         "duty_defects": metrics["smt_duty_pcbs"],
         "duty_ppm": metrics["smt_duty_ppm"],
+        "smt_duty_status": metrics["smt_duty_status"],
         "trend": trend,
         "trend_settings": metrics["trend_settings"],
         "breakdown": breakdown,
@@ -6745,6 +6819,9 @@ def smt_kpi_track_page(color: str) -> None:
     process_exceptions = smt_trend.loc[
         smt_trend.get("SMTProcessStatus", pd.Series("Valid", index=smt_trend.index)).ne("Valid")
     ].copy()
+    function_exceptions = smt_trend.loc[
+        smt_trend.get("FunctionPassStatus", pd.Series("Valid", index=smt_trend.index)).ne("Valid")
+    ].copy()
     function_pass_chart = smt_kpi_line_chart(
         smt_trend,
         "Period",
@@ -6753,6 +6830,10 @@ def smt_kpi_track_page(color: str) -> None:
         color,
         "percent",
         target_value=0.9956,
+        exception_rows=function_exceptions,
+        exception_count_column="FunctionalDefectPCBs",
+        exception_count_label="Functional NG PCBs",
+        exception_reason_column="FunctionPassStatus",
     )
     process_ng_chart = smt_kpi_line_chart(
         smt_trend,
@@ -6763,6 +6844,9 @@ def smt_kpi_track_page(color: str) -> None:
         "ppm",
         target_value=5_000,
         exception_rows=process_exceptions,
+        exception_count_column="ClassifiedDefectPCBs",
+        exception_count_label="Classified NG PCBs",
+        exception_reason_column="SMTProcessStatus",
     )
     if len(smt_trend) > 10:
         show_chart(function_pass_chart)
@@ -6775,6 +6859,9 @@ def smt_kpi_track_page(color: str) -> None:
             show_chart(process_ng_chart)
 
     assembly_trend = assembly_kpi["trend"] if assembly_kpi else pd.DataFrame()
+    assembly_duty_exceptions = assembly_trend.loc[
+        assembly_trend.get("SMTDutyStatus", pd.Series("Valid", index=assembly_trend.index)).ne("Valid")
+    ].copy()
     assembly_chart = (
         smt_kpi_line_chart(
             assembly_trend,
@@ -6784,6 +6871,10 @@ def smt_kpi_track_page(color: str) -> None:
             "#6532C8",
             "ppm",
             target_value=700,
+            exception_rows=assembly_duty_exceptions,
+            exception_count_column="DutyDefects",
+            exception_count_label="SMT-duty NG PCBs",
+            exception_reason_column="SMTDutyStatus",
         )
         if not assembly_trend.empty
         else None
@@ -6840,6 +6931,9 @@ def smt_kpi_track_page(color: str) -> None:
             }
         )
         styled_table(exception_view)
+
+    if not function_exceptions.empty or not process_exceptions.empty or not assembly_duty_exceptions.empty:
+        st.caption("A red × marks a daily period where the available input is lower than the defects required by that KPI. The daily KPI is not calculated; a valid larger-period aggregate remains available.")
 
     st.markdown("### Manual SMT OQC input")
     with st.form("smt_oqc_input_form", clear_on_submit=True):
@@ -7084,10 +7178,23 @@ def assembly_kpi_track_page(color: str) -> None:
 
     trend = metrics["trend"]
     trend_label = metrics["trend_settings"]["label"]
+    function_exceptions = trend.loc[
+        trend.get("FunctionPassStatus", pd.Series("Valid", index=trend.index)).ne("Valid")
+    ].copy()
+    appearance_exceptions = trend.loc[
+        trend.get("AppearancePassStatus", pd.Series("Valid", index=trend.index)).ne("Valid")
+    ].copy()
+    mando_exceptions = trend.loc[
+        trend.get("FunctionMandoStatus", pd.Series("Valid", index=trend.index)).ne("Valid")
+    ].copy()
     function_chart = (
         smt_kpi_line_chart(
             trend, "Period", "FunctionPassRate", f"Function Pass Rate trend · {trend_label}", color, "percent",
             target_value=0.9905,
+            exception_rows=function_exceptions,
+            exception_count_column="FunctionalNGRecords",
+            exception_count_label="Functional NG PCBs",
+            exception_reason_column="FunctionPassStatus",
         )
         if functional_ready else None
     )
@@ -7095,6 +7202,10 @@ def assembly_kpi_track_page(color: str) -> None:
         smt_kpi_line_chart(
             trend, "Period", "AppearanceTotalPassRate", f"Appearance Total Pass Rate trend · {trend_label}", "#1D5FBF", "percent",
             target_value=0.9904,
+            exception_rows=appearance_exceptions,
+            exception_count_column="AppearanceNGRecords",
+            exception_count_label="Appearance NG PCBs",
+            exception_reason_column="AppearancePassStatus",
         )
         if appearance_ready else None
     )
@@ -7102,6 +7213,10 @@ def assembly_kpi_track_page(color: str) -> None:
         smt_kpi_line_chart(
             trend, "Period", "FunctionMandoPPM", f"Function Mando trend · {trend_label}", "#C2410C", "ppm",
             target_value=3_600,
+            exception_rows=mando_exceptions,
+            exception_count_column="FunctionMandoPCBs",
+            exception_count_label="Function Mando NG PCBs",
+            exception_reason_column="FunctionMandoStatus",
         )
         if functional_ready else None
     )
@@ -7139,6 +7254,9 @@ def assembly_kpi_track_page(color: str) -> None:
                         show_chart(chart)
                     else:
                         st.info(empty_message)
+
+    if not function_exceptions.empty or not appearance_exceptions.empty or not mando_exceptions.empty:
+        st.caption("A red × marks a daily period where the available input is lower than the defects required by that KPI. The daily KPI is not calculated; a valid larger-period aggregate remains available.")
 
     st.markdown("### Manual Assembly OQC and FQC input")
     with st.form("assembly_oqc_fqc_input_form", clear_on_submit=True):
