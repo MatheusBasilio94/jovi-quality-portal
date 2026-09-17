@@ -34,7 +34,7 @@ from tools import assembly_kpi_v2
 from tools.historical_inspection_archive import apply_archive as apply_historical_inspection_archive
 
 
-APP_VERSION = "v0.5.27"
+APP_VERSION = "v0.5.28"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -88,6 +88,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.28", "Extended red × input-versus-defect exception markers to the Assembly Quality Dashboard PPM trends."),
     ("v0.5.27", "Marked invalid daily input-versus-defect KPI results with a red × in trend charts and a × in Weekly and Monthly KPI Review tables, preventing misleading negative pass rates or PPM above one million."),
     ("v0.5.26", "Ranked Smart Report, Weekly KPI Review and Monthly KPI Review detractors solely by affected PCB count, without functional-versus-appearance preference."),
     ("v0.5.25", "Aligned the Monthly KPI Review Area selector vertically with Start date by removing Streamlit's negative button-group margins."),
@@ -8094,6 +8095,21 @@ def _build_assembly_dashboard_view(
         trend.loc[trend["ConfirmedPCBs"] > trend["Input"], "Status"] = (
             "Blocked: confirmed NG PCB exceeds input"
         )
+        for count_column, status_column, label in [
+            ("FunctionalPCBs", "FunctionalStatus", "functional NG PCB"),
+            ("AppearancePCBs", "AppearanceStatus", "appearance NG PCB"),
+            ("MandoPCBs", "MandoStatus", "Function Mando NG PCB"),
+            ("SMTOriginPCBs", "SMTOriginStatus", "SMT-origin NG PCB"),
+        ]:
+            trend[status_column] = "Valid"
+            trend.loc[trend[count_column] > trend["Input"], status_column] = (
+                f"Blocked: {label} exceeds input"
+            )
+        trend["PPMChartStatus"] = trend["Status"]
+        for status_column in ("MandoStatus", "SMTOriginStatus"):
+            blocked = trend[status_column].ne("Valid")
+            trend.loc[blocked, "PPMChartStatus"] = trend.loc[blocked, status_column]
+        trend["PPMChartDefects"] = trend[["ConfirmedPCBs", "MandoPCBs", "SMTOriginPCBs"]].max(axis=1)
 
     input_by_model = (
         production_detail.groupby("Model", as_index=False).agg(Input=("Produced", "sum"))
@@ -8463,6 +8479,10 @@ def assembly_quality_dashboard_v2(color: str) -> None:
                     ("MandoPPM", "Function Mando PPM", "#C2410C"),
                 ],
                 target_value=3_600,
+                exception_mask=view["trend"]["PPMChartStatus"].ne("Valid"),
+                exception_count_column="PPMChartDefects",
+                exception_count_label="Relevant NG PCBs",
+                exception_status_column="PPMChartStatus",
             )
         )
     with right:
@@ -8519,6 +8539,10 @@ def assembly_quality_dashboard_v2(color: str) -> None:
                 f"Assembly defects of SMT origin · {grain_label}",
                 [("SMTOriginPPM", "SMT-origin PPM", "#0D7A45")],
                 target_value=700,
+                exception_mask=view["trend"]["SMTOriginStatus"].ne("Valid"),
+                exception_count_column="SMTOriginPCBs",
+                exception_count_label="SMT-origin NG PCBs",
+                exception_status_column="SMTOriginStatus",
             )
         )
     with right:

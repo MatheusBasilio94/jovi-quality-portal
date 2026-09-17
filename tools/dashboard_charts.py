@@ -90,6 +90,9 @@ def ppm_trend_chart(
     series: Iterable[tuple[str, str, str]],
     target_value: float | None = None,
     exception_mask: pd.Series | None = None,
+    exception_count_column: str = "ClassifiedDefectPCBs",
+    exception_count_label: str = "Classified NG PCBs",
+    exception_status_column: str | None = None,
 ) -> go.Figure:
     chart = go.Figure()
     frame = frame.copy()
@@ -127,6 +130,15 @@ def ppm_trend_chart(
     axis_top = maximum * 1.28 if maximum > 0 else 1
     if exception_mask is not None and bool(exception_mask.any()):
         exception_rows = frame.loc[exception_mask]
+        exception_inputs = pd.to_numeric(exception_rows.get("Input"), errors="coerce").fillna(0)
+        exception_counts = pd.to_numeric(
+            exception_rows.get(exception_count_column), errors="coerce"
+        ).fillna(0)
+        exception_reasons = (
+            exception_rows.get(exception_status_column, pd.Series("Data consistency exception", index=exception_rows.index))
+            if exception_status_column
+            else pd.Series("Data consistency exception", index=exception_rows.index)
+        )
         chart.add_trace(
             go.Scatter(
                 x=exception_rows["Period"],
@@ -134,13 +146,19 @@ def ppm_trend_chart(
                 name="Data exception",
                 mode="markers",
                 marker=dict(color=RED, size=13, symbol="x"),
-                customdata=exception_rows[["Input", "ClassifiedDefectPCBs"]].to_numpy()
-                if {"Input", "ClassifiedDefectPCBs"}.issubset(exception_rows.columns)
-                else None,
+                customdata=pd.DataFrame(
+                    {
+                        "Input": exception_inputs,
+                        "Defects": exception_counts,
+                        "Reason": exception_reasons,
+                    }
+                ).to_numpy(),
                 hovertemplate=(
                     "<b>Data consistency exception</b><br>"
                     "Input: %{customdata[0]:,.0f}<br>"
-                    "Classified NG PCBs: %{customdata[1]:,.0f}<extra></extra>"
+                    + exception_count_label
+                    + ": %{customdata[1]:,.0f}<br>"
+                    "Reason: %{customdata[2]}<extra></extra>"
                 ),
             )
         )
