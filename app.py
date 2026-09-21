@@ -39,7 +39,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.37"
+APP_VERSION = "v0.5.38"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -93,6 +93,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.38", "Added a print-only weekly day-column selector so low-volume days can be omitted from the copied KPI table without changing weekly calculations."),
     ("v0.5.37", "Grouped Smart Report and KPI Review top issues by the repair remark, with the original phenomenon retained only when no repair conclusion exists."),
     ("v0.5.36", "Made Weekly and Monthly major-problem narratives rank defects within each KPI's own functional, appearance, Mando or SMT-duty scope."),
     ("v0.5.35", "Fixed manual OQC/FQC history rendering for zero-sampling records."),
@@ -5943,12 +5944,22 @@ def weekly_kpi_review_page() -> None:
 
     st.markdown("<div class='smart-report-title'>Weekly KPI Review</div><div class='smart-report-subtitle'>Major KPI achievement status and action follow-up, generated from the same validated portal calculations.</div>", unsafe_allow_html=True)
     default_week_end = date.today() - timedelta(days=date.today().weekday() + 1)
-    controls, action_column = st.columns([1.5, 0.75])
+    controls, visibility_column, action_column = st.columns([1.1, 1.55, 0.75])
     with controls:
         week_end = st.date_input("Week ending", value=default_week_end, key="weekly_kpi_week_end", help="Select the Sunday that closes the report week.")
     start_date = week_end - timedelta(days=6)
     days = [start_date + timedelta(days=offset) for offset in range(7)]
     week_label = f"WK{week_end.isocalendar().week:02d} · {start_date.strftime('%d/%m')} – {week_end.strftime('%d/%m/%Y')}"
+    with visibility_column:
+        hidden_days = st.multiselect(
+            "Hide daily columns (print only)",
+            options=days,
+            default=[],
+            format_func=lambda value: value.strftime("%d-%b"),
+            key=f"weekly_kpi_hidden_days_{week_end.isoformat()}",
+            help="The selected columns are removed only from the displayed and copied table. Weekly KPI calculations remain unchanged.",
+        )
+    visible_days = [day for day in days if day not in hidden_days]
     with action_column:
         st.markdown("<div class='smart-control-label'>&nbsp;</div>", unsafe_allow_html=True)
         if st.button("Refresh weekly review", key="weekly_kpi_refresh", type="primary", use_container_width=True):
@@ -6001,9 +6012,15 @@ def weekly_kpi_review_page() -> None:
             (f"WK{week_end.isocalendar().week:02d}", totals, total_exceptions),
         ],
         daily,
-        days,
+        visible_days,
         daily_exceptions,
     )
+    if hidden_days:
+        st.caption(
+            "Hidden from this table and its copied image: "
+            + ", ".join(day.strftime("%d-%b") for day in hidden_days)
+            + ". WK calculations still use the full seven-day week."
+        )
     for area, error in errors.items():
         st.info(f"{area}: {error}")
     for area, error in previous_errors.items():
