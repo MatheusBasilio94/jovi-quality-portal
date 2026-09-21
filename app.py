@@ -39,7 +39,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.33"
+APP_VERSION = "v0.5.34"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -93,6 +93,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.34", "Aligned Monthly KPI Review with KPI Track calculations, so September uses the uploaded source data instead of rejecting a month when its final input day has no defect-row timestamp."),
     ("v0.5.33", "Accepted explicit zero-sampling OQC/FQC records while keeping their pass rates unavailable rather than treating them as 100%."),
     ("v0.5.32", "Corrected Pareto cumulative lines when long defect labels share the same shortened axis text."),
     ("v0.5.31", "Kept Assembly SMT Process Duty NG Rate valid when its own SMT-duty defects reconcile with input, independent of unrelated Assembly defects."),
@@ -6017,12 +6018,15 @@ def monthly_kpi_review_page() -> None:
     period_label = start_date.strftime("%b %Y")
     directory = tuple(item for item in configured_kpi_directory() if item["area"] == area)
     st.markdown(f"<div class='weekly-review-period'>{escape(area)} · {escape(period_label)} · {start_date.strftime('%d/%m')} – {end_date.strftime('%d/%m/%Y')}</div>", unsafe_allow_html=True)
-    totals, daily, errors, total_exceptions, _ = weekly_kpi_review_data(start_date, end_date, require_defect_coverage=True)
-    previous_totals, _, previous_errors, previous_total_exceptions, _ = weekly_kpi_review_data(previous_start, previous_end, require_defect_coverage=True)
+    # KPI Track is authoritative for the monthly result. A defect file may have
+    # no row on the final production day simply because that day had no defect;
+    # its last defect timestamp is not a reliable file-coverage boundary.
+    totals, daily, errors, total_exceptions, _ = weekly_kpi_review_data(start_date, end_date)
+    previous_totals, _, previous_errors, previous_total_exceptions, _ = weekly_kpi_review_data(previous_start, previous_end)
     two_months_ago_end = previous_start - timedelta(days=1)
     two_months_ago_start = two_months_ago_end.replace(day=1)
     two_months_ago_totals, _, _, two_months_ago_total_exceptions, _ = weekly_kpi_review_data(
-        two_months_ago_start, two_months_ago_end, require_defect_coverage=True
+        two_months_ago_start, two_months_ago_end
     )
     kpi_review_table(
         directory,
