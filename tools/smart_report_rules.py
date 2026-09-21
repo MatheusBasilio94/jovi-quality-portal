@@ -5,6 +5,19 @@ from __future__ import annotations
 import pandas as pd
 
 
+def top_issue_reasons(frame: pd.DataFrame) -> pd.Series:
+    """Use the repair conclusion as the report issue, falling back to phenomenon."""
+    result = pd.Series("", index=frame.index, dtype="object")
+    for column in ("RepaireRemark", "RepairRemark"):
+        if column not in frame.columns:
+            continue
+        values = frame[column].fillna("").astype(str).str.strip()
+        result = result.where(result.ne(""), values)
+    phenomenon = frame.get("Phenomenon", pd.Series("Unknown", index=frame.index))
+    phenomenon = phenomenon.fillna("").astype(str).str.strip().replace("", "Unknown")
+    return result.where(result.ne(""), phenomenon)
+
+
 def kpi_defect_scopes(
     smt_confirmed: pd.DataFrame,
     assembly_confirmed: pd.DataFrame,

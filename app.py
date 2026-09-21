@@ -39,7 +39,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.36"
+APP_VERSION = "v0.5.37"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -93,6 +93,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.37", "Grouped Smart Report and KPI Review top issues by the repair remark, with the original phenomenon retained only when no repair conclusion exists."),
     ("v0.5.36", "Made Weekly and Monthly major-problem narratives rank defects within each KPI's own functional, appearance, Mando or SMT-duty scope."),
     ("v0.5.35", "Fixed manual OQC/FQC history rendering for zero-sampling records."),
     ("v0.5.34", "Aligned Monthly KPI Review with KPI Track calculations, so September uses the uploaded source data instead of rejecting a month when its final input day has no defect-row timestamp."),
@@ -5315,19 +5316,20 @@ def smart_report_defect_key(frame):
 
 def smart_report_candidates(frame, produced: int) -> list[dict]:
     import pandas as pd
+    from tools.smart_report_rules import top_issue_reasons
 
     if frame.empty:
         return []
     data = frame.copy()
     data["FailureType"] = data.get("FailureType", "Unclassified").fillna("Unclassified").astype(str)
-    data["Phenomenon"] = data.get("Phenomenon", "Unknown").fillna("Unknown").astype(str).str.strip().replace("", "Unknown")
+    data["TopIssue"] = top_issue_reasons(data)
     data["_SmartDefectKey"] = smart_report_defect_key(data)
     grouped = (
-        data.groupby(["FailureType", "Phenomenon"], as_index=False)
+        data.groupby(["FailureType", "TopIssue"], as_index=False)
         .agg(Cases=("_SmartDefectKey", "nunique"))
     )
     grouped = grouped.sort_values(
-        ["Cases", "Phenomenon", "FailureType"],
+        ["Cases", "TopIssue", "FailureType"],
         ascending=[False, True, True],
     ).head(8)
     candidates = []
@@ -5336,11 +5338,11 @@ def smart_report_candidates(frame, produced: int) -> list[dict]:
         rate = cases / produced * 100 if produced else None
         candidates.append(
             {
-                "defect": str(row.Phenomenon),
+                "defect": str(row.TopIssue),
                 "failure_type": str(row.FailureType),
                 "cases": cases,
                 "rate": rate,
-                "key": f"{row.FailureType}|{row.Phenomenon}",
+                "key": f"{row.FailureType}|{row.TopIssue}",
             }
         )
     return candidates
@@ -5473,7 +5475,7 @@ def smart_report_area_html(area: str, color: str, items: list[dict], actions: di
     return (
         f"<div class='smart-area-panel'><div class='smart-area-head'><span class='smart-area-icon' style='background:{color};'>{icon}</span>"
         f"<span class='smart-area-title' style='color:{color};'>{area}</span></div>"
-        "<div class='smart-area-caption'>Top 3 defects · functional failures first</div>"
+        "<div class='smart-area-caption'>Top 3 issues · functional failures first</div>"
         f"<div class='smart-defect-list'>{''.join(rows)}</div><div class='smart-action-summary'>"
         f"<div class='smart-action-row'><span class='smart-action-label'>Cause</span><span>{escape(action['root_cause'] or 'under investigation')} — {escape(action['cause_status'].lower())}</span></div>"
         f"<div class='smart-action-row'><span class='smart-action-label'>Containment</span><span>{escape(action['containment'] or 'not informed')}</span></div>"
@@ -5920,7 +5922,7 @@ def kpi_review_email(
             value = totals.get(item["source"])
             gap = (float(value) - item["target"]) if item["direction"] == "max" else (item["target"] - float(value))
             top = candidates_by_source.get(item["source"], [])
-            description = f"Top confirmed defect: {top[0]['defect']} ({top[0]['cases']} cases)" if top else "Describe the main defect and containment."
+            description = f"Top issue: {top[0]['defect']} ({top[0]['cases']} cases)" if top else "Describe the main issue and containment."
             lines.extend([
                 f"2.{index}. {item['area']} {item['kpi']}",
                 f"Target: {weekly_kpi_value_label(item['target'], item['direction'])}",
@@ -6016,7 +6018,7 @@ def weekly_kpi_review_page() -> None:
     elif below:
         for item in below:
             top = candidates_by_source.get(item["source"], [])
-            defect = f" Top defect: {top[0]['defect']} ({top[0]['cases']} cases)." if top else ""
+            defect = f" Top issue: {top[0]['defect']} ({top[0]['cases']} cases)." if top else ""
             st.warning(f"**{item['area']} · {item['kpi']}** is below target. Responsible: {item['gbr']} / {item['jovi']}.{defect}")
     else:
         st.success("All available KPIs achieved the configured targets in the selected week.")
@@ -6088,7 +6090,7 @@ def monthly_kpi_review_page() -> None:
     elif below:
         for item in below:
             top = candidates_by_source.get(item["source"], [])
-            defect = f" Top defect: {top[0]['defect']} ({top[0]['cases']} cases)." if top else ""
+            defect = f" Top issue: {top[0]['defect']} ({top[0]['cases']} cases)." if top else ""
             st.warning(f"**{item['kpi']}** is below target. Responsible: {item['gbr']} / {item['jovi']}.{defect}")
     else:
         st.success(f"All available {area} KPIs achieved the configured targets in {period_label}.")
