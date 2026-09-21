@@ -39,7 +39,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.41"
+APP_VERSION = "v0.5.42"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -93,6 +93,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.42", "Applied target-status colors directly to KPI card markup so the Streamlit theme cannot override the alert backgrounds."),
     ("v0.5.41", "Fixed Home KPI card HTML rendering and increased the target-status background contrast."),
     ("v0.5.40", "Strengthened KPI target cards with clear status backgrounds and alert or confirmation icons."),
     ("v0.5.39", "Added target-status treatment to KPI cards, clearly identifying indicators below target and showing their configured threshold."),
@@ -6163,17 +6164,25 @@ def home_overview_kpi(
     state = kpi_target_state(actual_value, target_value, target_direction)
     target_status = ""
     target_icon = ""
+    card_style = ""
+    value_style = ""
     if state is not None:
         target_label = fmt_ppm(target_value) + " PPM" if target_direction == "max" else fmt_kpi_pct(target_value)
         status_label = "Below target" if state == "below-target" else "On target"
         target_status = f'<div class="target-state {state}">{status_label} · {escape(target_label)}</div>'
         icon = "!" if state == "below-target" else "✓"
         target_icon = f'<div class="kpi-target-icon {state}" aria-label="{escape(status_label)}">{icon}</div>'
+        if state == "below-target":
+            card_style = "background:#FFE8E8 !important;border:1px solid #F39A9A !important;border-left:4px solid #DC2626 !important;"
+            value_style = "color:#B91C1C !important;"
+        else:
+            card_style = "background:#E8FAEF !important;border:1px solid #86D5A6 !important;border-left:4px solid #0D7A45 !important;"
+            value_style = "color:#08703B !important;"
     card_class = f" kpi-target-{state}" if state is not None else ""
     st.markdown(
-        f'<div class="home-overview-kpi{card_class}" style="--kpi-color:{color};">'
+        f'<div class="home-overview-kpi{card_class}" style="--kpi-color:{color};{card_style}">'
         f'<div class="label">{escape(label)}</div>'
-        f'<div class="value">{escape(value)}</div>'
+        f'<div class="value" style="{value_style}">{escape(value)}</div>'
         f'<div class="note">{escape(note)}</div>{target_status}{target_icon}'
         '<div class="spark"></div></div>',
         unsafe_allow_html=True,
@@ -6515,6 +6524,8 @@ def smt_kpi_card(
     state = kpi_target_state(actual_value, target_value, target_direction)
     target_status = ""
     target_icon = ""
+    card_style = ""
+    value_style = ""
     if state is not None:
         target_label = fmt_ppm(target_value) + " PPM" if target_direction == "max" else fmt_kpi_pct(target_value)
         status_label = "Below target" if state == "below-target" else "On target"
@@ -6523,11 +6534,17 @@ def smt_kpi_card(
         )
         icon = "!" if state == "below-target" else "✓"
         target_icon = f'<div class="kpi-target-icon {state}" aria-label="{escape(status_label)}">{icon}</div>'
+        if state == "below-target":
+            card_style = "background:#FFE8E8 !important;border:1px solid #F39A9A !important;border-left:6px solid #DC2626 !important;box-shadow:0 8px 22px rgba(220,38,38,.16);"
+            value_style = "color:#B91C1C !important;"
+        else:
+            card_style = "background:#E8FAEF !important;border:1px solid #86D5A6 !important;border-left:6px solid #0D7A45 !important;"
+            value_style = "color:#08703B !important;"
     card_class = f" kpi-target-{state}" if state is not None else ""
     st.markdown(
-        f'<div class="metric-card{card_class}">'
+        f'<div class="metric-card{card_class}" style="{card_style}">'
         f'<div class="metric-label">{escape(label)}</div>'
-        f'<div class="metric-value" style="color:{color};">{escape(value)}</div>'
+        f'<div class="metric-value" style="color:{color};{value_style}">{escape(value)}</div>'
         f'<div class="small-muted">{escape(note)}</div>{target_status}{target_icon}</div>',
         unsafe_allow_html=True,
     )
