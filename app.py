@@ -39,7 +39,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.48"
+APP_VERSION = "v0.5.49"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -93,6 +93,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.49", "Set explicit Streamlit widths for Analysis period widgets so their interactive area matches the visible controls."),
     ("v0.5.48", "Constrained Analysis period pointer events to the visible date field so adjacent whitespace cannot open the calendar."),
     ("v0.5.47", "Restricted Analysis period controls to their visible fields, removing the unused clickable row area."),
     ("v0.5.46", "Balanced Home heading and filter spacing while retaining the single-screen layout."),
@@ -2449,6 +2450,7 @@ def analysis_period_control(
                 key=preset_key,
                 on_change=_apply_period_preset,
                 args=(preset_key, range_key, remembered_range_key, minimum_date, maximum_date),
+                width=160,
             )
         with range_col:
             selected_period = st.date_input(
@@ -2459,6 +2461,7 @@ def analysis_period_control(
                 key=range_key,
                 on_change=_remember_period_range,
                 args=(range_key, remembered_range_key),
+                width=270,
             )
 
     if isinstance(selected_period, (tuple, list)) and len(selected_period) >= 2:
