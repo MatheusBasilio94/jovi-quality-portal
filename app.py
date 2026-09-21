@@ -32,9 +32,14 @@ from tools.supabase_store import (
 from tools.trend_rules import analysis_period_days, requested_trend_grain, trend_grain_labels
 from tools import assembly_kpi_v2
 from tools.historical_inspection_archive import apply_archive as apply_historical_inspection_archive
+from tools.inspection_store import (
+    create_inspection_tables,
+    migrate_zero_sampling_schema,
+    validate_inspection_counts,
+)
 
 
-APP_VERSION = "v0.5.32"
+APP_VERSION = "v0.5.33"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -88,8 +93,9 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
-    ("v0.5.31", "Kept Assembly SMT Process Duty NG Rate valid when its own SMT-duty defects reconcile with input, independent of unrelated Assembly defects."),
+    ("v0.5.33", "Accepted explicit zero-sampling OQC/FQC records while keeping their pass rates unavailable rather than treating them as 100%."),
     ("v0.5.32", "Corrected Pareto cumulative lines when long defect labels share the same shortened axis text."),
+    ("v0.5.31", "Kept Assembly SMT Process Duty NG Rate valid when its own SMT-duty defects reconcile with input, independent of unrelated Assembly defects."),
     ("v0.5.30", "Restored Assembly KPI Track after accommodating its Produced daily-input field in exception-marker tooltips."),
     ("v0.5.29", "Replaced invalid daily KPI points with true chart gaps and a red ×, while retaining the valid weekly and monthly aggregate results."),
     ("v0.5.28", "Extended red × input-versus-defect exception markers to the Assembly Quality Dashboard PPM trends."),
@@ -3004,6 +3010,7 @@ def init_quality_store() -> tuple[bool, str]:
         cloud_active=cloud_active,
     )
     historical_archive_applied = False
+    inspection_schema_migrated = False
     with sqlite3.connect(QUALITY_DB_PATH) as conn:
         conn.execute(
             """
@@ -3022,40 +3029,8 @@ def init_quality_store() -> tuple[bool, str]:
             )
             """
         )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS smt_oqc_inspections (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                inspection_date TEXT NOT NULL,
-                model TEXT,
-                inspected_qty INTEGER NOT NULL CHECK (inspected_qty > 0),
-                ok_qty INTEGER NOT NULL CHECK (ok_qty >= 0),
-                ng_qty INTEGER NOT NULL CHECK (ng_qty >= 0),
-                notes TEXT,
-                created_at TEXT NOT NULL,
-                CHECK (ok_qty + ng_qty = inspected_qty)
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS assembly_oqc_fqc_inspections (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                inspection_date TEXT NOT NULL,
-                model TEXT,
-                oqc_inspected_qty INTEGER NOT NULL CHECK (oqc_inspected_qty > 0),
-                oqc_ok_qty INTEGER NOT NULL CHECK (oqc_ok_qty >= 0),
-                oqc_ng_qty INTEGER NOT NULL CHECK (oqc_ng_qty >= 0),
-                fqc_inspected_qty INTEGER NOT NULL CHECK (fqc_inspected_qty > 0),
-                fqc_ok_qty INTEGER NOT NULL CHECK (fqc_ok_qty >= 0),
-                fqc_ng_qty INTEGER NOT NULL CHECK (fqc_ng_qty >= 0),
-                notes TEXT,
-                created_at TEXT NOT NULL,
-                CHECK (oqc_ok_qty + oqc_ng_qty = oqc_inspected_qty),
-                CHECK (fqc_ok_qty + fqc_ng_qty = fqc_inspected_qty)
-            )
-            """
-        )
+        create_inspection_tables(conn)
+        inspection_schema_migrated = migrate_zero_sampling_schema(conn)
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS smart_report_actions (
@@ -3094,9 +3069,14 @@ def init_quality_store() -> tuple[bool, str]:
         upload_local_file(DATABASE_OBJECT, QUALITY_DB_PATH, upsert=True)
         data_version = bump_cloud_data_version("initialize clean Quality Center 2.0 baseline")
         cloud_active = True
-    elif historical_archive_applied and cloud_active:
+    elif (historical_archive_applied or inspection_schema_migrated) and cloud_active:
         upload_local_file(DATABASE_OBJECT, QUALITY_DB_PATH, upsert=True)
-        data_version = bump_cloud_data_version("import OQC/FQC historical archive")
+        reason = (
+            "allow zero-sampling OQC/FQC records"
+            if inspection_schema_migrated
+            else "import OQC/FQC historical archive"
+        )
+        data_version = bump_cloud_data_version(reason)
     return cloud_active, data_version
 
 
@@ -3382,12 +3362,7 @@ def save_smt_oqc_inspection(
 ) -> None:
     init_quality_store()
     require_persistent_store_for_writes()
-    if inspected_qty <= 0:
-        raise ValueError("Inspected quantity must be greater than zero.")
-    if ok_qty < 0 or ng_qty < 0:
-        raise ValueError("OK and NG quantities cannot be negative.")
-    if ok_qty + ng_qty != inspected_qty:
-        raise ValueError("OK quantity plus NG quantity must equal inspected quantity.")
+    validate_inspection_counts("SMT OQC", inspected_qty, ok_qty, ng_qty)
     with sqlite3.connect(QUALITY_DB_PATH) as conn:
         conn.execute(
             """
@@ -3469,12 +3444,7 @@ def save_assembly_oqc_fqc_inspection(
         ("FQC", fqc_inspected_qty, fqc_ok_qty, fqc_ng_qty),
     ]
     for stage, inspected_qty, ok_qty, ng_qty in checks:
-        if inspected_qty <= 0:
-            raise ValueError(f"{stage} inspected quantity must be greater than zero.")
-        if ok_qty < 0 or ng_qty < 0:
-            raise ValueError(f"{stage} OK and NG quantities cannot be negative.")
-        if ok_qty + ng_qty != inspected_qty:
-            raise ValueError(f"{stage} OK quantity plus NG quantity must equal the inspected quantity.")
+        validate_inspection_counts(stage, inspected_qty, ok_qty, ng_qty)
     with sqlite3.connect(QUALITY_DB_PATH) as conn:
         conn.execute(
             """
@@ -6955,6 +6925,7 @@ def smt_kpi_track_page(color: str) -> None:
         with form_columns[4]:
             ng_qty = st.number_input("NG", min_value=0, value=0, step=1, key="smt_oqc_ng")
         oqc_notes = st.text_input("Notes (optional)", key="smt_oqc_notes")
+        st.caption("Use 0 inspected, 0 OK and 0 NG to register a day with no OQC sampling.")
         oqc_submit = st.form_submit_button("Save OQC inspection", use_container_width=True)
     if oqc_submit:
         try:
@@ -6969,7 +6940,7 @@ def smt_kpi_track_page(color: str) -> None:
         except ValueError as exc:
             st.error(str(exc))
         else:
-            st.success("SMT OQC inspection saved.")
+            st.success("SMT OQC no-sampling record saved." if int(inspected_qty) == 0 else "SMT OQC inspection saved.")
             st.rerun()
 
     st.markdown("### OQC inspection history")
@@ -6980,8 +6951,9 @@ def smt_kpi_track_page(color: str) -> None:
         oqc_view["InspectionDate"] = oqc_view["InspectionDate"].dt.strftime("%d/%m/%Y")
         oqc_view["CreatedAt"] = pd.to_datetime(oqc_view["CreatedAt"], errors="coerce").dt.strftime("%d/%m/%y %H:%M")
         oqc_view["PassRatePct"] = (oqc_view["PassRate"] * 100).round(2)
+        oqc_view["Sampling"] = oqc_view["Inspected"].map(lambda value: "No sampling" if int(value) == 0 else "Sampled")
         styled_table(
-            oqc_view[["ID", "InspectionDate", "Model", "Inspected", "OK", "NG", "PassRatePct", "Notes", "CreatedAt"]],
+            oqc_view[["ID", "InspectionDate", "Model", "Sampling", "Inspected", "OK", "NG", "PassRatePct", "Notes", "CreatedAt"]],
             table_class="inspection-history-table",
         )
         st.download_button(
@@ -7283,6 +7255,7 @@ def assembly_kpi_track_page(color: str) -> None:
             fqc_ok_input = st.number_input("FQC OK", min_value=0, value=0, step=1, key="assembly_fqc_ok")
             fqc_ng_input = st.number_input("FQC NG", min_value=0, value=0, step=1, key="assembly_fqc_ng")
         inspection_notes = st.text_input("Notes (optional)", key="assembly_oqc_fqc_notes")
+        st.caption("For an unsampled stage, enter 0 inspected, 0 OK and 0 NG. OQC and FQC can be recorded independently.")
         oqc_fqc_submit = st.form_submit_button("Save Assembly OQC and FQC inspection", use_container_width=True)
     if oqc_fqc_submit:
         try:
@@ -7300,7 +7273,13 @@ def assembly_kpi_track_page(color: str) -> None:
         except ValueError as exc:
             st.error(str(exc))
         else:
-            st.success("Assembly OQC and FQC inspection saved.")
+            unsampled_stages = [
+                stage
+                for stage, inspected in (("OQC", oqc_inspected_input), ("FQC", fqc_inspected_input))
+                if int(inspected) == 0
+            ]
+            suffix = f" No sampling recorded for {', '.join(unsampled_stages)}." if unsampled_stages else ""
+            st.success(f"Assembly OQC and FQC inspection saved.{suffix}")
             st.rerun()
 
     st.markdown("### Assembly OQC and FQC inspection history")
@@ -7316,10 +7295,12 @@ def assembly_kpi_track_page(color: str) -> None:
             ("CombinedPassRate", "OQCxFQCPassRatePct"),
         ]:
             oqc_fqc_view[output_column] = (oqc_fqc_view[source_column] * 100).round(2)
+        oqc_fqc_view["OQCSampling"] = oqc_fqc_view["OQCInspected"].map(lambda value: "No sampling" if int(value) == 0 else "Sampled")
+        oqc_fqc_view["FQCSampling"] = oqc_fqc_view["FQCInspected"].map(lambda value: "No sampling" if int(value) == 0 else "Sampled")
         visible_columns = [
             "ID", "InspectionDate", "Model",
-            "OQCInspected", "OQCOK", "OQCNG", "OQCPassRatePct",
-            "FQCInspected", "FQCOK", "FQCNG", "FQCPassRatePct", "OQCxFQCPassRatePct",
+            "OQCSampling", "OQCInspected", "OQCOK", "OQCNG", "OQCPassRatePct",
+            "FQCSampling", "FQCInspected", "FQCOK", "FQCNG", "FQCPassRatePct", "OQCxFQCPassRatePct",
             "Notes", "CreatedAt",
         ]
         styled_table(
