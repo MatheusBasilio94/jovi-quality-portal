@@ -39,7 +39,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.40"
+APP_VERSION = "v0.5.41"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -93,6 +93,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.41", "Fixed Home KPI card HTML rendering and increased the target-status background contrast."),
     ("v0.5.40", "Strengthened KPI target cards with clear status backgrounds and alert or confirmation icons."),
     ("v0.5.39", "Added target-status treatment to KPI cards, clearly identifying indicators below target and showing their configured threshold."),
     ("v0.5.38", "Added a print-only weekly day-column selector so low-volume days can be omitted from the copied KPI table without changing weekly calculations."),
@@ -1086,8 +1087,8 @@ def apply_global_css() -> None:
             box-sizing: border-box;
             text-align: center;
         }
-        .metric-card.kpi-target-on { background:linear-gradient(135deg,#ECFDF3 0%,#F9FFFB 80%); border:1px solid #86D5A6; border-left:6px solid #0D7A45; position:relative; }
-        .metric-card.kpi-target-below { background:linear-gradient(135deg,#FFF0F0 0%,#FFF9F9 80%); border:1px solid #F39A9A; border-left:6px solid #DC2626; box-shadow:0 8px 22px rgba(220,38,38,.16); position:relative; }
+        .metric-card.kpi-target-on { background:#E8FAEF !important; border:1px solid #86D5A6; border-left:6px solid #0D7A45; position:relative; }
+        .metric-card.kpi-target-below { background:#FFE8E8 !important; border:1px solid #F39A9A; border-left:6px solid #DC2626; box-shadow:0 8px 22px rgba(220,38,38,.16); position:relative; }
         .metric-card.kpi-target-on .metric-value { color:#08703B !important; }
         .metric-card.kpi-target-below .metric-value { color:#B91C1C !important; }
         .metric-label { color: #0B1F3A; font-size: 0.78rem; font-weight: 900; text-transform: uppercase; }
@@ -1558,8 +1559,8 @@ def apply_global_css() -> None:
         .home-area-status { background:var(--area-soft); border-radius:99px; color:var(--area-color); font-size:.72rem; font-weight:900; padding:.36rem .62rem; white-space:nowrap; }
         .home-area-status.attention { background:#fff3df; color:#b76200; }
         .home-overview-kpi { background:#fbfdff; border:1px solid #e0e9f3; border-radius:.58rem; min-height:104px; padding:.62rem .68rem; position:relative; }
-        .home-overview-kpi.kpi-target-on { background:linear-gradient(135deg,#ECFDF3 0%,#F9FFFB 82%); border:1px solid #86D5A6; border-left:4px solid #0D7A45; }
-        .home-overview-kpi.kpi-target-below { background:linear-gradient(135deg,#FFF0F0 0%,#FFF9F9 82%); border:1px solid #F39A9A; border-left:4px solid #DC2626; }
+        .home-overview-kpi.kpi-target-on { background:#E8FAEF !important; border:1px solid #86D5A6; border-left:4px solid #0D7A45; }
+        .home-overview-kpi.kpi-target-below { background:#FFE8E8 !important; border:1px solid #F39A9A; border-left:4px solid #DC2626; }
         .home-overview-kpi.kpi-target-on .value { color:#08703B !important; }
         .home-overview-kpi.kpi-target-below .value { color:#B91C1C !important; }
         .home-overview-kpi .label { color:#526781; font-size:.7rem; font-weight:850; line-height:1.2; min-height:30px; }
@@ -6170,16 +6171,11 @@ def home_overview_kpi(
         target_icon = f'<div class="kpi-target-icon {state}" aria-label="{escape(status_label)}">{icon}</div>'
     card_class = f" kpi-target-{state}" if state is not None else ""
     st.markdown(
-        f"""
-        <div class="home-overview-kpi{card_class}" style="--kpi-color:{color};">
-            <div class="label">{escape(label)}</div>
-            <div class="value">{escape(value)}</div>
-            <div class="note">{escape(note)}</div>
-            {target_status}
-            {target_icon}
-            <div class="spark"></div>
-        </div>
-        """,
+        f'<div class="home-overview-kpi{card_class}" style="--kpi-color:{color};">'
+        f'<div class="label">{escape(label)}</div>'
+        f'<div class="value">{escape(value)}</div>'
+        f'<div class="note">{escape(note)}</div>{target_status}{target_icon}'
+        '<div class="spark"></div></div>',
         unsafe_allow_html=True,
     )
 
@@ -6529,15 +6525,10 @@ def smt_kpi_card(
         target_icon = f'<div class="kpi-target-icon {state}" aria-label="{escape(status_label)}">{icon}</div>'
     card_class = f" kpi-target-{state}" if state is not None else ""
     st.markdown(
-        f"""
-        <div class="metric-card{card_class}">
-            <div class="metric-label">{escape(label)}</div>
-            <div class="metric-value" style="color:{color};">{escape(value)}</div>
-            <div class="small-muted">{escape(note)}</div>
-            {target_status}
-            {target_icon}
-        </div>
-        """,
+        f'<div class="metric-card{card_class}">'
+        f'<div class="metric-label">{escape(label)}</div>'
+        f'<div class="metric-value" style="color:{color};">{escape(value)}</div>'
+        f'<div class="small-muted">{escape(note)}</div>{target_status}{target_icon}</div>',
         unsafe_allow_html=True,
     )
 
