@@ -39,7 +39,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.38"
+APP_VERSION = "v0.5.39"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -93,6 +93,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.39", "Added target-status treatment to KPI cards, clearly identifying indicators below target and showing their configured threshold."),
     ("v0.5.38", "Added a print-only weekly day-column selector so low-volume days can be omitted from the copied KPI table without changing weekly calculations."),
     ("v0.5.37", "Grouped Smart Report and KPI Review top issues by the repair remark, with the original phenomenon retained only when no repair conclusion exists."),
     ("v0.5.36", "Made Weekly and Monthly major-problem narratives rank defects within each KPI's own functional, appearance, Mando or SMT-duty scope."),
@@ -1084,8 +1085,20 @@ def apply_global_css() -> None:
             box-sizing: border-box;
             text-align: center;
         }
+        .metric-card.kpi-target-on {
+            border-top: 4px solid #0D7A45;
+            border-color: #91D7AF;
+        }
+        .metric-card.kpi-target-below {
+            border-top: 4px solid #DC2626;
+            border-color: #F1A4A4;
+            box-shadow: 0 8px 22px rgba(220, 38, 38, 0.14);
+        }
         .metric-label { color: #0B1F3A; font-size: 0.78rem; font-weight: 900; text-transform: uppercase; }
         .metric-value { color: #061B36; font-size: 1.65rem; font-weight: 900; margin-top: 0.15rem; }
+        .kpi-target-status { margin-top: 0.32rem; font-size: 0.71rem; font-weight: 900; letter-spacing: 0.01em; }
+        .kpi-target-status.on-target { color: #08703B; }
+        .kpi-target-status.below-target { color: #B91C1C; }
         .dashboard-kpi-chart-gap { height: 0.9rem; }
         div[data-testid="stPlotlyChart"] {
             background: #FFFFFF;
@@ -1546,9 +1559,14 @@ def apply_global_css() -> None:
         .home-area-status { background:var(--area-soft); border-radius:99px; color:var(--area-color); font-size:.72rem; font-weight:900; padding:.36rem .62rem; white-space:nowrap; }
         .home-area-status.attention { background:#fff3df; color:#b76200; }
         .home-overview-kpi { background:#fbfdff; border:1px solid #e0e9f3; border-radius:.58rem; min-height:104px; padding:.62rem .68rem; }
+        .home-overview-kpi.kpi-target-on { border-top:3px solid #0D7A45; border-color:#9bdab4; }
+        .home-overview-kpi.kpi-target-below { background:#fffafa; border-top:3px solid #DC2626; border-color:#f0aaaa; }
         .home-overview-kpi .label { color:#526781; font-size:.7rem; font-weight:850; line-height:1.2; min-height:30px; }
         .home-overview-kpi .value { color:var(--kpi-color); font-size:1.34rem; font-weight:900; letter-spacing:-.045em; line-height:1.06; margin:.22rem 0; }
         .home-overview-kpi .note { color:#77869a; font-size:.61rem; font-weight:700; line-height:1.2; min-height:25px; }
+        .home-overview-kpi .target-state { font-size:.58rem; font-weight:900; line-height:1.1; min-height:11px; }
+        .home-overview-kpi .target-state.on-target { color:#08703B; }
+        .home-overview-kpi .target-state.below-target { color:#B91C1C; }
         .home-overview-kpi .spark { border-radius:99px; height:3px; margin-top:.34rem; opacity:.8; background:linear-gradient(90deg,var(--kpi-color) 0 26%,transparent 26% 34%,var(--kpi-color) 34% 57%,transparent 57% 65%,var(--kpi-color) 65% 100%); }
         .home-overview-actions { margin-top:.1rem; }
         div[class*="st-key-analysis_period_home_overview"] { margin-bottom:.35rem; padding-top:.42rem; padding-bottom:.05rem; }
@@ -6128,14 +6146,31 @@ def smart_report_page() -> None:
         defect_action_report_page()
 
 
-def home_overview_kpi(label: str, value: str, note: str, color: str) -> None:
-    """Render one compact, neutral KPI tile for the Home triage view."""
+def home_overview_kpi(
+    label: str,
+    value: str,
+    note: str,
+    color: str,
+    *,
+    actual_value: float | None = None,
+    target_value: float | None = None,
+    target_direction: str | None = None,
+) -> None:
+    """Render one compact Home KPI tile, adding status only for configured targets."""
+    state = kpi_target_state(actual_value, target_value, target_direction)
+    target_status = ""
+    if state is not None:
+        target_label = fmt_ppm(target_value) + " PPM" if target_direction == "max" else fmt_kpi_pct(target_value)
+        status_label = "Below target" if state == "below-target" else "On target"
+        target_status = f'<div class="target-state {state}">{status_label} · {escape(target_label)}</div>'
+    card_class = f" kpi-target-{state}" if state is not None else ""
     st.markdown(
         f"""
-        <div class="home-overview-kpi" style="--kpi-color:{color};">
+        <div class="home-overview-kpi{card_class}" style="--kpi-color:{color};">
             <div class="label">{escape(label)}</div>
             <div class="value">{escape(value)}</div>
             <div class="note">{escape(note)}</div>
+            {target_status}
             <div class="spark"></div>
         </div>
         """,
@@ -6217,6 +6252,14 @@ def home_page() -> None:
         start_date = end_date = date.today()
         st.info("Upload the validated source files in Data Upload to populate the Home overview.")
 
+    configured_targets = {item["source"]: item for item in configured_kpi_directory()}
+    smt_function_target = configured_targets["smt_function"]["target"]
+    smt_process_target = configured_targets["smt_process"]["target"]
+    smt_oqc_target = configured_targets["smt_oqc"]["target"]
+    assembly_function_target = configured_targets["assembly_function"]["target"]
+    assembly_mando_target = configured_targets["assembly_mando"]["target"]
+    assembly_oqc_fqc_target = configured_targets["assembly_oqc_fqc"]["target"]
+
     if smt_context["ready"]:
         try:
             smt_analysis = smt_quality_dashboard.analyze_smt_quality_paths(
@@ -6233,9 +6276,21 @@ def home_page() -> None:
             smt_context.update(
                 totals=totals,
                 oqc_rate=oqc_rate,
-                attention=(
-                    totals.get("SMTProcessStatus") != "Valid"
-                    or (totals.get("SMTProcessNGRatePPM") or 0) > 5_000
+                attention=any(
+                    state == "below-target"
+                    for state in (
+                        kpi_target_state(
+                            totals.get("FunctionPassRate") if totals.get("FunctionPassStatus") == "Valid" else None,
+                            smt_function_target,
+                            "min",
+                        ),
+                        kpi_target_state(
+                            totals.get("SMTProcessNGRatePPM") if totals.get("SMTProcessStatus") == "Valid" else None,
+                            smt_process_target,
+                            "max",
+                        ),
+                        kpi_target_state(oqc_rate, smt_oqc_target, "min"),
+                    )
                 ),
             )
         except Exception as exc:
@@ -6253,7 +6308,14 @@ def home_page() -> None:
             assembly_context.update(
                 metrics=assembly_metrics,
                 oqc_fqc_rate=oqc_fqc_rate,
-                attention=(assembly_metrics.get("function_mando_ppm") or 0) > 5_000,
+                attention=any(
+                    state == "below-target"
+                    for state in (
+                        kpi_target_state(assembly_metrics.get("function_pass_rate"), assembly_function_target, "min"),
+                        kpi_target_state(assembly_metrics.get("function_mando_ppm"), assembly_mando_target, "max"),
+                        kpi_target_state(oqc_fqc_rate, assembly_oqc_fqc_target, "min"),
+                    )
+                ),
             )
         except Exception as exc:
             assembly_context.update(ready=False, error=str(exc))
@@ -6270,11 +6332,35 @@ def home_page() -> None:
                 with cards[0]:
                     home_overview_kpi("Input", fmt_int(totals.get("Produced", 0)), "Boards in selected period", "#0D7A45")
                 with cards[1]:
-                    home_overview_kpi("Functional Pass Rate", fmt_kpi_pct(totals.get("FunctionPassRate")) if function_valid else "N/A", "Functional failure result", "#0D7A45")
+                    home_overview_kpi(
+                        "Functional Pass Rate",
+                        fmt_kpi_pct(totals.get("FunctionPassRate")) if function_valid else "N/A",
+                        "Functional failure result",
+                        "#0D7A45",
+                        actual_value=totals.get("FunctionPassRate") if function_valid else None,
+                        target_value=smt_function_target,
+                        target_direction="min",
+                    )
                 with cards[2]:
-                    home_overview_kpi("Process NG PPM", f"{fmt_ppm(totals.get('SMTProcessNGRatePPM'))} PPM" if process_valid else "N/A", "Functional + appearance", "#0D7A45")
+                    home_overview_kpi(
+                        "Process NG PPM",
+                        f"{fmt_ppm(totals.get('SMTProcessNGRatePPM'))} PPM" if process_valid else "N/A",
+                        "Functional + appearance",
+                        "#0D7A45",
+                        actual_value=totals.get("SMTProcessNGRatePPM") if process_valid else None,
+                        target_value=smt_process_target,
+                        target_direction="max",
+                    )
                 with cards[3]:
-                    home_overview_kpi("OQC Pass Rate", fmt_kpi_pct(smt_context.get("oqc_rate")), "Awaiting manual input" if smt_context.get("oqc_rate") is None else "Manual inspection result", "#64748B")
+                    home_overview_kpi(
+                        "OQC Pass Rate",
+                        fmt_kpi_pct(smt_context.get("oqc_rate")),
+                        "Awaiting manual input" if smt_context.get("oqc_rate") is None else "Manual inspection result",
+                        "#64748B",
+                        actual_value=smt_context.get("oqc_rate"),
+                        target_value=smt_oqc_target,
+                        target_direction="min",
+                    )
             else:
                 cards = st.columns(4, gap="small")
                 for card, label in zip(cards, ("Input", "Functional Pass Rate", "Process NG PPM", "OQC Pass Rate")):
@@ -6295,11 +6381,35 @@ def home_page() -> None:
                 with cards[0]:
                     home_overview_kpi("Input", fmt_int(metrics.get("produced", 0)), "Boards in selected period", "#6532C8")
                 with cards[1]:
-                    home_overview_kpi("Functional Pass Rate", fmt_kpi_pct(metrics.get("function_pass_rate")), "Functional failure result", "#6532C8")
+                    home_overview_kpi(
+                        "Functional Pass Rate",
+                        fmt_kpi_pct(metrics.get("function_pass_rate")),
+                        "Functional failure result",
+                        "#6532C8",
+                        actual_value=metrics.get("function_pass_rate"),
+                        target_value=assembly_function_target,
+                        target_direction="min",
+                    )
                 with cards[2]:
-                    home_overview_kpi("Function Mando PPM", f"{fmt_ppm(metrics.get('function_mando_ppm'))} PPM" if metrics.get("function_mando_ppm") is not None else "N/A", "Functional Mando result", "#6532C8")
+                    home_overview_kpi(
+                        "Function Mando PPM",
+                        f"{fmt_ppm(metrics.get('function_mando_ppm'))} PPM" if metrics.get("function_mando_ppm") is not None else "N/A",
+                        "Functional Mando result",
+                        "#6532C8",
+                        actual_value=metrics.get("function_mando_ppm"),
+                        target_value=assembly_mando_target,
+                        target_direction="max",
+                    )
                 with cards[3]:
-                    home_overview_kpi("OQC / FQC Pass Rate", fmt_kpi_pct(assembly_context.get("oqc_fqc_rate")), "Awaiting manual input" if assembly_context.get("oqc_fqc_rate") is None else "Manual inspection result", "#64748B")
+                    home_overview_kpi(
+                        "OQC / FQC Pass Rate",
+                        fmt_kpi_pct(assembly_context.get("oqc_fqc_rate")),
+                        "Awaiting manual input" if assembly_context.get("oqc_fqc_rate") is None else "Manual inspection result",
+                        "#64748B",
+                        actual_value=assembly_context.get("oqc_fqc_rate"),
+                        target_value=assembly_oqc_fqc_target,
+                        target_direction="min",
+                    )
             else:
                 cards = st.columns(4, gap="small")
                 for card, label in zip(cards, ("Input", "Functional Pass Rate", "Function Mando PPM", "OQC / FQC Pass Rate")):
@@ -6376,13 +6486,46 @@ def fmt_kpi_pct(value: float | None) -> str:
     return f"{float(value) * 100:,.2f}%"
 
 
-def smt_kpi_card(label: str, value: str, note: str, color: str) -> None:
+def kpi_target_state(value: float | None, target: float | None, direction: str | None) -> str | None:
+    """Return the visual target state only when the KPI result can be evaluated."""
+    if value is None or target is None or direction not in {"min", "max"}:
+        return None
+    try:
+        numeric_value = float(value)
+        numeric_target = float(target)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(numeric_value) or not math.isfinite(numeric_target):
+        return None
+    return "below-target" if (numeric_value > numeric_target if direction == "max" else numeric_value < numeric_target) else "on-target"
+
+
+def smt_kpi_card(
+    label: str,
+    value: str,
+    note: str,
+    color: str,
+    *,
+    actual_value: float | None = None,
+    target_value: float | None = None,
+    target_direction: str | None = None,
+) -> None:
+    state = kpi_target_state(actual_value, target_value, target_direction)
+    target_status = ""
+    if state is not None:
+        target_label = fmt_ppm(target_value) + " PPM" if target_direction == "max" else fmt_kpi_pct(target_value)
+        status_label = "Below target" if state == "below-target" else "On target"
+        target_status = (
+            f'<div class="kpi-target-status {state}">{status_label} · Target {escape(target_label)}</div>'
+        )
+    card_class = f" kpi-target-{state}" if state is not None else ""
     st.markdown(
         f"""
-        <div class="metric-card">
+        <div class="metric-card{card_class}">
             <div class="metric-label">{escape(label)}</div>
             <div class="metric-value" style="color:{color};">{escape(value)}</div>
             <div class="small-muted">{escape(note)}</div>
+            {target_status}
         </div>
         """,
         unsafe_allow_html=True,
@@ -6748,6 +6891,11 @@ def smt_kpi_track_page(color: str) -> None:
     oqc_ok = int(oqc_records["OK"].sum()) if not oqc_records.empty else 0
     oqc_ng = int(oqc_records["NG"].sum()) if not oqc_records.empty else 0
     oqc_pass_rate = oqc_ok / oqc_inspected if oqc_inspected else None
+    configured_targets = {item["source"]: item for item in configured_kpi_directory()}
+    function_target = configured_targets["smt_function"]["target"]
+    process_target = configured_targets["smt_process"]["target"]
+    duty_target = configured_targets["smt_assembly_duty"]["target"]
+    oqc_target = configured_targets["smt_oqc"]["target"]
 
     period_note = f"{start_date.strftime('%d/%m/%Y')} to {end_date.strftime('%d/%m/%Y')}"
     cards = st.columns(4)
@@ -6757,6 +6905,9 @@ def smt_kpi_track_page(color: str) -> None:
             fmt_kpi_pct(smt_totals["FunctionPassRate"]) if function_pass_valid else "N/A",
             f"{fmt_int(smt_totals['FunctionalDefectPCBs'])} functional NG PCBs · {fmt_int(smt_totals['Produced'])} input",
             color,
+            actual_value=smt_totals["FunctionPassRate"] if function_pass_valid else None,
+            target_value=function_target,
+            target_direction="min",
         )
     with cards[1]:
         smt_kpi_card(
@@ -6768,6 +6919,9 @@ def smt_kpi_track_page(color: str) -> None:
                 else f"Input {fmt_int(smt_totals['Produced'])} < classified NG {fmt_int(smt_totals['ClassifiedDefectPCBs'])}"
             ),
             color,
+            actual_value=smt_totals["SMTProcessNGRatePPM"] if process_ng_valid else None,
+            target_value=process_target,
+            target_direction="max",
         )
     with cards[2]:
         smt_kpi_card(
@@ -6779,6 +6933,9 @@ def smt_kpi_track_page(color: str) -> None:
                 else assembly_error
             ),
             color,
+            actual_value=assembly_kpi["duty_ppm"] if assembly_kpi else None,
+            target_value=duty_target,
+            target_direction="max",
         )
     with cards[3]:
         smt_kpi_card(
@@ -6786,6 +6943,9 @@ def smt_kpi_track_page(color: str) -> None:
             fmt_kpi_pct(oqc_pass_rate),
             f"{fmt_int(oqc_ok)} OK · {fmt_int(oqc_ng)} NG · {fmt_int(oqc_inspected)} inspected" if oqc_inspected else "Awaiting manual OQC input",
             color,
+            actual_value=oqc_pass_rate,
+            target_value=oqc_target,
+            target_direction="min",
         )
 
     if assembly_error:
@@ -6855,7 +7015,7 @@ def smt_kpi_track_page(color: str) -> None:
         f"Function Pass Rate trend · {selected_trend_label}",
         color,
         "percent",
-        target_value=0.9956,
+        target_value=function_target,
         exception_rows=function_exceptions,
         exception_count_column="FunctionalDefectPCBs",
         exception_count_label="Functional NG PCBs",
@@ -6868,7 +7028,7 @@ def smt_kpi_track_page(color: str) -> None:
         f"SMT Process NG Rate trend · {selected_trend_label}",
         "#C2410C",
         "ppm",
-        target_value=5_000,
+        target_value=process_target,
         exception_rows=process_exceptions,
         exception_count_column="ClassifiedDefectPCBs",
         exception_count_label="Classified NG PCBs",
@@ -6896,7 +7056,7 @@ def smt_kpi_track_page(color: str) -> None:
             f"Assembly SMT Process Duty NG Rate trend · {assembly_kpi['trend_settings']['label']}",
             "#6532C8",
             "ppm",
-            target_value=700,
+            target_value=duty_target,
             exception_rows=assembly_duty_exceptions,
             exception_count_column="DutyDefects",
             exception_count_label="SMT-duty NG PCBs",
@@ -6914,7 +7074,7 @@ def smt_kpi_track_page(color: str) -> None:
             f"SMT OQC Pass Rate trend · {oqc_trend_settings['label']}",
             "#1D5FBF",
             "percent",
-            target_value=0.985,
+            target_value=oqc_target,
         )
     else:
         oqc_trend = pd.DataFrame()
@@ -7100,6 +7260,11 @@ def assembly_kpi_track_page(color: str) -> None:
     oqc_pass_rate = oqc_ok / oqc_inspected if oqc_inspected else None
     fqc_pass_rate = fqc_ok / fqc_inspected if fqc_inspected else None
     oqc_fqc_pass_rate = oqc_pass_rate * fqc_pass_rate if oqc_pass_rate is not None and fqc_pass_rate is not None else None
+    configured_targets = {item["source"]: item for item in configured_kpi_directory()}
+    function_target = configured_targets["assembly_function"]["target"]
+    appearance_target = configured_targets["assembly_appearance"]["target"]
+    mando_target = configured_targets["assembly_mando"]["target"]
+    oqc_fqc_target = configured_targets["assembly_oqc_fqc"]["target"]
     period_note = f"{start_date.strftime('%d/%m/%Y')} to {end_date.strftime('%d/%m/%Y')}"
 
     cards = st.columns(4)
@@ -7109,6 +7274,9 @@ def assembly_kpi_track_page(color: str) -> None:
             fmt_kpi_pct(metrics["function_pass_rate"]),
             f"{fmt_int(metrics['functional_records'])} PCBs funcionais NG · {fmt_int(metrics['produced'])} input" if functional_ready else "Classificação indisponível",
             color,
+            actual_value=metrics["function_pass_rate"] if functional_ready else None,
+            target_value=function_target,
+            target_direction="min",
         )
     with cards[1]:
         smt_kpi_card(
@@ -7116,6 +7284,9 @@ def assembly_kpi_track_page(color: str) -> None:
             fmt_kpi_pct(metrics["appearance_pass_rate"]),
             f"{fmt_int(metrics['appearance_records'])} PCBs de aparência NG · {fmt_int(metrics['produced'])} input" if appearance_ready else "Classificação indisponível",
             color,
+            actual_value=metrics["appearance_pass_rate"] if appearance_ready else None,
+            target_value=appearance_target,
+            target_direction="min",
         )
     with cards[2]:
         smt_kpi_card(
@@ -7123,6 +7294,9 @@ def assembly_kpi_track_page(color: str) -> None:
             f"{fmt_ppm(metrics['function_mando_ppm'])} PPM" if metrics["function_mando_ppm"] is not None else "N/A",
             f"{fmt_int(metrics['functional_mando_pcbs'])} functional Mando NG PCBs" if functional_ready else "Awaiting Functional Failure stations",
             color,
+            actual_value=metrics["function_mando_ppm"] if functional_ready else None,
+            target_value=mando_target,
+            target_direction="max",
         )
     with cards[3]:
         smt_kpi_card(
@@ -7130,6 +7304,9 @@ def assembly_kpi_track_page(color: str) -> None:
             fmt_kpi_pct(oqc_fqc_pass_rate),
             f"OQC {fmt_kpi_pct(oqc_pass_rate)} × FQC {fmt_kpi_pct(fqc_pass_rate)}" if oqc_fqc_pass_rate is not None else "Awaiting manual OQC and FQC input",
             color,
+            actual_value=oqc_fqc_pass_rate,
+            target_value=oqc_fqc_target,
+            target_direction="min",
         )
 
     formula_rows = [
@@ -7220,7 +7397,7 @@ def assembly_kpi_track_page(color: str) -> None:
     function_chart = (
         smt_kpi_line_chart(
             trend, "Period", "FunctionPassRate", f"Function Pass Rate trend · {trend_label}", color, "percent",
-            target_value=0.9905,
+            target_value=function_target,
             exception_rows=function_exceptions,
             exception_count_column="FunctionalNGRecords",
             exception_count_label="Functional NG PCBs",
@@ -7231,7 +7408,7 @@ def assembly_kpi_track_page(color: str) -> None:
     appearance_chart = (
         smt_kpi_line_chart(
             trend, "Period", "AppearanceTotalPassRate", f"Appearance Total Pass Rate trend · {trend_label}", "#1D5FBF", "percent",
-            target_value=0.9904,
+            target_value=appearance_target,
             exception_rows=appearance_exceptions,
             exception_count_column="AppearanceNGRecords",
             exception_count_label="Appearance NG PCBs",
@@ -7242,7 +7419,7 @@ def assembly_kpi_track_page(color: str) -> None:
     mando_chart = (
         smt_kpi_line_chart(
             trend, "Period", "FunctionMandoPPM", f"Function Mando trend · {trend_label}", "#C2410C", "ppm",
-            target_value=3_600,
+            target_value=mando_target,
             exception_rows=mando_exceptions,
             exception_count_column="FunctionMandoPCBs",
             exception_count_label="Function Mando NG PCBs",
@@ -7260,7 +7437,7 @@ def assembly_kpi_track_page(color: str) -> None:
             f"Assembly OQC × FQC Pass Rate trend · {oqc_fqc_settings['label']}",
             "#0D7A45",
             "percent",
-            target_value=0.987,
+            target_value=oqc_fqc_target,
         )
     dense_trends = max(len(trend), len(oqc_fqc_records)) > 10
     charts = [
