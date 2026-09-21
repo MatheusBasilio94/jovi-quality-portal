@@ -39,7 +39,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.46"
+APP_VERSION = "v0.5.47"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -93,6 +93,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.47", "Restricted Analysis period controls to their visible fields, removing the unused clickable row area."),
     ("v0.5.46", "Balanced Home heading and filter spacing while retaining the single-screen layout."),
     ("v0.5.45", "Compacted Home heading, filters and page spacing for a single-screen overview."),
     ("v0.5.44", "Aligned Home KPI card heights and added spacing above navigation shortcuts."),
@@ -671,8 +672,9 @@ def apply_global_css() -> None:
             box-shadow: 0 5px 14px rgba(37, 99, 235, 0.28);
         }
         div[class*="st-key-analysis_period_"] {
-            max-width: 760px;
+            max-width: 455px;
             margin: 0 0 0.45rem 0;
+            width: 100%;
         }
         div[class*="st-key-analysis_period_"] [data-testid="stHorizontalBlock"] {
             align-items: end;
@@ -2428,7 +2430,7 @@ def analysis_period_control(
         st.session_state[range_key] = initial_range
 
     with st.container(key=f"analysis_period_{navigation_key(key)}"):
-        preset_col, range_col, _ = st.columns([0.48, 0.82, 0.95], gap="small")
+        preset_col, range_col = st.columns([0.48, 0.82], gap="small")
         with preset_col:
             st.selectbox(
                 "Quick selection",
