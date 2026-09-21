@@ -39,7 +39,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.35"
+APP_VERSION = "v0.5.36"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -93,6 +93,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.36", "Made Weekly and Monthly major-problem narratives rank defects within each KPI's own functional, appearance, Mando or SMT-duty scope."),
     ("v0.5.35", "Fixed manual OQC/FQC history rendering for zero-sampling records."),
     ("v0.5.34", "Aligned Monthly KPI Review with KPI Track calculations, so September uses the uploaded source data instead of rejecting a month when its final input day has no defect-row timestamp."),
     ("v0.5.33", "Accepted explicit zero-sampling OQC/FQC records while keeping their pass rates unavailable rather than treating them as 100%."),
@@ -5385,6 +5386,45 @@ def smart_report_assembly_data(start_date: date, end_date: date) -> tuple[list[d
     return smart_report_candidates(confirmed, produced), produced, repeated, ""
 
 
+def smart_report_kpi_candidates(start_date: date, end_date: date) -> dict[str, list[dict]]:
+    """Rank defect phenomena within each KPI's actual calculation scope."""
+    import pandas as pd
+    from tools import smt_quality_dashboard
+    from tools.smart_report_rules import kpi_defect_scopes
+
+    candidates = {item["source"]: [] for item in WEEKLY_KPI_DIRECTORY}
+    smt_confirmed = pd.DataFrame()
+    assembly_confirmed = pd.DataFrame()
+    smt_produced = 0
+    assembly_produced = 0
+    try:
+        input_paths, defect_paths = smt_quality_dashboard.stored_smt_sources()
+        if input_paths and defect_paths:
+            analysis = smt_quality_dashboard.analyze_smt_quality_paths(
+                tuple(smt_quality_dashboard.path_signature(path) for path in input_paths),
+                tuple(smt_quality_dashboard.path_signature(path) for path in defect_paths),
+                start_date.isoformat(),
+                end_date.isoformat(),
+                smt_quality_dashboard.SMT_FAILURE_RULE_VERSION,
+            )
+            smt_confirmed = analysis["covered_raw"].copy()
+            smt_confirmed = smt_confirmed[~smt_confirmed["IsRejudgeOK"].fillna(False).astype(bool)]
+            smt_produced = int(analysis["selected_input"]["Input"].sum())
+    except Exception:
+        pass
+    try:
+        assembly_metrics = calculate_assembly_kpi_metrics(start_date, end_date)
+        assembly_confirmed = assembly_metrics["defects"].copy()
+        assembly_produced = int(assembly_metrics["produced"])
+    except Exception:
+        pass
+
+    for source, frame in kpi_defect_scopes(smt_confirmed, assembly_confirmed).items():
+        produced = assembly_produced if source.startswith("assembly_") or source == "smt_assembly_duty" else smt_produced
+        candidates[source] = smart_report_candidates(frame, produced)
+    return candidates
+
+
 def smart_report_action_defaults(actions: dict[str, dict], item: dict) -> dict:
     return actions.get(
         item["key"],
@@ -5865,7 +5905,7 @@ def kpi_review_email(
     directory: tuple[dict, ...],
     previous_totals: dict[str, float | None],
     totals: dict[str, float | None],
-    candidates: dict[str, list[dict]],
+    candidates_by_source: dict[str, list[dict]],
 ) -> str:
     below = [item for item in directory if weekly_kpi_is_below_target(totals.get(item["source"]), item["target"], item["direction"])]
     available = [item for item in directory if totals.get(item["source"]) is not None]
@@ -5879,7 +5919,7 @@ def kpi_review_email(
         for index, item in enumerate(below, start=1):
             value = totals.get(item["source"])
             gap = (float(value) - item["target"]) if item["direction"] == "max" else (item["target"] - float(value))
-            top = candidates.get(item["area"], [])
+            top = candidates_by_source.get(item["source"], [])
             description = f"Top confirmed defect: {top[0]['defect']} ({top[0]['cases']} cases)" if top else "Describe the main defect and containment."
             lines.extend([
                 f"2.{index}. {item['area']} {item['kpi']}",
@@ -5967,12 +6007,7 @@ def weekly_kpi_review_page() -> None:
     for area, error in previous_errors.items():
         st.info(f"Previous week · {area}: {error}")
 
-    candidates = {}
-    for area, loader in (("SMT", smart_report_smt_data), ("Assembly", smart_report_assembly_data)):
-        try:
-            candidates[area] = loader(start_date, week_end)[0]
-        except Exception:
-            candidates[area] = []
+    candidates_by_source = smart_report_kpi_candidates(start_date, week_end)
     below = [item for item in directory if weekly_kpi_is_below_target(totals.get(item["source"]), item["target"], item["direction"])]
     available = [item for item in directory if totals.get(item["source"]) is not None]
     st.markdown("### Major problems and action follow-up")
@@ -5980,12 +6015,12 @@ def weekly_kpi_review_page() -> None:
         st.info("No KPI source data is available for the selected week.")
     elif below:
         for item in below:
-            top = candidates.get(item["area"], [])
+            top = candidates_by_source.get(item["source"], [])
             defect = f" Top defect: {top[0]['defect']} ({top[0]['cases']} cases)." if top else ""
             st.warning(f"**{item['area']} · {item['kpi']}** is below target. Responsible: {item['gbr']} / {item['jovi']}.{defect}")
     else:
         st.success("All available KPIs achieved the configured targets in the selected week.")
-    email_text = kpi_review_email(week_label, "week", directory, previous_totals, totals, candidates)
+    email_text = kpi_review_email(week_label, "week", directory, previous_totals, totals, candidates_by_source)
     with st.expander("Copyable weekly e-mail", expanded=True):
         st.code(email_text, language=None)
     st.caption("Targets match the validated KPI Track configuration. Empty cells indicate that the corresponding source or manual OQC/FQC record has not yet been loaded.")
@@ -6044,10 +6079,7 @@ def monthly_kpi_review_page() -> None:
     if previous_errors.get(area):
         st.info(f"Previous month · {area}: {previous_errors[area]}")
 
-    try:
-        candidates = {area: (smart_report_smt_data if area == "SMT" else smart_report_assembly_data)(start_date, end_date)[0]}
-    except Exception:
-        candidates = {area: []}
+    candidates_by_source = smart_report_kpi_candidates(start_date, end_date)
     below = [item for item in directory if weekly_kpi_is_below_target(totals.get(item["source"]), item["target"], item["direction"])]
     available = [item for item in directory if totals.get(item["source"]) is not None]
     st.markdown("### Major problems and action follow-up")
@@ -6055,12 +6087,12 @@ def monthly_kpi_review_page() -> None:
         st.info(f"No {area} KPI source data is available for {period_label}.")
     elif below:
         for item in below:
-            top = candidates[area]
+            top = candidates_by_source.get(item["source"], [])
             defect = f" Top defect: {top[0]['defect']} ({top[0]['cases']} cases)." if top else ""
             st.warning(f"**{item['kpi']}** is below target. Responsible: {item['gbr']} / {item['jovi']}.{defect}")
     else:
         st.success(f"All available {area} KPIs achieved the configured targets in {period_label}.")
-    email_text = kpi_review_email(period_label, "month", directory, previous_totals, totals, candidates)
+    email_text = kpi_review_email(period_label, "month", directory, previous_totals, totals, candidates_by_source)
     with st.expander("Copyable monthly e-mail", expanded=True):
         st.code(email_text, language=None)
     st.caption("Targets and responsible owners use the shared directory in Weekly KPI Review. The monthly report shows only the selected area.")
