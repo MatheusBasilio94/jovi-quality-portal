@@ -39,7 +39,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.49"
+APP_VERSION = "v0.5.50"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -93,6 +93,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.50", "Replaced the stretched Analysis period date trigger with a fixed-width popover button to prevent row-wide calendar activation."),
     ("v0.5.49", "Set explicit Streamlit widths for Analysis period widgets so their interactive area matches the visible controls."),
     ("v0.5.48", "Constrained Analysis period pointer events to the visible date field so adjacent whitespace cannot open the calendar."),
     ("v0.5.47", "Restricted Analysis period controls to their visible fields, removing the unused clickable row area."),
@@ -680,6 +681,31 @@ def apply_global_css() -> None:
         }
         div[class*="st-key-analysis_period_"] [data-testid="stHorizontalBlock"] {
             align-items: end;
+        }
+        div[class*="st-key-analysis_period_"] [data-testid="stPopoverButton"] {
+            align-items: center;
+            background: linear-gradient(135deg, #2F80ED 0%, #1D5FBF 100%) !important;
+            border: 1px solid #4B8DEF !important;
+            border-radius: 0.48rem !important;
+            box-shadow: 0 4px 12px rgba(8, 45, 97, 0.18);
+            color: #F8FBFF !important;
+            justify-content: center;
+            min-height: 40px;
+            padding: 0.45rem 0.7rem;
+        }
+        div[class*="st-key-analysis_period_"] [data-testid="stPopoverButton"]:hover {
+            border-color: #93C5FD !important;
+            box-shadow: 0 5px 14px rgba(37, 99, 235, 0.28);
+        }
+        div[class*="st-key-analysis_period_"] [data-testid="stPopoverButton"] > div,
+        div[class*="st-key-analysis_period_"] [data-testid="stPopoverButton"] p {
+            color: #F8FBFF !important;
+            justify-content: center;
+            text-align: center;
+            width: 100%;
+        }
+        div[class*="st-key-analysis_period_"] [data-testid="stPopoverButton"] [data-testid="stIconMaterial"] {
+            display: none;
         }
         /* Streamlit's date widget can retain a transparent click target around
            the visible field. Keep the surrounding control inert and reactivate
@@ -2453,16 +2479,23 @@ def analysis_period_control(
                 width=160,
             )
         with range_col:
-            selected_period = st.date_input(
-                "Analysis period",
-                min_value=minimum_date,
-                max_value=maximum_date,
-                format="DD/MM/YYYY",
-                key=range_key,
-                on_change=_remember_period_range,
-                args=(range_key, remembered_range_key),
+            period_label = f"{initial_range[0]:%d/%m/%Y}  –  {initial_range[1]:%d/%m/%Y}"
+            with st.popover(
+                period_label,
+                key=f"{key}_calendar_popover",
                 width=270,
-            )
+            ):
+                selected_period = st.date_input(
+                    "Analysis period",
+                    min_value=minimum_date,
+                    max_value=maximum_date,
+                    format="DD/MM/YYYY",
+                    key=range_key,
+                    on_change=_remember_period_range,
+                    args=(range_key, remembered_range_key),
+                    width=270,
+                    label_visibility="collapsed",
+                )
 
     if isinstance(selected_period, (tuple, list)) and len(selected_period) >= 2:
         start_date, end_date = selected_period[0], selected_period[1]
