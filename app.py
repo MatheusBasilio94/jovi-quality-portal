@@ -39,7 +39,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.43"
+APP_VERSION = "v0.5.44"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -93,6 +93,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.44", "Aligned Home KPI card heights and added spacing above navigation shortcuts."),
     ("v0.5.43", "Fixed mismatched KPI status CSS classes and reserved space for status icons."),
     ("v0.5.42", "Applied target-status colors directly to KPI card markup so the Streamlit theme cannot override the alert backgrounds."),
     ("v0.5.41", "Fixed Home KPI card HTML rendering and increased the target-status background contrast."),
@@ -1563,7 +1564,7 @@ def apply_global_css() -> None:
         .home-area-heading small { color:#65758e; display:block; font-size:.76rem; font-weight:700; margin-top:.1rem; }
         .home-area-status { background:var(--area-soft); border-radius:99px; color:var(--area-color); font-size:.72rem; font-weight:900; padding:.36rem .62rem; white-space:nowrap; }
         .home-area-status.attention { background:#fff3df; color:#b76200; }
-        .home-overview-kpi { background:#fbfdff; border:1px solid #e0e9f3; border-radius:.58rem; min-height:104px; padding:.62rem .68rem; position:relative; }
+        .home-overview-kpi { background:#fbfdff; border:1px solid #e0e9f3; border-radius:.58rem; height:9.5rem; box-sizing:border-box; display:flex; flex-direction:column; margin-bottom:.75rem; padding:.62rem .68rem; position:relative; }
         .home-overview-kpi.kpi-target-on { background:#E8FAEF !important; border:1px solid #86D5A6; border-left:4px solid #0D7A45; }
         .home-overview-kpi.kpi-target-below { background:#FFE8E8 !important; border:1px solid #F39A9A; border-left:4px solid #DC2626; }
         .home-overview-kpi.kpi-target-on .value { color:#08703B !important; }
@@ -1575,7 +1576,7 @@ def apply_global_css() -> None:
         .home-overview-kpi .target-state.on-target { color:#08703B; }
         .home-overview-kpi .target-state.below-target { color:#B91C1C; }
         .home-overview-kpi .kpi-target-icon { font-size:.65rem; height:1.15rem; right:.45rem; top:.42rem; width:1.15rem; }
-        .home-overview-kpi .spark { border-radius:99px; height:3px; margin-top:.34rem; opacity:.8; background:linear-gradient(90deg,var(--kpi-color) 0 26%,transparent 26% 34%,var(--kpi-color) 34% 57%,transparent 57% 65%,var(--kpi-color) 65% 100%); }
+        .home-overview-kpi .spark { border-radius:99px; height:3px; flex-shrink:0; margin-top:auto; opacity:.8; background:linear-gradient(90deg,var(--kpi-color) 0 26%,transparent 26% 34%,var(--kpi-color) 34% 57%,transparent 57% 65%,var(--kpi-color) 65% 100%); }
         .home-overview-actions { margin-top:.1rem; }
         div[class*="st-key-analysis_period_home_overview"] { margin-bottom:.35rem; padding-top:.42rem; padding-bottom:.05rem; }
         /* Streamlit applies a text-fill color to date inputs; override it so the
