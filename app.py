@@ -39,7 +39,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.34"
+APP_VERSION = "v0.5.35"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -93,6 +93,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.35", "Fixed manual OQC/FQC history rendering for zero-sampling records."),
     ("v0.5.34", "Aligned Monthly KPI Review with KPI Track calculations, so September uses the uploaded source data instead of rejecting a month when its final input day has no defect-row timestamp."),
     ("v0.5.33", "Accepted explicit zero-sampling OQC/FQC records while keeping their pass rates unavailable rather than treating them as 100%."),
     ("v0.5.32", "Corrected Pareto cumulative lines when long defect labels share the same shortened axis text."),
@@ -6954,7 +6955,9 @@ def smt_kpi_track_page(color: str) -> None:
         oqc_view = oqc_records.copy()
         oqc_view["InspectionDate"] = oqc_view["InspectionDate"].dt.strftime("%d/%m/%Y")
         oqc_view["CreatedAt"] = pd.to_datetime(oqc_view["CreatedAt"], errors="coerce").dt.strftime("%d/%m/%y %H:%M")
-        oqc_view["PassRatePct"] = (oqc_view["PassRate"] * 100).round(2)
+        oqc_view["PassRatePct"] = (
+            pd.to_numeric(oqc_view["PassRate"], errors="coerce").astype("float64") * 100
+        ).round(2)
         oqc_view["Sampling"] = oqc_view["Inspected"].map(lambda value: "No sampling" if int(value) == 0 else "Sampled")
         styled_table(
             oqc_view[["ID", "InspectionDate", "Model", "Sampling", "Inspected", "OK", "NG", "PassRatePct", "Notes", "CreatedAt"]],
@@ -7298,7 +7301,9 @@ def assembly_kpi_track_page(color: str) -> None:
             ("FQCPassRate", "FQCPassRatePct"),
             ("CombinedPassRate", "OQCxFQCPassRatePct"),
         ]:
-            oqc_fqc_view[output_column] = (oqc_fqc_view[source_column] * 100).round(2)
+            oqc_fqc_view[output_column] = (
+                pd.to_numeric(oqc_fqc_view[source_column], errors="coerce").astype("float64") * 100
+            ).round(2)
         oqc_fqc_view["OQCSampling"] = oqc_fqc_view["OQCInspected"].map(lambda value: "No sampling" if int(value) == 0 else "Sampled")
         oqc_fqc_view["FQCSampling"] = oqc_fqc_view["FQCInspected"].map(lambda value: "No sampling" if int(value) == 0 else "Sampled")
         visible_columns = [
