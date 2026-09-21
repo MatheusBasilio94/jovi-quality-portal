@@ -39,7 +39,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.47"
+APP_VERSION = "v0.5.48"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -93,6 +93,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.48", "Constrained Analysis period pointer events to the visible date field so adjacent whitespace cannot open the calendar."),
     ("v0.5.47", "Restricted Analysis period controls to their visible fields, removing the unused clickable row area."),
     ("v0.5.46", "Balanced Home heading and filter spacing while retaining the single-screen layout."),
     ("v0.5.45", "Compacted Home heading, filters and page spacing for a single-screen overview."),
@@ -678,6 +679,16 @@ def apply_global_css() -> None:
         }
         div[class*="st-key-analysis_period_"] [data-testid="stHorizontalBlock"] {
             align-items: end;
+        }
+        /* Streamlit's date widget can retain a transparent click target around
+           the visible field. Keep the surrounding control inert and reactivate
+           only the date field itself. */
+        div[class*="st-key-analysis_period_"] [data-testid="stDateInput"] {
+            pointer-events: none;
+        }
+        div[class*="st-key-analysis_period_"] [data-testid="stDateInputField"],
+        div[class*="st-key-analysis_period_"] [data-testid="stDateInputField"] * {
+            pointer-events: auto;
         }
         div[class*="st-key-analysis_period_"] [data-testid="stSelectbox"] label,
         div[class*="st-key-analysis_period_"] [data-testid="stDateInput"] label {
