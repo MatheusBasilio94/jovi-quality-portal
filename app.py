@@ -39,7 +39,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.45"
+APP_VERSION = "v0.5.46"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -93,6 +93,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.46", "Balanced Home heading and filter spacing while retaining the single-screen layout."),
     ("v0.5.45", "Compacted Home heading, filters and page spacing for a single-screen overview."),
     ("v0.5.44", "Aligned Home KPI card heights and added spacing above navigation shortcuts."),
     ("v0.5.43", "Fixed mismatched KPI status CSS classes and reserved space for status icons."),
@@ -1557,9 +1558,9 @@ def apply_global_css() -> None:
         .smart-preview-copy { background:#F7FCF9; border:1px solid #B9DEC7; border-radius:.58rem; color:#173421; font-family:Consolas,"Courier New",monospace; font-size:.75rem; font-weight:650; line-height:1.55; min-height:248px; padding:.85rem; white-space:pre-wrap; }
         .smart-preview-footnote { color:#63728A; font-size:.73rem; font-weight:700; margin:.72rem 0 .2rem; }
         /* Home overview: independent operational summary for SMT and Assembly. */
-        .home-overview-head { margin:0; }
+        .home-overview-head { margin:.75rem 0 .6rem; }
         [data-testid="stMainBlockContainer"]:has(.home-overview-head) { padding-top:.5rem !important; padding-bottom:.5rem !important; }
-        [data-testid="stMainBlockContainer"]:has(.home-overview-head) > [data-testid="stVerticalBlock"] { gap:.45rem !important; }
+        [data-testid="stMainBlockContainer"]:has(.home-overview-head) > [data-testid="stVerticalBlock"] { gap:.75rem !important; }
         .home-overview-head h1 { color:#081f45; font-size:1.72rem; letter-spacing:-.045em; line-height:1.05; margin:0; padding:0 !important; }
         .home-area-shell { background:#fff; border:1px solid #dbe6f2; border-top:5px solid var(--area-color); border-radius:.85rem; box-shadow:0 7px 19px rgba(16,42,78,.07); margin:.15rem 0 .7rem; overflow:hidden; padding:1rem; }
         .home-area-heading { align-items:center; display:flex; gap:.65rem; justify-content:space-between; margin:0 0 .55rem; }
@@ -1581,7 +1582,7 @@ def apply_global_css() -> None:
         .home-overview-kpi .kpi-target-icon { font-size:.65rem; height:1.15rem; right:.45rem; top:.42rem; width:1.15rem; }
         .home-overview-kpi .spark { border-radius:99px; height:3px; flex-shrink:0; margin-top:auto; opacity:.8; background:linear-gradient(90deg,var(--kpi-color) 0 26%,transparent 26% 34%,var(--kpi-color) 34% 57%,transparent 57% 65%,var(--kpi-color) 65% 100%); }
         .home-overview-actions { margin-top:.1rem; }
-        div[class*="st-key-analysis_period_home_overview"] { margin-top:0 !important; margin-bottom:.15rem; padding-top:0 !important; padding-bottom:0; }
+        div[class*="st-key-analysis_period_home_overview"] { margin-top:0 !important; margin-bottom:.35rem; padding-top:.25rem !important; padding-bottom:.15rem; }
         /* Streamlit applies a text-fill color to date inputs; override it so the
            selected range has the same white contrast as the quick selector. */
         div[class*="st-key-analysis_period_"] [data-testid="stDateInput"] input,
