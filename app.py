@@ -39,7 +39,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.42"
+APP_VERSION = "v0.5.43"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -93,6 +93,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.43", "Fixed mismatched KPI status CSS classes and reserved space for status icons."),
     ("v0.5.42", "Applied target-status colors directly to KPI card markup so the Streamlit theme cannot override the alert backgrounds."),
     ("v0.5.41", "Fixed Home KPI card HTML rendering and increased the target-status background contrast."),
     ("v0.5.40", "Strengthened KPI target cards with clear status backgrounds and alert or confirmation icons."),
@@ -1097,6 +1098,9 @@ def apply_global_css() -> None:
         .kpi-target-status { margin-top: 0.32rem; font-size: 0.71rem; font-weight: 900; letter-spacing: 0.01em; }
         .kpi-target-status.on-target { color: #08703B; }
         .kpi-target-status.below-target { color: #B91C1C; }
+        .metric-card.kpi-target-on .metric-label, .metric-card.kpi-target-below .metric-label { padding-right:1.8rem; text-align:left; }
+        .metric-card.kpi-target-on, .metric-card.kpi-target-below { text-align:left; }
+        .home-overview-kpi.kpi-target-on .label, .home-overview-kpi.kpi-target-below .label { padding-right:1.25rem; }
         .kpi-target-icon { align-items:center; border-radius:50%; color:#fff; display:flex; font-size:.92rem; font-weight:950; height:1.48rem; justify-content:center; line-height:1; position:absolute; right:.72rem; top:.7rem; width:1.48rem; }
         .kpi-target-icon.on-target { background:#0D7A45; }
         .kpi-target-icon.below-target { background:#DC2626; box-shadow:0 3px 8px rgba(185,28,28,.28); }
@@ -6178,7 +6182,7 @@ def home_overview_kpi(
         else:
             card_style = "background:#E8FAEF !important;border:1px solid #86D5A6 !important;border-left:4px solid #0D7A45 !important;"
             value_style = "color:#08703B !important;"
-    card_class = f" kpi-target-{state}" if state is not None else ""
+    card_class = (" kpi-target-below" if state == "below-target" else " kpi-target-on") if state is not None else ""
     st.markdown(
         f'<div class="home-overview-kpi{card_class}" style="--kpi-color:{color};{card_style}">'
         f'<div class="label">{escape(label)}</div>'
@@ -6540,7 +6544,7 @@ def smt_kpi_card(
         else:
             card_style = "background:#E8FAEF !important;border:1px solid #86D5A6 !important;border-left:6px solid #0D7A45 !important;"
             value_style = "color:#08703B !important;"
-    card_class = f" kpi-target-{state}" if state is not None else ""
+    card_class = (" kpi-target-below" if state == "below-target" else " kpi-target-on") if state is not None else ""
     st.markdown(
         f'<div class="metric-card{card_class}" style="{card_style}">'
         f'<div class="metric-label">{escape(label)}</div>'
