@@ -39,7 +39,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.50"
+APP_VERSION = "v0.5.51"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -93,6 +93,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.51", "Freed manual SMT and Assembly OQC/FQC inspection dates from the uploaded production period, defaulting to the latest available day."),
     ("v0.5.50", "Replaced the stretched Analysis period date trigger with a fixed-width popover button to prevent row-wide calendar activation."),
     ("v0.5.49", "Set explicit Streamlit widths for Analysis period widgets so their interactive area matches the visible controls."),
     ("v0.5.48", "Constrained Analysis period pointer events to the visible date field so adjacent whitespace cannot open the calendar."),
@@ -7199,13 +7200,12 @@ def smt_kpi_track_page(color: str) -> None:
 
     st.markdown("### Manual SMT OQC input")
     with st.form("smt_oqc_input_form", clear_on_submit=True):
+        manual_oqc_default_date = max(end_date, date.today())
         form_columns = st.columns(5)
         with form_columns[0]:
             oqc_date = st.date_input(
                 "Inspection date",
-                value=end_date,
-                min_value=start_date,
-                max_value=end_date,
+                value=manual_oqc_default_date,
                 key="smt_oqc_inspection_date",
             )
         with form_columns[1]:
@@ -7543,13 +7543,12 @@ def assembly_kpi_track_page(color: str) -> None:
 
     st.markdown("### Manual Assembly OQC and FQC input")
     with st.form("assembly_oqc_fqc_input_form", clear_on_submit=True):
+        manual_inspection_default_date = max(end_date, date.today())
         header_columns = st.columns(2)
         with header_columns[0]:
             inspection_date = st.date_input(
                 "Inspection date",
-                value=end_date,
-                min_value=start_date,
-                max_value=end_date,
+                value=manual_inspection_default_date,
                 key="assembly_oqc_fqc_inspection_date",
             )
         with header_columns[1]:
