@@ -39,7 +39,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.51"
+APP_VERSION = "v0.5.52"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -93,6 +93,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.52", "Restored the single Analysis period date field and constrained its Streamlit container to the visible control width."),
     ("v0.5.51", "Freed manual SMT and Assembly OQC/FQC inspection dates from the uploaded production period, defaulting to the latest available day."),
     ("v0.5.50", "Replaced the stretched Analysis period date trigger with a fixed-width popover button to prevent row-wide calendar activation."),
     ("v0.5.49", "Set explicit Streamlit widths for Analysis period widgets so their interactive area matches the visible controls."),
@@ -682,41 +683,6 @@ def apply_global_css() -> None:
         }
         div[class*="st-key-analysis_period_"] [data-testid="stHorizontalBlock"] {
             align-items: end;
-        }
-        div[class*="st-key-analysis_period_"] [data-testid="stPopoverButton"] {
-            align-items: center;
-            background: linear-gradient(135deg, #2F80ED 0%, #1D5FBF 100%) !important;
-            border: 1px solid #4B8DEF !important;
-            border-radius: 0.48rem !important;
-            box-shadow: 0 4px 12px rgba(8, 45, 97, 0.18);
-            color: #F8FBFF !important;
-            justify-content: center;
-            min-height: 40px;
-            padding: 0.45rem 0.7rem;
-        }
-        div[class*="st-key-analysis_period_"] [data-testid="stPopoverButton"]:hover {
-            border-color: #93C5FD !important;
-            box-shadow: 0 5px 14px rgba(37, 99, 235, 0.28);
-        }
-        div[class*="st-key-analysis_period_"] [data-testid="stPopoverButton"] > div,
-        div[class*="st-key-analysis_period_"] [data-testid="stPopoverButton"] p {
-            color: #F8FBFF !important;
-            justify-content: center;
-            text-align: center;
-            width: 100%;
-        }
-        div[class*="st-key-analysis_period_"] [data-testid="stPopoverButton"] [data-testid="stIconMaterial"] {
-            display: none;
-        }
-        /* Streamlit's date widget can retain a transparent click target around
-           the visible field. Keep the surrounding control inert and reactivate
-           only the date field itself. */
-        div[class*="st-key-analysis_period_"] [data-testid="stDateInput"] {
-            pointer-events: none;
-        }
-        div[class*="st-key-analysis_period_"] [data-testid="stDateInputField"],
-        div[class*="st-key-analysis_period_"] [data-testid="stDateInputField"] * {
-            pointer-events: auto;
         }
         div[class*="st-key-analysis_period_"] [data-testid="stSelectbox"] label,
         div[class*="st-key-analysis_period_"] [data-testid="stDateInput"] label {
@@ -2468,8 +2434,8 @@ def analysis_period_control(
     if range_key not in st.session_state:
         st.session_state[range_key] = initial_range
 
-    with st.container(key=f"analysis_period_{navigation_key(key)}"):
-        preset_col, range_col = st.columns([0.48, 0.82], gap="small")
+    with st.container(key=f"analysis_period_{navigation_key(key)}", width=455):
+        preset_col, range_col = st.columns([0.48, 0.82], gap="small", width=455)
         with preset_col:
             st.selectbox(
                 "Quick selection",
@@ -2480,23 +2446,16 @@ def analysis_period_control(
                 width=160,
             )
         with range_col:
-            period_label = f"{initial_range[0]:%d/%m/%Y}  –  {initial_range[1]:%d/%m/%Y}"
-            with st.popover(
-                period_label,
-                key=f"{key}_calendar_popover",
+            selected_period = st.date_input(
+                "Analysis period",
+                min_value=minimum_date,
+                max_value=maximum_date,
+                format="DD/MM/YYYY",
+                key=range_key,
+                on_change=_remember_period_range,
+                args=(range_key, remembered_range_key),
                 width=270,
-            ):
-                selected_period = st.date_input(
-                    "Analysis period",
-                    min_value=minimum_date,
-                    max_value=maximum_date,
-                    format="DD/MM/YYYY",
-                    key=range_key,
-                    on_change=_remember_period_range,
-                    args=(range_key, remembered_range_key),
-                    width=270,
-                    label_visibility="collapsed",
-                )
+            )
 
     if isinstance(selected_period, (tuple, list)) and len(selected_period) >= 2:
         start_date, end_date = selected_period[0], selected_period[1]
