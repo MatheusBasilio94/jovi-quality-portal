@@ -11,7 +11,7 @@ import pandas as pd
 
 # Bump whenever a validated Assembly classification or responsibility rule
 # changes.  It is part of the dashboard cache key in app.py.
-ASSEMBLY_KPI_RULE_VERSION = "mes-operation-map-2026-09-17.2"
+ASSEMBLY_KPI_RULE_VERSION = "mes-operation-map-2026-09-23.1"
 
 
 FUNCTIONAL_OPERATIONS = (
@@ -25,6 +25,7 @@ FUNCTIONAL_OPERATIONS = (
     "Camera17",
     "Camera_4",
     "Camera-auxiliary-tester",
+    "CCT_sensor_Calibration",
     "Current",
     "MMI_auxiliary_test_bit",
     "Photosensor_test_Dark",
