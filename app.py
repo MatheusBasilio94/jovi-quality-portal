@@ -7898,9 +7898,42 @@ def _build_smt_dashboard_view(analysis: dict, model: str, station: str, failure_
     }
 
 
+def smt_dashboard_issue_pareto(confirmed):
+    """Aggregate detractors by repair conclusion, with phenomenon as fallback."""
+    import pandas as pd
+    from tools.smart_report_rules import top_issue_reasons
+
+    data = confirmed.copy()
+    if data.empty:
+        return pd.DataFrame(columns=["TopIssue", "NGPCBs"])
+    data["TopIssue"] = top_issue_reasons(data)
+    return (
+        data.groupby("TopIssue", as_index=False)
+        .agg(NGPCBs=("_DefectKey", "nunique"))
+        .sort_values(["NGPCBs", "TopIssue"], ascending=[False, True])
+    )
+
+
+def smt_dashboard_driver_detail(confirmed):
+    """Give the operational context for the ranked repair conclusions."""
+    import pandas as pd
+    from tools.smart_report_rules import top_issue_reasons
+
+    data = confirmed.copy()
+    if data.empty:
+        return pd.DataFrame(columns=["TopIssue", "Operation", "Model", "NGPCBs"])
+    data["TopIssue"] = top_issue_reasons(data)
+    return (
+        data.groupby(["TopIssue", "Operation", "Model"], as_index=False)
+        .agg(NGPCBs=("_DefectKey", "nunique"))
+        .sort_values(["NGPCBs", "TopIssue"], ascending=[False, True])
+    )
+
+
 def smt_quality_dashboard_v2(color: str) -> None:
     import pandas as pd
     from tools import dashboard_charts, smt_quality_dashboard
+    from tools.recurrence_watchlist import build_recurrence_watchlist
 
     page_started = perf_counter()
     source_started = perf_counter()
@@ -7908,6 +7941,7 @@ def smt_quality_dashboard_v2(color: str) -> None:
         f"<h1 class='section-title' style='color:{color};'>SMT · Quality Dashboard</h1>",
         unsafe_allow_html=True,
     )
+    st.caption("Defect intelligence for reducing general defects: trend, repair conclusions, recurrence and operational context.")
     input_paths, defect_paths = smt_quality_dashboard.stored_smt_sources()
     source_seconds = perf_counter() - source_started
     if not input_paths or not defect_paths:
@@ -7917,7 +7951,6 @@ def smt_quality_dashboard_v2(color: str) -> None:
     input_signatures = tuple(smt_quality_dashboard.path_signature(path) for path in input_paths)
     defect_signatures = tuple(smt_quality_dashboard.path_signature(path) for path in defect_paths)
     minimum_date, maximum_date = smt_quality_dashboard.input_bounds(input_signatures)
-
     filter_panel = st.container(key="smt_quality_v2_filter_panel")
     with filter_panel:
         start_date, end_date = analysis_period_control(
@@ -7956,236 +7989,174 @@ def smt_quality_dashboard_v2(color: str) -> None:
         with filter_columns[1]:
             station = st.selectbox("Process / Station", station_options, key="smt_quality_v2_station")
         with filter_columns[2]:
-            failure_type = st.selectbox(
-                "Failure type", failure_options, key="smt_quality_v2_failure_type"
-            )
+            failure_type = st.selectbox("Failure type", failure_options, key="smt_quality_v2_failure_type")
 
     view = _build_smt_dashboard_view(analysis, model, station, failure_type)
+    issue_pareto = smt_dashboard_issue_pareto(view["confirmed"])
+    driver_detail = smt_dashboard_driver_detail(view["confirmed"])
+    history_start = max(minimum_date.date(), end_date - timedelta(days=55))
+    if history_start == start_date:
+        history_analysis = analysis
+    else:
+        try:
+            history_analysis = smt_quality_dashboard.analyze_smt_quality_paths(
+                input_signatures,
+                defect_signatures,
+                history_start.isoformat(),
+                end_date.isoformat(),
+                smt_quality_dashboard.SMT_FAILURE_RULE_VERSION,
+            )
+        except Exception:
+            history_analysis = analysis
+            history_start = start_date
+    history_view = _build_smt_dashboard_view(history_analysis, model, station, failure_type)
+    recurrence = build_recurrence_watchlist(history_view["confirmed"], history_start, end_date)
+    recurrence_summary = recurrence["summary"]
     grain_label = trend_grain_labels(requested_trend_grain(start_date, end_date))[0]
-    quality = analysis["quality"]
+    top_issue = issue_pareto.iloc[0] if not issue_pareto.empty else None
 
-    exclusive_total = (
-        view["functional_only_pcbs"]
-        + view["appearance_only_pcbs"]
-        + view["both_type_pcbs"]
-    )
-    functional_share = view["functional_only_pcbs"] / exclusive_total if exclusive_total else 0
-    appearance_share = view["appearance_only_pcbs"] / exclusive_total if exclusive_total else 0
-    both_share = view["both_type_pcbs"] / exclusive_total if exclusive_total else 0
     cards = st.columns(4)
     with cards[0]:
         smt_kpi_card("SMT input", fmt_int(view["produced"]), "Boards in the selected scope", color)
     with cards[1]:
-        smt_kpi_card(
-            "Confirmed defect PCBs",
-            fmt_int(view["confirmed_pcbs"]),
-            (
-                f"Overall PPM {fmt_ppm(view['overall_ppm'])}"
-                if view["overall_ppm"] is not None
-                else "Overall PPM N/A"
-            ),
-            color,
-        )
+        smt_kpi_card("Affected PCBs", fmt_int(view["confirmed_pcbs"]), "Confirmed general defects", color)
     with cards[2]:
         smt_kpi_card(
-            "SMT Process NG",
-            f"{fmt_ppm(view['process_ppm'])} PPM" if view["process_ppm"] is not None else "N/A",
-            f"{fmt_int(view['classified_pcbs'])} functional + appearance NG PCBs",
+            "Overall defect PPM",
+            fmt_ppm(view["overall_ppm"]) if view["overall_ppm"] is not None else "N/A",
+            "All confirmed defect PCBs",
             color,
         )
     with cards[3]:
         smt_kpi_card(
-            "Failure profile",
-            f"{functional_share:.0%} F · {appearance_share:.0%} A · {both_share:.0%} B"
-            if exclusive_total
-            else "0% F · 0% A · 0% B",
-            f"F/A only · B = both ({fmt_int(view['both_type_pcbs'])} PCBs)",
+            "Top detractor",
+            f"{fmt_int(top_issue.NGPCBs)} PCBs" if top_issue is not None else "—",
+            str(top_issue.TopIssue) if top_issue is not None else "No confirmed defects",
             color,
         )
-    st.markdown("<div class='dashboard-kpi-chart-gap'></div>", unsafe_allow_html=True)
-    left, right = st.columns(2)
-    with left:
-        show_chart(
-            dashboard_charts.ppm_trend_chart(
-                view["trend"],
-                f"SMT Process NG PPM trend · {grain_label}",
-                [("ProcessPPM", "SMT Process NG", color)],
-                target_value=5_000,
-                exception_mask=view["trend"]["Status"].ne("Valid"),
-            )
-        )
-    with right:
-        show_chart(
-            dashboard_charts.failure_donut_chart(
-                view["functional_only_pcbs"],
-                view["appearance_only_pcbs"],
-                both=view["both_type_pcbs"],
-            )
-        )
 
-    left, right = st.columns(2)
-    with left:
-        show_chart(
-            dashboard_charts.pareto_chart(
-                view["pareto"], "Phenomenon", "NGPCBs", "Top defects · Pareto", color
-            )
-        )
-    with right:
-        show_chart(
-            dashboard_charts.model_ppm_input_chart(
-                view["models"], "Worst models by PPM and input", color
-            )
-        )
-
-    left, right = st.columns(2)
-    with left:
-        if not view["heatmap"].empty:
-            show_chart(
-                dashboard_charts.heatmap_chart(
-                    view["heatmap"], "Model × station PPM heatmap"
-                )
-            )
-        else:
-            st.info("The model × station heatmap needs confirmed defects in the selected scope.")
-    with right:
-        st.markdown("#### Action priority")
-        if view["priority"].empty:
-            st.info("No confirmed defects match the selected filters.")
-        else:
-            action_priority_cards(
-                view["priority"],
-                defect_column="Phenomenon",
-                station_column="Operation",
-                model_column="Model",
-            )
-
-    st.markdown("#### Data quality")
-    data_quality = st.columns(4)
-    with data_quality[0]:
-        smt_kpi_card("Input coverage", fmt_kpi_pct(view["coverage_rate"]), "Defect records with matching input", "#0D7A45")
-    with data_quality[1]:
-        rejudge_rate = len(view["rejudge"]) / max(len(view["rejudge"]) + len(view["confirmed"]), 1)
-        smt_kpi_card("Excluded retest rate", fmt_kpi_pct(rejudge_rate), f"{fmt_int(len(view['rejudge']))} records", "#1D5FBF")
-    with data_quality[2]:
-        smt_kpi_card("Exceptions", fmt_int(view["exceptions"]), "Periods blocked from PPM", "#DC2626")
-    with data_quality[3]:
-        smt_kpi_card(
-            "Classification coverage",
-            fmt_kpi_pct(view["classification_rate"]),
-            f"{fmt_int(view['unclassified_records'])} unclassified records",
-            "#64748B",
-        )
-
-    with st.expander("Functional and appearance failure analysis"):
+    section = st.radio(
+        "Dashboard view",
+        ["Priority overview", "Where it occurs", "Details & data health"],
+        horizontal=True,
+        key="smt_quality_v2_dashboard_view",
+        label_visibility="collapsed",
+    )
+    if section == "Priority overview":
+        st.markdown("### Defect priority")
         left, right = st.columns(2)
-        functional_pareto = (
-            view["confirmed"][view["confirmed"]["FailureType"].eq("Functional Failure")]
-            .groupby("Phenomenon", as_index=False)
-            .agg(NGPCBs=("_DefectKey", "nunique"))
-            .sort_values("NGPCBs", ascending=False)
-        )
-        appearance_pareto = (
-            view["confirmed"][view["confirmed"]["FailureType"].eq("Appearance Failure")]
-            .groupby("Phenomenon", as_index=False)
-            .agg(NGPCBs=("_DefectKey", "nunique"))
-            .sort_values("NGPCBs", ascending=False)
-        )
         with left:
             show_chart(
-                dashboard_charts.pareto_chart(
-                    functional_pareto,
-                    "Phenomenon",
-                    "NGPCBs",
-                    "Functional failure Pareto",
-                    "#0D7A45",
+                dashboard_charts.ppm_trend_chart(
+                    view["trend"],
+                    f"Overall and SMT Process PPM trend · {grain_label}",
+                    [("OverallPPM", "Overall defects", color), ("ProcessPPM", "SMT Process NG", "#64748B")],
+                    target_value=5_000,
+                    exception_mask=view["trend"]["Status"].ne("Valid"),
                 )
             )
         with right:
             show_chart(
                 dashboard_charts.pareto_chart(
-                    appearance_pareto,
-                    "Phenomenon",
+                    issue_pareto,
+                    "TopIssue",
                     "NGPCBs",
-                    "Appearance failure Pareto",
-                    "#1D5FBF",
+                    "Top defect causes · repair conclusion",
+                    color,
                 )
             )
 
-    with st.expander("Process, station and responsibility"):
+        st.markdown("### Recurrence Watchlist")
+        st.caption(
+            f"Last {recurrence_summary['history_weeks']} active weeks through {end_date.strftime('%d/%m/%Y')}. "
+            "Critical = present in at least three weeks and active in the latest week."
+        )
+        watch_cards = st.columns(4)
+        with watch_cards[0]:
+            smt_kpi_card("Recurring issues", fmt_int(recurrence_summary["recurring_issues"]), "Present in 2+ weeks", "#C2410C")
+        with watch_cards[1]:
+            smt_kpi_card("Persistent issues", fmt_int(recurrence_summary["persistent_issues"]), "3+ weeks and current", "#DC2626")
+        with watch_cards[2]:
+            smt_kpi_card("Recidivist PCBs", fmt_int(recurrence_summary["recidivist_pcbs"]), "Same board in 2+ weeks", "#6532C8")
+        with watch_cards[3]:
+            smt_kpi_card("History window", f"{recurrence_summary['history_weeks']} weeks", "Rolling eight-week view", "#0D7A45")
+        if recurrence["watchlist"].empty:
+            st.info("No repair conclusion recurred in two distinct weeks within the available history.")
+        else:
+            left, right = st.columns([1.18, 1])
+            with left:
+                show_chart(
+                    dashboard_charts.recurrence_heatmap_chart(
+                        recurrence["weekly"],
+                        "Recurring defect history · unique NG PCBs by week",
+                    )
+                )
+            with right:
+                display = recurrence["watchlist"].rename(
+                    columns={
+                        "TopIssue": "Repair conclusion",
+                        "AffectedPCBs": "Affected PCBs",
+                        "ActiveWeeks": "Active weeks",
+                        "CurrentWeekPCBs": "Latest week",
+                        "RecidivistPCBs": "Recidivist PCBs",
+                        "LastSeen": "Last seen",
+                    }
+                )
+                styled_table(display, max_rows=8, table_class="compact-dashboard-table")
+
+    elif section == "Where it occurs":
+        st.markdown("### Where the defects occur")
+        st.caption("PPM by model uses that model's own input. Station and responsibility views use affected PCB counts because station-level input is not available.")
         left, right = st.columns(2)
         with left:
+            show_chart(
+                dashboard_charts.model_ppm_input_chart(
+                    view["models"], "Models with the highest defect PPM", color
+                )
+            )
+        with right:
             show_chart(
                 dashboard_charts.ranked_bar_chart(
                     view["operation_summary"],
                     "Operation",
                     "NGPCBs",
-                    "Confirmed NG PCBs by station",
+                    "Affected PCBs by process / station",
                     color,
                 )
             )
-        with right:
+        left, right = st.columns(2)
+        with left:
             show_chart(
                 dashboard_charts.ranked_bar_chart(
                     view["duty_summary"],
                     "DutyType",
                     "NGPCBs",
-                    "Confirmed NG PCBs by DutyType",
+                    "Affected PCBs by responsibility",
                     "#6532C8",
                 )
             )
+        with right:
+            st.markdown("#### Leading defect contexts")
+            styled_table(driver_detail.head(15), max_rows=15, table_class="compact-dashboard-table")
 
-    with st.expander("Repeats and data-quality audit"):
-        audit_cards = st.columns(4)
-        with audit_cards[0]:
-            smt_kpi_card("FPY-approved records", fmt_int(len(view["confirmed"])), "No secondary exclusion", color)
-        with audit_cards[1]:
-            smt_kpi_card(
-                "Repeated PCBs",
-                fmt_int(view["repeat_detail"]["_DefectKey"].nunique()),
-                "More than one record",
-                color,
-            )
-        with audit_cards[2]:
-            smt_kpi_card(
-                "Pooled records",
-                fmt_int(view["period_pooled_records"]),
-                "Retained only in accumulated scopes",
-                "#C2410C",
-            )
-        with audit_cards[3]:
-            smt_kpi_card(
-                "Uncovered records",
-                fmt_int(analysis["totals"]["UncoveredDefectRecords"]),
-                "Excluded from PPM",
-                "#DC2626",
-            )
-        repeat_columns = ["PCB", "Model", "TestTime", "Operation", "FailureType", "Phenomenon", "Occurrences"]
-        if not view["repeat_detail"].empty:
-            styled_table(
-                view["repeat_detail"][[column for column in repeat_columns if column in view["repeat_detail"].columns]],
-                max_rows=30,
-                table_class="compact-dashboard-table",
-            )
-        if not quality["UnclassifiedStations"].empty:
-            st.markdown("##### Unclassified stations")
-            styled_table(
-                quality["UnclassifiedStations"],
-                max_rows=30,
-                table_class="compact-dashboard-table",
-            )
-
-    with st.expander("Filtered detail and export"):
+    else:
+        st.markdown("### Details & data health")
+        data_quality = st.columns(4)
+        with data_quality[0]:
+            smt_kpi_card("Input coverage", fmt_kpi_pct(view["coverage_rate"]), "Defect records with matching input", "#0D7A45")
+        with data_quality[1]:
+            smt_kpi_card("Exceptions", fmt_int(view["exceptions"]), "Periods blocked from PPM", "#DC2626")
+        with data_quality[2]:
+            smt_kpi_card("Classification coverage", fmt_kpi_pct(view["classification_rate"]), f"{fmt_int(view['unclassified_records'])} unclassified records", "#64748B")
+        with data_quality[3]:
+            smt_kpi_card("Repeated PCBs", fmt_int(view["repeat_detail"]["_DefectKey"].nunique()), "Repeated in selected period", "#6532C8")
         visible_columns = [
-            "PCB", "EntryTime", "TestTime", "Model", "Operation", "FailureType", "Phenomenon", "DutyType", "Maintenance"
+            "PCB", "EntryTime", "TestTime", "Model", "Operation", "FailureType", "Phenomenon", "RepaireRemark", "RepairRemark", "DutyType", "Maintenance",
         ]
         detail = view["confirmed"][[column for column in visible_columns if column in view["confirmed"].columns]].copy()
         st.caption(f"{fmt_int(len(detail))} confirmed records match the global filters.")
         if not detail.empty:
-            styled_table(
-                detail,
-                max_rows=50,
-                table_class="compact-dashboard-table",
-            )
+            styled_table(detail, max_rows=50, table_class="compact-dashboard-table")
         st.download_button(
             "Download filtered SMT detail CSV",
             data=detail.to_csv(index=False).encode("utf-8-sig"),
