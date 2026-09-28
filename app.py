@@ -31,7 +31,7 @@ from tools.supabase_store import (
 )
 from tools.trend_rules import analysis_period_days, requested_trend_grain, trend_grain_labels
 from tools import assembly_kpi_v2
-from tools.kpi_slide import build_kpi_slide, build_presentation_timeline, build_presentation_trend
+from tools.kpi_slide import build_kpi_slide
 from tools.historical_inspection_archive import apply_archive as apply_historical_inspection_archive
 from tools.inspection_store import (
     create_inspection_tables,
@@ -40,7 +40,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.59"
+APP_VERSION = "v0.5.60"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -100,6 +100,7 @@ VERSION_HISTORY = [
     ("v0.5.57", "Invalidated the prepared Assembly KPI source cache when MES consolidation rules change, applying refreshed defect snapshots immediately."),
     ("v0.5.58", "Added a copy-ready four-panel SMT KPI slide with one selectable analysis period and presentation-standard styling."),
     ("v0.5.59", "Refined the SMT KPI slide with weekly rollups plus latest-week input days, and removed its non-chart header for a cleaner PowerPoint copy."),
+    ("v0.5.60", "Moved the SMT KPI Slide into Smart Report's Weekly KPI Review, where it now mirrors the table's two weekly summaries and visible daily columns."),
     ("v0.5.53", "Classified Assembly CCT_sensor_Calibration failures as functional, including their Mando records in the Function Mando KPI."),
     ("v0.5.52", "Restored the single Analysis period date field and constrained its Streamlit container to the visible control width."),
     ("v0.5.51", "Freed manual SMT and Assembly OQC/FQC inspection dates from the uploaded production period, defaulting to the latest available day."),
@@ -5954,6 +5955,73 @@ def kpi_review_table(
     install_kpi_table_copy_controls()
 
 
+def weekly_smt_kpi_slide_chart(
+    directory: tuple[dict, ...],
+    previous_label: str,
+    current_label: str,
+    previous_totals: dict[str, float | None],
+    totals: dict[str, float | None],
+    daily: dict[str, dict[date, float | None]],
+    visible_days: list[date],
+    previous_exceptions: dict[str, str],
+    total_exceptions: dict[str, str],
+    daily_exceptions: dict[str, dict[date, str]],
+):
+    """Build the SMT PowerPoint slide from the exact Weekly KPI Review values."""
+    import pandas as pd
+
+    # The Functional trend follows the SMT production-input calendar. It is the
+    # common timeline for all four charts, so weekends without input never
+    # appear only because a manual OQC record happened to exist there.
+    daily_days = [day for day in visible_days if day in daily.get("smt_function", {})]
+
+    def frame_for(source: str) -> pd.DataFrame:
+        rows = [
+            {
+                "Period": previous_label,
+                "Value": previous_totals.get(source),
+                "IsException": bool(previous_exceptions.get(source)),
+            },
+            {
+                "Period": current_label,
+                "Value": totals.get(source),
+                "IsException": bool(total_exceptions.get(source)),
+            },
+        ]
+        for day in daily_days:
+            rows.append(
+                {
+                    "Period": day.strftime("%d-%b"),
+                    "Value": daily.get(source, {}).get(day),
+                    "IsException": bool(daily_exceptions.get(source, {}).get(day)),
+                }
+            )
+        return pd.DataFrame(rows)
+
+    targets = {item["source"]: item["target"] for item in directory}
+    panels = [
+        ("Functional Pass Rate", "smt_function", "percent"),
+        ("SMT Process NG Rate (PPM)", "smt_process", "ppm"),
+        ("Assembly SMT Process Duty NG Rate (PPM)", "smt_assembly_duty", "ppm"),
+        ("SMT OQC Pass Rate", "smt_oqc", "percent"),
+    ]
+    slide_panels = []
+    for title, source, value_type in panels:
+        frame = frame_for(source)
+        slide_panels.append(
+            {
+                "title": title,
+                "frame": frame,
+                "x_column": "Period",
+                "y_column": "Value",
+                "value_type": value_type,
+                "target": targets[source],
+                "exceptions": frame.loc[frame["IsException"]],
+            }
+        )
+    return build_kpi_slide("", slide_panels)
+
+
 def kpi_review_email(
     period_label: str,
     period_name: str,
@@ -6067,6 +6135,29 @@ def weekly_kpi_review_page() -> None:
         visible_days,
         daily_exceptions,
     )
+    with st.expander("SMT KPI Slide · PowerPoint", expanded=False):
+        st.caption(
+            "Este slide usa os mesmos acumulados WK e os mesmos dias visíveis da tabela acima. "
+            "Passe o mouse sobre a imagem e use ⧉ para copiá-la inteira; o ícone de download salva o PNG."
+        )
+        previous_label = f"WK{previous_end.isocalendar().week:02d}"
+        current_label = f"WK{week_end.isocalendar().week:02d}"
+        slide = weekly_smt_kpi_slide_chart(
+            directory,
+            previous_label,
+            current_label,
+            previous_totals,
+            totals,
+            daily,
+            visible_days,
+            previous_total_exceptions,
+            total_exceptions,
+            daily_exceptions,
+        )
+        show_chart(
+            slide,
+            image_filename=f"quality_smt_kpi_{previous_start.strftime('%Y%m%d')}_{week_end.strftime('%Y%m%d')}",
+        )
     if hidden_days:
         st.caption(
             "Hidden from this table and its copied image: "
@@ -6751,86 +6842,6 @@ def build_smt_oqc_trend(oqc_records, start_date: date, end_date: date):
     return oqc_trend.sort_values("PeriodDate"), settings
 
 
-def smt_kpi_slide_period_label(start_date: date, end_date: date) -> str:
-    """Use a concise fortnight label while retaining the exact selected dates."""
-    start_week = start_date.isocalendar().week
-    end_week = end_date.isocalendar().week
-    week_label = f"WK{start_week}" if start_week == end_week else f"WK{start_week} & WK{end_week}"
-    return f"{week_label} · {start_date.strftime('%d %b')} – {end_date.strftime('%d %b %Y')}"
-
-
-def smt_kpi_slide_chart(
-    start_date: date,
-    end_date: date,
-    smt_trend,
-    assembly_trend,
-    oqc_trend,
-    function_target: float,
-    process_target: float,
-    duty_target: float,
-    oqc_target: float,
-):
-    """Create the presentation image from weighted weekly and daily KPI values."""
-    timeline = build_presentation_timeline(
-        smt_trend,
-        date_column="PeriodDate",
-        input_column="Input",
-    )
-    functional = build_presentation_trend(
-        smt_trend,
-        timeline,
-        date_column="PeriodDate",
-        denominator_column="Input",
-        numerator_column="FunctionalDefectPCBs",
-        calculation="pass_minus",
-    )
-    process = build_presentation_trend(
-        smt_trend,
-        timeline,
-        date_column="PeriodDate",
-        denominator_column="Input",
-        numerator_column="ClassifiedDefectPCBs",
-        calculation="ppm",
-    )
-    assembly_duty = build_presentation_trend(
-        assembly_trend,
-        timeline,
-        date_column="PeriodDate",
-        denominator_column="Produced",
-        numerator_column="DutyDefects",
-        calculation="ppm",
-    )
-    oqc = build_presentation_trend(
-        oqc_trend,
-        timeline,
-        date_column="PeriodDate",
-        denominator_column="Inspected",
-        numerator_column="OK",
-        calculation="ratio",
-    )
-
-    def panel(title: str, frame, value_type: str, target: float) -> dict:
-        return {
-            "title": title,
-            "frame": frame,
-            "x_column": "Period",
-            "y_column": "Value",
-            "value_type": value_type,
-            "target": target,
-            "exceptions": frame.loc[frame["IsException"]],
-        }
-
-    return build_kpi_slide(
-        smt_kpi_slide_period_label(start_date, end_date),
-        [
-            panel("Functional Pass Rate", functional, "percent", function_target),
-            panel("SMT Process NG Rate (PPM)", process, "ppm", process_target),
-            panel("Assembly SMT Process Duty NG Rate (PPM)", assembly_duty, "ppm", duty_target),
-            panel("SMT OQC Pass Rate", oqc, "percent", oqc_target),
-        ],
-    )
-
-
 def calculate_assembly_smt_duty_kpi(start_date: date, end_date: date) -> dict:
     metrics = calculate_assembly_kpi_metrics(start_date, end_date)
     duty_rows = metrics["defects"][metrics["defects"]["IsSMTDuty"]].copy()
@@ -7232,27 +7243,6 @@ def smt_kpi_track_page(color: str) -> None:
                 show_chart(oqc_chart)
             else:
                 st.info("SMT OQC Pass Rate trend will appear after the first manual inspection entry.")
-
-    with st.expander("KPI Slide · PowerPoint", expanded=False):
-        st.caption(
-            "Os quatro gráficos usam exatamente o Analysis period selecionado acima. "
-            "Passe o mouse sobre a imagem e use ⧉ para copiá-la inteira; o ícone de download salva o PNG."
-        )
-        slide = smt_kpi_slide_chart(
-            start_date,
-            end_date,
-            smt_trend,
-            assembly_trend,
-            oqc_trend,
-            function_target,
-            process_target,
-            duty_target,
-            oqc_target,
-        )
-        show_chart(
-            slide,
-            image_filename=f"quality_smt_kpi_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}",
-        )
 
     if not process_exceptions.empty:
         st.markdown("### Data consistency exceptions")
