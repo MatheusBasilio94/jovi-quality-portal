@@ -2,7 +2,7 @@ import unittest
 
 import pandas as pd
 
-from tools.kpi_slide import build_kpi_slide
+from tools.kpi_slide import build_kpi_slide, build_presentation_timeline, build_presentation_trend
 
 
 class KpiSlideTests(unittest.TestCase):
@@ -59,8 +59,42 @@ class KpiSlideTests(unittest.TestCase):
         self.assertEqual(sum(trace.marker.symbol == "x" for trace in figure.data if trace.mode == "markers"), 1)
         self.assertIn(None, list(figure.data[0].y))
         annotation_texts = [str(annotation.text) for annotation in figure.layout.annotations]
-        self.assertTrue(any("Quality – SMT" in text for text in annotation_texts))
-        self.assertIn("<b>JOVI</b>", annotation_texts)
+        self.assertFalse(any("Quality – SMT" in text for text in annotation_texts))
+        self.assertNotIn("<b>JOVI</b>", annotation_texts)
+
+    def test_presentation_timeline_has_weekly_totals_then_only_input_days_of_latest_week(self):
+        dates = pd.to_datetime(
+            ["2026-09-14", "2026-09-15", "2026-09-16", "2026-09-17", "2026-09-18", "2026-09-21", "2026-09-22", "2026-09-23", "2026-09-24", "2026-09-25"]
+        )
+        source = pd.DataFrame(
+            {
+                "PeriodDate": dates,
+                "Input": [100] * len(dates),
+                "FunctionalDefectPCBs": [1, 0, 1, 0, 0, 2, 0, 0, 1, 0],
+            }
+        )
+
+        timeline = build_presentation_timeline(
+            source,
+            date_column="PeriodDate",
+            input_column="Input",
+        )
+        trend = build_presentation_trend(
+            source,
+            timeline,
+            date_column="PeriodDate",
+            denominator_column="Input",
+            numerator_column="FunctionalDefectPCBs",
+            calculation="pass_minus",
+        )
+
+        self.assertEqual(
+            list(timeline["Period"]),
+            ["WK38", "WK39", "21-Sep", "22-Sep", "23-Sep", "24-Sep", "25-Sep"],
+        )
+        self.assertAlmostEqual(trend.loc[0, "Value"], 0.996)
+        self.assertAlmostEqual(trend.loc[1, "Value"], 0.994)
+        self.assertFalse(trend["IsException"].any())
 
 
 if __name__ == "__main__":

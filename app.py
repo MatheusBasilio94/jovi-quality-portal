@@ -31,7 +31,7 @@ from tools.supabase_store import (
 )
 from tools.trend_rules import analysis_period_days, requested_trend_grain, trend_grain_labels
 from tools import assembly_kpi_v2
-from tools.kpi_slide import build_kpi_slide
+from tools.kpi_slide import build_kpi_slide, build_presentation_timeline, build_presentation_trend
 from tools.historical_inspection_archive import apply_archive as apply_historical_inspection_archive
 from tools.inspection_store import (
     create_inspection_tables,
@@ -40,7 +40,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.58"
+APP_VERSION = "v0.5.59"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -99,6 +99,7 @@ VERSION_HISTORY = [
     ("v0.5.56", "Extended MES date-level FPY reconciliation to SMT, so refreshed exports remove obsolete events only within their covered dates."),
     ("v0.5.57", "Invalidated the prepared Assembly KPI source cache when MES consolidation rules change, applying refreshed defect snapshots immediately."),
     ("v0.5.58", "Added a copy-ready four-panel SMT KPI slide with one selectable analysis period and presentation-standard styling."),
+    ("v0.5.59", "Refined the SMT KPI slide with weekly rollups plus latest-week input days, and removed its non-chart header for a cleaner PowerPoint copy."),
     ("v0.5.53", "Classified Assembly CCT_sensor_Calibration failures as functional, including their Mando records in the Function Mando KPI."),
     ("v0.5.52", "Restored the single Analysis period date field and constrained its Streamlit container to the visible control width."),
     ("v0.5.51", "Freed manual SMT and Assembly OQC/FQC inspection dates from the uploaded production period, defaulting to the latest available day."),
@@ -6762,55 +6763,70 @@ def smt_kpi_slide_chart(
     start_date: date,
     end_date: date,
     smt_trend,
-    process_exceptions,
-    function_exceptions,
     assembly_trend,
-    assembly_exceptions,
     oqc_trend,
     function_target: float,
     process_target: float,
     duty_target: float,
     oqc_target: float,
 ):
-    """Create the presentation image from the same trend data shown in KPI Track."""
+    """Create the presentation image from weighted weekly and daily KPI values."""
+    timeline = build_presentation_timeline(
+        smt_trend,
+        date_column="PeriodDate",
+        input_column="Input",
+    )
+    functional = build_presentation_trend(
+        smt_trend,
+        timeline,
+        date_column="PeriodDate",
+        denominator_column="Input",
+        numerator_column="FunctionalDefectPCBs",
+        calculation="pass_minus",
+    )
+    process = build_presentation_trend(
+        smt_trend,
+        timeline,
+        date_column="PeriodDate",
+        denominator_column="Input",
+        numerator_column="ClassifiedDefectPCBs",
+        calculation="ppm",
+    )
+    assembly_duty = build_presentation_trend(
+        assembly_trend,
+        timeline,
+        date_column="PeriodDate",
+        denominator_column="Produced",
+        numerator_column="DutyDefects",
+        calculation="ppm",
+    )
+    oqc = build_presentation_trend(
+        oqc_trend,
+        timeline,
+        date_column="PeriodDate",
+        denominator_column="Inspected",
+        numerator_column="OK",
+        calculation="ratio",
+    )
+
+    def panel(title: str, frame, value_type: str, target: float) -> dict:
+        return {
+            "title": title,
+            "frame": frame,
+            "x_column": "Period",
+            "y_column": "Value",
+            "value_type": value_type,
+            "target": target,
+            "exceptions": frame.loc[frame["IsException"]],
+        }
+
     return build_kpi_slide(
         smt_kpi_slide_period_label(start_date, end_date),
         [
-            {
-                "title": "Functional Pass Rate",
-                "frame": smt_trend,
-                "x_column": "Period",
-                "y_column": "FunctionPassRate",
-                "value_type": "percent",
-                "target": function_target,
-                "exceptions": function_exceptions,
-            },
-            {
-                "title": "SMT Process NG Rate (PPM)",
-                "frame": smt_trend,
-                "x_column": "Period",
-                "y_column": "SMTProcessNGRatePPM",
-                "value_type": "ppm",
-                "target": process_target,
-                "exceptions": process_exceptions,
-            },
-            {
-                "title": "Assembly SMT Process Duty NG Rate (PPM)",
-                "frame": assembly_trend,
-                "x_column": "Period",
-                "y_column": "DutyPPM",
-                "value_type": "ppm",
-                "target": duty_target,
-                "exceptions": assembly_exceptions,
-            },
-            {
-                "title": "SMT OQC Pass Rate",
-                "frame": oqc_trend,
-                "x_column": "Period",
-                "y_column": "PassRate",
-                "value_type": "percent",
-                "target": oqc_target,
-            },
+            panel("Functional Pass Rate", functional, "percent", function_target),
+            panel("SMT Process NG Rate (PPM)", process, "ppm", process_target),
+            panel("Assembly SMT Process Duty NG Rate (PPM)", assembly_duty, "ppm", duty_target),
+            panel("SMT OQC Pass Rate", oqc, "percent", oqc_target),
         ],
     )
 
@@ -7226,10 +7242,7 @@ def smt_kpi_track_page(color: str) -> None:
             start_date,
             end_date,
             smt_trend,
-            process_exceptions,
-            function_exceptions,
             assembly_trend,
-            assembly_duty_exceptions,
             oqc_trend,
             function_target,
             process_target,
