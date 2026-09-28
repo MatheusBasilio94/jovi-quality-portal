@@ -40,7 +40,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.68"
+APP_VERSION = "v0.5.69"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -101,6 +101,7 @@ VERSION_HISTORY = [
     ("v0.5.58", "Added a copy-ready four-panel SMT KPI slide with one selectable analysis period and presentation-standard styling."),
     ("v0.5.59", "Refined the SMT KPI slide with weekly rollups plus latest-week input days, and removed its non-chart header for a cleaner PowerPoint copy."),
     ("v0.5.60", "Moved the SMT KPI Slide into Smart Report's Weekly KPI Review, where it now mirrors the table's two weekly summaries and visible daily columns."),
+    ("v0.5.69", "Embedded the 16.17 cm × 8.17 cm physical dimensions in PowerPoint SVG exports so PowerPoint inserts them at the intended size."),
     ("v0.5.68", "Added a black outer frame to PowerPoint chart exports and simplified the inner axes to the bottom baseline only."),
     ("v0.5.67", "Kept the 100% ceiling while allowing presentation-chart labels, markers and lines to render into the top margin without clipping."),
     ("v0.5.66", "Prevented presentation pass-rate labels at 99.80% or above from clipping against the fixed 100% ceiling."),
@@ -4523,15 +4524,30 @@ def install_chart_copy_controls() -> None:
             const addPowerPointFrame = async (href, width, height) => {
                 const response = await parentWindow.fetch(href);
                 const svg = await response.text();
+                const svgDocument = new parentWindow.DOMParser().parseFromString(svg, "image/svg+xml");
+                const svgElement = svgDocument.documentElement;
+                if (!svgElement || svgElement.localName !== "svg") {
+                    throw new Error("Invalid SVG export");
+                }
+                // PowerPoint respects physical SVG units. Keep the larger
+                // viewBox for sharp vector content, while making the inserted
+                // object exactly 16.17 cm × 8.17 cm, including its frame.
+                svgElement.setAttribute("width", "16.17cm");
+                svgElement.setAttribute("height", "8.17cm");
                 // The half-pixel inset keeps the full one-pixel stroke within
-                // the SVG canvas. Its overall 916 × 463 dimensions therefore
-                // already include the external frame in PowerPoint.
-                const frame = `<rect x="0.5" y="0.5" width="${width - 1}" height="${height - 1}" `
-                    + `fill="none" stroke="#000000" stroke-width="1" vector-effect="non-scaling-stroke"/>`;
-                const closingTagIndex = svg.lastIndexOf("</svg>");
-                const framedSvg = closingTagIndex >= 0
-                    ? `${svg.slice(0, closingTagIndex)}${frame}${svg.slice(closingTagIndex)}`
-                    : svg;
+                // the SVG canvas, so the physical dimensions above include
+                // the complete external frame in PowerPoint.
+                const frame = svgDocument.createElementNS("http://www.w3.org/2000/svg", "rect");
+                frame.setAttribute("x", "0.5");
+                frame.setAttribute("y", "0.5");
+                frame.setAttribute("width", String(width - 1));
+                frame.setAttribute("height", String(height - 1));
+                frame.setAttribute("fill", "none");
+                frame.setAttribute("stroke", "#000000");
+                frame.setAttribute("stroke-width", "1");
+                frame.setAttribute("vector-effect", "non-scaling-stroke");
+                svgElement.appendChild(frame);
+                const framedSvg = new parentWindow.XMLSerializer().serializeToString(svgDocument);
                 return parentWindow.URL.createObjectURL(
                     new parentWindow.Blob([framedSvg], {type: "image/svg+xml;charset=utf-8"})
                 );
@@ -4622,9 +4638,8 @@ def install_chart_copy_controls() -> None:
                         const svgHeight = 463;
                         const href = await parentWindow.Plotly.toImage(graphDiv, {
                             format: "svg",
-                            // PowerPoint inserts Plotly SVG files at 144 DPI.
-                            // 916 × 463 px therefore opens at 16.17 × 8.17 cm,
-                            // matching the standard two-column KPI chart slot.
+                            // These canvas values provide enough drawing room;
+                            // addPowerPointFrame writes the final physical size.
                             width: svgWidth,
                             height: svgHeight,
                             scale: 1,
