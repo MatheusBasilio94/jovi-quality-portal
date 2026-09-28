@@ -2,7 +2,12 @@ import unittest
 
 import pandas as pd
 
-from tools.kpi_slide import build_kpi_slide, build_presentation_timeline, build_presentation_trend
+from tools.kpi_slide import (
+    build_kpi_panel_chart,
+    build_kpi_slide,
+    build_presentation_timeline,
+    build_presentation_trend,
+)
 
 
 class KpiSlideTests(unittest.TestCase):
@@ -95,6 +100,35 @@ class KpiSlideTests(unittest.TestCase):
         self.assertAlmostEqual(trend.loc[0, "Value"], 0.996)
         self.assertAlmostEqual(trend.loc[1, "Value"], 0.994)
         self.assertFalse(trend["IsException"].any())
+
+    def test_individual_chart_keeps_a_full_pass_rate_inside_the_plot(self):
+        frame = pd.DataFrame(
+            {
+                "Period": ["WK38", "WK39", "21-Sep", "22-Sep", "23-Sep", "24-Sep", "25-Sep"],
+                "Value": [0.9973, 0.9758, 0.9824, 0.9130, 1.0, 1.0, 1.0],
+            }
+        )
+
+        figure = build_kpi_panel_chart(
+            {
+                "title": "Functional Pass Rate",
+                "frame": frame,
+                "x_column": "Period",
+                "y_column": "Value",
+                "value_type": "percent",
+                "target": 0.9966,
+            }
+        )
+
+        self.assertEqual(figure.layout.width, 1600)
+        self.assertEqual(figure.layout.height, 900)
+        self.assertEqual(len(figure.layout.shapes), 1)
+        self.assertGreaterEqual(figure.layout.yaxis.range[1], 1.008)
+        self.assertTrue(figure.data[0].cliponaxis)
+        self.assertEqual(
+            list(figure.data[0].textposition),
+            ["top center", "bottom center", "top center", "bottom center", "top center", "bottom center", "top center"],
+        )
 
 
 if __name__ == "__main__":

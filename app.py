@@ -31,7 +31,7 @@ from tools.supabase_store import (
 )
 from tools.trend_rules import analysis_period_days, requested_trend_grain, trend_grain_labels
 from tools import assembly_kpi_v2
-from tools.kpi_slide import build_kpi_slide
+from tools.kpi_slide import build_kpi_panel_chart
 from tools.historical_inspection_archive import apply_archive as apply_historical_inspection_archive
 from tools.inspection_store import (
     create_inspection_tables,
@@ -40,7 +40,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.60"
+APP_VERSION = "v0.5.61"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -101,6 +101,7 @@ VERSION_HISTORY = [
     ("v0.5.58", "Added a copy-ready four-panel SMT KPI slide with one selectable analysis period and presentation-standard styling."),
     ("v0.5.59", "Refined the SMT KPI slide with weekly rollups plus latest-week input days, and removed its non-chart header for a cleaner PowerPoint copy."),
     ("v0.5.60", "Moved the SMT KPI Slide into Smart Report's Weekly KPI Review, where it now mirrors the table's two weekly summaries and visible daily columns."),
+    ("v0.5.61", "Replaced the combined SMT KPI slide with four individual copy-ready charts, improving label spacing and keeping 100% values inside each plot."),
     ("v0.5.53", "Classified Assembly CCT_sensor_Calibration failures as functional, including their Mando records in the Function Mando KPI."),
     ("v0.5.52", "Restored the single Analysis period date field and constrained its Streamlit container to the visible control width."),
     ("v0.5.51", "Freed manual SMT and Assembly OQC/FQC inspection dates from the uploaded production period, defaulting to the latest available day."),
@@ -5955,7 +5956,7 @@ def kpi_review_table(
     install_kpi_table_copy_controls()
 
 
-def weekly_smt_kpi_slide_chart(
+def weekly_smt_kpi_slide_panels(
     directory: tuple[dict, ...],
     previous_label: str,
     current_label: str,
@@ -6019,7 +6020,7 @@ def weekly_smt_kpi_slide_chart(
                 "exceptions": frame.loc[frame["IsException"]],
             }
         )
-    return build_kpi_slide("", slide_panels)
+    return slide_panels
 
 
 def kpi_review_email(
@@ -6135,14 +6136,14 @@ def weekly_kpi_review_page() -> None:
         visible_days,
         daily_exceptions,
     )
-    with st.expander("SMT KPI Slide · PowerPoint", expanded=False):
+    with st.expander("SMT KPI Graphs · PowerPoint", expanded=False):
         st.caption(
-            "Este slide usa os mesmos acumulados WK e os mesmos dias visíveis da tabela acima. "
-            "Passe o mouse sobre a imagem e use ⧉ para copiá-la inteira; o ícone de download salva o PNG."
+            "Cada gráfico usa os mesmos acumulados WK e os mesmos dias visíveis da tabela acima. "
+            "Abra o gráfico desejado e use ⧉ para copiá-lo; o ícone de download salva o PNG."
         )
         previous_label = f"WK{previous_end.isocalendar().week:02d}"
         current_label = f"WK{week_end.isocalendar().week:02d}"
-        slide = weekly_smt_kpi_slide_chart(
+        panels = weekly_smt_kpi_slide_panels(
             directory,
             previous_label,
             current_label,
@@ -6154,10 +6155,16 @@ def weekly_kpi_review_page() -> None:
             total_exceptions,
             daily_exceptions,
         )
-        show_chart(
-            slide,
-            image_filename=f"quality_smt_kpi_{previous_start.strftime('%Y%m%d')}_{week_end.strftime('%Y%m%d')}",
-        )
+        chart_tabs = st.tabs([panel["title"] for panel in panels])
+        for chart_tab, panel in zip(chart_tabs, panels):
+            with chart_tab:
+                show_chart(
+                    build_kpi_panel_chart(panel),
+                    image_filename=(
+                        f"quality_smt_{panel['title'].lower().replace(' ', '_').replace('(', '').replace(')', '')}_"
+                        f"{previous_start.strftime('%Y%m%d')}_{week_end.strftime('%Y%m%d')}"
+                    ),
+                )
     if hidden_days:
         st.caption(
             "Hidden from this table and its copied image: "

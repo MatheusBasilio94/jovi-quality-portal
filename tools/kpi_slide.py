@@ -263,3 +263,97 @@ def build_kpi_slide(period_label: str, panels: list[dict[str, Any]]) -> go.Figur
         hovermode="closest",
     )
     return figure
+
+
+def build_kpi_panel_chart(panel: dict[str, Any]) -> go.Figure:
+    """Build one copy-ready KPI chart with room for labels at the axis limits."""
+    frame = panel["frame"].copy()
+    x_column = str(panel["x_column"])
+    y_column = str(panel["y_column"])
+    value_type = str(panel["value_type"])
+    target = panel.get("target")
+    target = float(target) if target is not None else None
+    values = pd.to_numeric(frame.get(y_column, pd.Series(dtype="float64")), errors="coerce")
+    labels = _labels(values, value_type)
+    axis_range = _value_range(values, value_type, target)
+    # Keep a narrow buffer above 100% so a valid 100% marker and its label
+    # remain inside the plot instead of being clipped at the top boundary.
+    if value_type == "percent" and values.notna().any() and float(values.max()) >= 1.0:
+        axis_range[1] = max(axis_range[1], 1.008)
+    x_values = frame.get(x_column, pd.Series(dtype="object"))
+    dense = len(frame) >= 5
+    positions = ["top center" if not dense or index % 2 == 0 else "bottom center" for index in range(len(frame))]
+
+    figure = go.Figure(
+        go.Scatter(
+            x=x_values,
+            y=values.astype(object).where(values.notna(), None),
+            mode="lines+markers+text",
+            connectgaps=False,
+            line=dict(color=TREND_COLOR, width=3),
+            marker=dict(color=TREND_COLOR, size=10),
+            text=labels,
+            textposition=positions,
+            textfont=dict(color="#111111", size=13, family="Arial"),
+            cliponaxis=True,
+            hovertemplate=(
+                "%{x}<br>Pass rate: %{y:.2%}<extra></extra>"
+                if value_type == "percent"
+                else "%{x}<br>PPM: %{y:,.0f}<extra></extra>"
+            ),
+            showlegend=False,
+        )
+    )
+    exceptions = panel.get("exceptions")
+    if isinstance(exceptions, pd.DataFrame) and not exceptions.empty:
+        exception_y = axis_range[1] - (axis_range[1] - axis_range[0]) * 0.05
+        figure.add_trace(
+            go.Scatter(
+                x=exceptions.get(x_column, pd.Series(dtype="object")),
+                y=[exception_y] * len(exceptions),
+                mode="markers",
+                marker=dict(color=EXCEPTION_COLOR, size=18, symbol="x"),
+                hovertemplate="<b>Data consistency exception</b><extra></extra>",
+                showlegend=False,
+            )
+        )
+    if target is not None:
+        figure.add_hline(
+            y=target,
+            line_color=TARGET_COLOR,
+            line_width=2,
+            annotation_text=_target_label(target, value_type),
+            annotation_position="top right",
+            annotation_font=dict(color="#C2410C", size=14, family="Arial"),
+        )
+    figure.update_layout(
+        title=dict(text=str(panel["title"]), x=0.5, xanchor="center", font=dict(size=25, family="Arial", color="#171717")),
+        width=1600,
+        height=900,
+        margin=dict(l=90, r=55, t=90, b=80),
+        paper_bgcolor="#FFFFFF",
+        plot_bgcolor="#FFFFFF",
+        font=dict(family="Arial", color="#111111"),
+        showlegend=False,
+    )
+    figure.update_xaxes(
+        title_text="",
+        showline=True,
+        linecolor="#111111",
+        linewidth=1,
+        mirror=True,
+        tickfont=dict(size=14, color="#111111"),
+    )
+    figure.update_yaxes(
+        title_text="Pass rate" if value_type == "percent" else "PPM",
+        range=axis_range,
+        tickformat=".1%" if value_type == "percent" else ",.0f",
+        showgrid=True,
+        gridcolor="#D9DDE3",
+        showline=True,
+        linecolor="#111111",
+        linewidth=1,
+        mirror=True,
+        tickfont=dict(size=14, color="#111111"),
+    )
+    return figure
