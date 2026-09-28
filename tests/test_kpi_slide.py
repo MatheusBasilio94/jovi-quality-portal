@@ -105,7 +105,7 @@ class KpiSlideTests(unittest.TestCase):
         frame = pd.DataFrame(
             {
                 "Period": ["WK38", "WK39", "21-Sep", "22-Sep", "23-Sep", "24-Sep", "25-Sep"],
-                "Value": [0.9973, 0.9758, 0.9824, 0.9130, 1.0, 1.0, 1.0],
+                "Value": [0.9993, 0.9758, 0.9824, 0.9130, 1.0, 1.0, 1.0],
             }
         )
 
@@ -127,7 +127,7 @@ class KpiSlideTests(unittest.TestCase):
         self.assertTrue(figure.data[0].cliponaxis)
         self.assertEqual(
             list(figure.data[0].textposition),
-            ["top right", "bottom center", "top center", "bottom center", "bottom center", "bottom center", "bottom left"],
+            ["bottom right", "bottom center", "top center", "bottom center", "bottom center", "bottom center", "bottom left"],
         )
 
 

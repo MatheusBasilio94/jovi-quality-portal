@@ -285,13 +285,15 @@ def build_kpi_panel_chart(panel: dict[str, Any]) -> go.Figure:
     positions = ["top center" if not dense or index % 2 == 0 else "bottom center" for index in range(len(frame))]
     if value_type == "percent":
         for index, value in enumerate(values):
-            if pd.notna(value) and float(value) >= 1.0 - 1e-9:
+            # With a fixed 100% ceiling, labels above values close to the
+            # ceiling would be clipped. Put 99.80%+ labels below their point.
+            if pd.notna(value) and float(value) >= 0.998:
                 positions[index] = "bottom center"
     if positions:
         # Keep labels on the first and last categories inside the plot while
         # using the horizontal breathing room added to the category axis.
-        positions[0] = "bottom right" if value_type == "percent" and float(values.iloc[0]) >= 1.0 - 1e-9 else "top right"
-        positions[-1] = "bottom left" if value_type == "percent" and float(values.iloc[-1]) >= 1.0 - 1e-9 else "top left"
+        positions[0] = "bottom right" if value_type == "percent" and float(values.iloc[0]) >= 0.998 else "top right"
+        positions[-1] = "bottom left" if value_type == "percent" and float(values.iloc[-1]) >= 0.998 else "top left"
 
     figure = go.Figure(
         go.Scatter(
