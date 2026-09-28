@@ -40,7 +40,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.70"
+APP_VERSION = "v0.5.71"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -94,6 +94,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.71", "Moved SMT OQC and Assembly OQC/FQC manual entry and inspection history from KPI Track into each area's Data Upload page."),
     ("v0.5.54", "Classified Assembly Photosensor_calibration_Dark and Order-Linking defects as functional, aligning the MES functional-analysis scope."),
     ("v0.5.55", "Made refreshed Assembly FPY exports replace obsolete defects only on the MES dates covered by the upload, preserving all other historical data."),
     ("v0.5.56", "Extended MES date-level FPY reconciliation to SMT, so refreshed exports remove obsolete events only within their covered dates."),
@@ -3465,10 +3466,12 @@ def save_smt_oqc_inspection(
     sync_quality_database_to_cloud()
 
 
-def load_smt_oqc_inspections(start_date: date, end_date: date):
+def load_smt_oqc_inspections(start_date: date | None = None, end_date: date | None = None):
     import pandas as pd
 
     init_quality_store()
+    start_date = start_date or date.min
+    end_date = end_date or date.max
     with sqlite3.connect(QUALITY_DB_PATH) as conn:
         frame = pd.read_sql_query(
             """
@@ -3553,10 +3556,12 @@ def save_assembly_oqc_fqc_inspection(
     sync_quality_database_to_cloud()
 
 
-def load_assembly_oqc_fqc_inspections(start_date: date, end_date: date):
+def load_assembly_oqc_fqc_inspections(start_date: date | None = None, end_date: date | None = None):
     import pandas as pd
 
     init_quality_store()
+    start_date = start_date or date.min
+    end_date = end_date or date.max
     with sqlite3.connect(QUALITY_DB_PATH) as conn:
         frame = pd.read_sql_query(
             """
@@ -7386,89 +7391,6 @@ def smt_kpi_track_page(color: str) -> None:
     if not function_exceptions.empty or not process_exceptions.empty or not assembly_duty_exceptions.empty:
         st.caption("A red × marks a daily period where the available input is lower than the defects required by that KPI. The daily KPI is not calculated; a valid larger-period aggregate remains available.")
 
-    st.markdown("### Manual SMT OQC input")
-    with st.form("smt_oqc_input_form", clear_on_submit=True):
-        manual_oqc_default_date = max(end_date, date.today())
-        form_columns = st.columns(5)
-        with form_columns[0]:
-            oqc_date = st.date_input(
-                "Inspection date",
-                value=manual_oqc_default_date,
-                key="smt_oqc_inspection_date",
-            )
-        with form_columns[1]:
-            oqc_model = st.text_input("Model (optional)", key="smt_oqc_model")
-        with form_columns[2]:
-            inspected_qty = st.number_input("Inspected", min_value=0, value=0, step=1, key="smt_oqc_inspected")
-        with form_columns[3]:
-            ok_qty = st.number_input("OK", min_value=0, value=0, step=1, key="smt_oqc_ok")
-        with form_columns[4]:
-            ng_qty = st.number_input("NG", min_value=0, value=0, step=1, key="smt_oqc_ng")
-        oqc_notes = st.text_input("Notes (optional)", key="smt_oqc_notes")
-        st.caption("Use 0 inspected, 0 OK and 0 NG to register a day with no OQC sampling.")
-        oqc_submit = st.form_submit_button("Save OQC inspection", use_container_width=True)
-    if oqc_submit:
-        try:
-            save_smt_oqc_inspection(
-                oqc_date,
-                oqc_model,
-                int(inspected_qty),
-                int(ok_qty),
-                int(ng_qty),
-                oqc_notes,
-            )
-        except ValueError as exc:
-            st.error(str(exc))
-        else:
-            st.success("SMT OQC no-sampling record saved." if int(inspected_qty) == 0 else "SMT OQC inspection saved.")
-            st.rerun()
-
-    st.markdown("### OQC inspection history")
-    if oqc_records.empty:
-        st.info(f"No OQC inspection records were entered for {period_note}.")
-    else:
-        oqc_view = oqc_records.copy()
-        oqc_view["InspectionDate"] = oqc_view["InspectionDate"].dt.strftime("%d/%m/%Y")
-        oqc_view["CreatedAt"] = pd.to_datetime(oqc_view["CreatedAt"], errors="coerce").dt.strftime("%d/%m/%y %H:%M")
-        oqc_view["PassRatePct"] = (
-            pd.to_numeric(oqc_view["PassRate"], errors="coerce").astype("float64") * 100
-        ).round(2)
-        oqc_view["Sampling"] = oqc_view["Inspected"].map(lambda value: "No sampling" if int(value) == 0 else "Sampled")
-        styled_table(
-            oqc_view[["ID", "InspectionDate", "Model", "Sampling", "Inspected", "OK", "NG", "PassRatePct", "Notes", "CreatedAt"]],
-            table_class="inspection-history-table",
-        )
-        st.download_button(
-            "Download OQC history CSV",
-            data=oqc_view.to_csv(index=False).encode("utf-8-sig"),
-            file_name="smt_oqc_inspection_history.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
-        with st.expander("Delete an OQC inspection record"):
-            st.caption("Select the incorrect manual record, then confirm its deletion. This action cannot be undone.")
-            oqc_delete_options = {
-                int(row.ID): (
-                    f"ID {int(row.ID)} · {row.InspectionDate} · "
-                    f"{row.Model or 'No model'} · {int(row.Inspected)} inspected"
-                )
-                for row in oqc_view.itertuples(index=False)
-            }
-            oqc_delete_id = st.selectbox(
-                "OQC record to delete",
-                options=list(oqc_delete_options),
-                format_func=lambda record_id: oqc_delete_options[record_id],
-                key="smt_oqc_delete_id",
-            )
-            if st.button("Delete selected OQC record", type="secondary", key="smt_oqc_delete_button"):
-                try:
-                    delete_smt_oqc_inspection(oqc_delete_id)
-                except ValueError as exc:
-                    st.error(str(exc))
-                else:
-                    st.success("SMT OQC inspection record deleted.")
-                    st.rerun()
-
     if assembly_kpi and not assembly_kpi["breakdown"].empty:
         st.markdown("### Assembly SMT duty defect breakdown")
         styled_table(assembly_kpi["breakdown"])
@@ -7729,114 +7651,6 @@ def assembly_kpi_track_page(color: str) -> None:
     if not function_exceptions.empty or not appearance_exceptions.empty or not mando_exceptions.empty:
         st.caption("A red × marks a daily period where the available input is lower than the defects required by that KPI. The daily KPI is not calculated; a valid larger-period aggregate remains available.")
 
-    st.markdown("### Manual Assembly OQC and FQC input")
-    with st.form("assembly_oqc_fqc_input_form", clear_on_submit=True):
-        manual_inspection_default_date = max(end_date, date.today())
-        header_columns = st.columns(2)
-        with header_columns[0]:
-            inspection_date = st.date_input(
-                "Inspection date",
-                value=manual_inspection_default_date,
-                key="assembly_oqc_fqc_inspection_date",
-            )
-        with header_columns[1]:
-            inspection_model = st.text_input("Model (optional)", key="assembly_oqc_fqc_model")
-        oqc_column, fqc_column = st.columns(2)
-        with oqc_column:
-            st.markdown("#### OQC")
-            oqc_inspected_input = st.number_input("OQC inspected", min_value=0, value=0, step=1, key="assembly_oqc_inspected")
-            oqc_ok_input = st.number_input("OQC OK", min_value=0, value=0, step=1, key="assembly_oqc_ok")
-            oqc_ng_input = st.number_input("OQC NG", min_value=0, value=0, step=1, key="assembly_oqc_ng")
-        with fqc_column:
-            st.markdown("#### FQC")
-            fqc_inspected_input = st.number_input("FQC inspected", min_value=0, value=0, step=1, key="assembly_fqc_inspected")
-            fqc_ok_input = st.number_input("FQC OK", min_value=0, value=0, step=1, key="assembly_fqc_ok")
-            fqc_ng_input = st.number_input("FQC NG", min_value=0, value=0, step=1, key="assembly_fqc_ng")
-        inspection_notes = st.text_input("Notes (optional)", key="assembly_oqc_fqc_notes")
-        st.caption("For an unsampled stage, enter 0 inspected, 0 OK and 0 NG. OQC and FQC can be recorded independently.")
-        oqc_fqc_submit = st.form_submit_button("Save Assembly OQC and FQC inspection", use_container_width=True)
-    if oqc_fqc_submit:
-        try:
-            save_assembly_oqc_fqc_inspection(
-                inspection_date,
-                inspection_model,
-                int(oqc_inspected_input),
-                int(oqc_ok_input),
-                int(oqc_ng_input),
-                int(fqc_inspected_input),
-                int(fqc_ok_input),
-                int(fqc_ng_input),
-                inspection_notes,
-            )
-        except ValueError as exc:
-            st.error(str(exc))
-        else:
-            unsampled_stages = [
-                stage
-                for stage, inspected in (("OQC", oqc_inspected_input), ("FQC", fqc_inspected_input))
-                if int(inspected) == 0
-            ]
-            suffix = f" No sampling recorded for {', '.join(unsampled_stages)}." if unsampled_stages else ""
-            st.success(f"Assembly OQC and FQC inspection saved.{suffix}")
-            st.rerun()
-
-    st.markdown("### Assembly OQC and FQC inspection history")
-    if oqc_fqc_records.empty:
-        st.info(f"No Assembly OQC or FQC inspection records were entered for {period_note}.")
-    else:
-        oqc_fqc_view = oqc_fqc_records.copy()
-        oqc_fqc_view["InspectionDate"] = oqc_fqc_view["InspectionDate"].dt.strftime("%d/%m/%Y")
-        oqc_fqc_view["CreatedAt"] = pd.to_datetime(oqc_fqc_view["CreatedAt"], errors="coerce").dt.strftime("%d/%m/%y %H:%M")
-        for source_column, output_column in [
-            ("OQCPassRate", "OQCPassRatePct"),
-            ("FQCPassRate", "FQCPassRatePct"),
-            ("CombinedPassRate", "OQCxFQCPassRatePct"),
-        ]:
-            oqc_fqc_view[output_column] = (
-                pd.to_numeric(oqc_fqc_view[source_column], errors="coerce").astype("float64") * 100
-            ).round(2)
-        oqc_fqc_view["OQCSampling"] = oqc_fqc_view["OQCInspected"].map(lambda value: "No sampling" if int(value) == 0 else "Sampled")
-        oqc_fqc_view["FQCSampling"] = oqc_fqc_view["FQCInspected"].map(lambda value: "No sampling" if int(value) == 0 else "Sampled")
-        visible_columns = [
-            "ID", "InspectionDate", "Model",
-            "OQCSampling", "OQCInspected", "OQCOK", "OQCNG", "OQCPassRatePct",
-            "FQCSampling", "FQCInspected", "FQCOK", "FQCNG", "FQCPassRatePct", "OQCxFQCPassRatePct",
-            "Notes", "CreatedAt",
-        ]
-        styled_table(
-            oqc_fqc_view[visible_columns],
-            table_class="inspection-history-table assembly-inspection-history-table",
-        )
-        st.download_button(
-            "Download Assembly OQC and FQC history CSV",
-            data=oqc_fqc_view.to_csv(index=False).encode("utf-8-sig"),
-            file_name="assembly_oqc_fqc_inspection_history.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
-        with st.expander("Delete an Assembly OQC/FQC inspection record"):
-            st.caption("Select the incorrect manual record, then confirm its deletion. This action cannot be undone.")
-            assembly_delete_options = {
-                int(row.ID): (
-                    f"ID {int(row.ID)} · {row.InspectionDate} · "
-                    f"{row.Model or 'No model'} · OQC {int(row.OQCInspected)} · FQC {int(row.FQCInspected)}"
-                )
-                for row in oqc_fqc_view.itertuples(index=False)
-            }
-            assembly_delete_id = st.selectbox(
-                "Assembly OQC/FQC record to delete",
-                options=list(assembly_delete_options),
-                format_func=lambda record_id: assembly_delete_options[record_id],
-                key="assembly_oqc_fqc_delete_id",
-            )
-            if st.button("Delete selected Assembly OQC/FQC record", type="secondary", key="assembly_oqc_fqc_delete_button"):
-                try:
-                    delete_assembly_oqc_fqc_inspection(assembly_delete_id)
-                except ValueError as exc:
-                    st.error(str(exc))
-                else:
-                    st.success("Assembly OQC/FQC inspection record deleted.")
-                    st.rerun()
 
 
 def _dashboard_defect_key(frame, pcb_column: str = "PCB"):
@@ -8780,6 +8594,147 @@ def _assembly_upload_section_v2(store_status: dict) -> None:
     render_assembly_source_manager()
 
 
+
+def _smt_oqc_data_management() -> None:
+    """Manual SMT OQC entry and record history, managed from Data Upload."""
+    st.markdown("### Manual SMT OQC input")
+    with st.form("smt_oqc_input_form", clear_on_submit=True):
+        form_columns = st.columns(5)
+        with form_columns[0]:
+            oqc_date = st.date_input("Inspection date", value=date.today(), key="smt_oqc_inspection_date")
+        with form_columns[1]:
+            oqc_model = st.text_input("Model (optional)", key="smt_oqc_model")
+        with form_columns[2]:
+            inspected_qty = st.number_input("Inspected", min_value=0, value=0, step=1, key="smt_oqc_inspected")
+        with form_columns[3]:
+            ok_qty = st.number_input("OK", min_value=0, value=0, step=1, key="smt_oqc_ok")
+        with form_columns[4]:
+            ng_qty = st.number_input("NG", min_value=0, value=0, step=1, key="smt_oqc_ng")
+        oqc_notes = st.text_input("Notes (optional)", key="smt_oqc_notes")
+        st.caption("Use 0 inspected, 0 OK and 0 NG to register a day with no OQC sampling.")
+        oqc_submit = st.form_submit_button("Save OQC inspection", use_container_width=True)
+    if oqc_submit:
+        try:
+            save_smt_oqc_inspection(oqc_date, oqc_model, int(inspected_qty), int(ok_qty), int(ng_qty), oqc_notes)
+        except ValueError as exc:
+            st.error(str(exc))
+        else:
+            st.success("SMT OQC no-sampling record saved." if int(inspected_qty) == 0 else "SMT OQC inspection saved.")
+            st.rerun()
+
+    oqc_records = load_smt_oqc_inspections()
+    st.markdown("### OQC inspection history")
+    if oqc_records.empty:
+        st.info("No SMT OQC inspection records have been entered yet.")
+        return
+    oqc_view = oqc_records.copy()
+    oqc_view["InspectionDate"] = oqc_view["InspectionDate"].dt.strftime("%d/%m/%Y")
+    oqc_view["CreatedAt"] = pd.to_datetime(oqc_view["CreatedAt"], errors="coerce").dt.strftime("%d/%m/%y %H:%M")
+    oqc_view["PassRatePct"] = (pd.to_numeric(oqc_view["PassRate"], errors="coerce").astype("float64") * 100).round(2)
+    oqc_view["Sampling"] = oqc_view["Inspected"].map(lambda value: "No sampling" if int(value) == 0 else "Sampled")
+    styled_table(
+        oqc_view[["ID", "InspectionDate", "Model", "Sampling", "Inspected", "OK", "NG", "PassRatePct", "Notes", "CreatedAt"]],
+        table_class="inspection-history-table",
+    )
+    st.download_button(
+        "Download OQC history CSV",
+        data=oqc_view.to_csv(index=False).encode("utf-8-sig"),
+        file_name="smt_oqc_inspection_history.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
+    with st.expander("Delete an OQC inspection record"):
+        st.caption("Select the incorrect manual record, then confirm its deletion. This action cannot be undone.")
+        delete_options = {
+            int(row.ID): f"ID {int(row.ID)} · {row.InspectionDate} · {row.Model or 'No model'} · {int(row.Inspected)} inspected"
+            for row in oqc_view.itertuples(index=False)
+        }
+        record_id = st.selectbox("OQC record to delete", options=list(delete_options), format_func=lambda value: delete_options[value], key="smt_oqc_delete_id")
+        if st.button("Delete selected OQC record", type="secondary", key="smt_oqc_delete_button"):
+            try:
+                delete_smt_oqc_inspection(record_id)
+            except ValueError as exc:
+                st.error(str(exc))
+            else:
+                st.success("SMT OQC inspection record deleted.")
+                st.rerun()
+
+
+def _assembly_oqc_fqc_data_management() -> None:
+    """Manual Assembly OQC/FQC entry and record history, managed from Data Upload."""
+    st.markdown("### Manual Assembly OQC and FQC input")
+    with st.form("assembly_oqc_fqc_input_form", clear_on_submit=True):
+        header_columns = st.columns(2)
+        with header_columns[0]:
+            inspection_date = st.date_input("Inspection date", value=date.today(), key="assembly_oqc_fqc_inspection_date")
+        with header_columns[1]:
+            inspection_model = st.text_input("Model (optional)", key="assembly_oqc_fqc_model")
+        oqc_column, fqc_column = st.columns(2)
+        with oqc_column:
+            st.markdown("#### OQC")
+            oqc_inspected_input = st.number_input("OQC inspected", min_value=0, value=0, step=1, key="assembly_oqc_inspected")
+            oqc_ok_input = st.number_input("OQC OK", min_value=0, value=0, step=1, key="assembly_oqc_ok")
+            oqc_ng_input = st.number_input("OQC NG", min_value=0, value=0, step=1, key="assembly_oqc_ng")
+        with fqc_column:
+            st.markdown("#### FQC")
+            fqc_inspected_input = st.number_input("FQC inspected", min_value=0, value=0, step=1, key="assembly_fqc_inspected")
+            fqc_ok_input = st.number_input("FQC OK", min_value=0, value=0, step=1, key="assembly_fqc_ok")
+            fqc_ng_input = st.number_input("FQC NG", min_value=0, value=0, step=1, key="assembly_fqc_ng")
+        inspection_notes = st.text_input("Notes (optional)", key="assembly_oqc_fqc_notes")
+        st.caption("For an unsampled stage, enter 0 inspected, 0 OK and 0 NG. OQC and FQC can be recorded independently.")
+        submit = st.form_submit_button("Save Assembly OQC and FQC inspection", use_container_width=True)
+    if submit:
+        try:
+            save_assembly_oqc_fqc_inspection(
+                inspection_date, inspection_model, int(oqc_inspected_input), int(oqc_ok_input), int(oqc_ng_input),
+                int(fqc_inspected_input), int(fqc_ok_input), int(fqc_ng_input), inspection_notes,
+            )
+        except ValueError as exc:
+            st.error(str(exc))
+        else:
+            unsampled_stages = [stage for stage, inspected in (("OQC", oqc_inspected_input), ("FQC", fqc_inspected_input)) if int(inspected) == 0]
+            suffix = f" No sampling recorded for {', '.join(unsampled_stages)}." if unsampled_stages else ""
+            st.success(f"Assembly OQC and FQC inspection saved.{suffix}")
+            st.rerun()
+
+    records = load_assembly_oqc_fqc_inspections()
+    st.markdown("### Assembly OQC and FQC inspection history")
+    if records.empty:
+        st.info("No Assembly OQC or FQC inspection records have been entered yet.")
+        return
+    view = records.copy()
+    view["InspectionDate"] = view["InspectionDate"].dt.strftime("%d/%m/%Y")
+    view["CreatedAt"] = pd.to_datetime(view["CreatedAt"], errors="coerce").dt.strftime("%d/%m/%y %H:%M")
+    for source, output in [("OQCPassRate", "OQCPassRatePct"), ("FQCPassRate", "FQCPassRatePct"), ("CombinedPassRate", "OQCxFQCPassRatePct")]:
+        view[output] = (pd.to_numeric(view[source], errors="coerce").astype("float64") * 100).round(2)
+    view["OQCSampling"] = view["OQCInspected"].map(lambda value: "No sampling" if int(value) == 0 else "Sampled")
+    view["FQCSampling"] = view["FQCInspected"].map(lambda value: "No sampling" if int(value) == 0 else "Sampled")
+    visible = ["ID", "InspectionDate", "Model", "OQCSampling", "OQCInspected", "OQCOK", "OQCNG", "OQCPassRatePct", "FQCSampling", "FQCInspected", "FQCOK", "FQCNG", "FQCPassRatePct", "OQCxFQCPassRatePct", "Notes", "CreatedAt"]
+    styled_table(view[visible], table_class="inspection-history-table assembly-inspection-history-table")
+    st.download_button(
+        "Download Assembly OQC and FQC history CSV",
+        data=view.to_csv(index=False).encode("utf-8-sig"),
+        file_name="assembly_oqc_fqc_inspection_history.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
+    with st.expander("Delete an Assembly OQC/FQC inspection record"):
+        st.caption("Select the incorrect manual record, then confirm its deletion. This action cannot be undone.")
+        delete_options = {
+            int(row.ID): f"ID {int(row.ID)} · {row.InspectionDate} · {row.Model or 'No model'} · OQC {int(row.OQCInspected)} · FQC {int(row.FQCInspected)}"
+            for row in view.itertuples(index=False)
+        }
+        record_id = st.selectbox("Assembly OQC/FQC record to delete", options=list(delete_options), format_func=lambda value: delete_options[value], key="assembly_oqc_fqc_delete_id")
+        if st.button("Delete selected Assembly OQC/FQC record", type="secondary", key="assembly_oqc_fqc_delete_button"):
+            try:
+                delete_assembly_oqc_fqc_inspection(record_id)
+            except ValueError as exc:
+                st.error(str(exc))
+            else:
+                st.success("Assembly OQC/FQC inspection record deleted.")
+                st.rerun()
+
+
 def data_upload_page(module: str, color: str) -> None:
     """Central upload workspace for the three validated MES source groups."""
     st.markdown(
@@ -8796,10 +8751,14 @@ def data_upload_page(module: str, color: str) -> None:
 
         importlib.reload(smt_quality_dashboard)
         smt_quality_dashboard._upload_section(color)
+        st.divider()
+        _smt_oqc_data_management()
         return
     if module == "Assembly":
         st.markdown("### Upload Data")
         _assembly_upload_section_v2(assembly_store_status())
+        st.divider()
+        _assembly_oqc_fqc_data_management()
 
 
 def assembly_quality_dashboard_v2(color: str) -> None:
