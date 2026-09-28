@@ -290,11 +290,11 @@ def build_kpi_panel_chart(panel: dict[str, Any]) -> go.Figure:
             y=values.astype(object).where(values.notna(), None),
             mode="lines+markers+text",
             connectgaps=False,
-            line=dict(color=TREND_COLOR, width=3),
-            marker=dict(color=TREND_COLOR, size=10),
+            line=dict(color=TREND_COLOR, width=4),
+            marker=dict(color=TREND_COLOR, size=12),
             text=labels,
             textposition=positions,
-            textfont=dict(color="#111111", size=13, family="Arial"),
+            textfont=dict(color="#111111", size=20, family="Arial"),
             cliponaxis=True,
             hovertemplate=(
                 "%{x}<br>Pass rate: %{y:.2%}<extra></extra>"
@@ -312,7 +312,7 @@ def build_kpi_panel_chart(panel: dict[str, Any]) -> go.Figure:
                 x=exceptions.get(x_column, pd.Series(dtype="object")),
                 y=[exception_y] * len(exceptions),
                 mode="markers",
-                marker=dict(color=EXCEPTION_COLOR, size=18, symbol="x"),
+                marker=dict(color=EXCEPTION_COLOR, size=24, symbol="x"),
                 hovertemplate="<b>Data consistency exception</b><extra></extra>",
                 showlegend=False,
             )
@@ -324,13 +324,13 @@ def build_kpi_panel_chart(panel: dict[str, Any]) -> go.Figure:
             line_width=2,
             annotation_text=_target_label(target, value_type),
             annotation_position="top right",
-            annotation_font=dict(color="#C2410C", size=14, family="Arial"),
+            annotation_font=dict(color="#C2410C", size=19, family="Arial"),
         )
     figure.update_layout(
-        title=dict(text=str(panel["title"]), x=0.5, xanchor="center", font=dict(size=25, family="Arial", color="#171717")),
-        width=1600,
-        height=900,
-        margin=dict(l=90, r=55, t=90, b=80),
+        title=dict(text=str(panel["title"]), x=0.5, xanchor="center", font=dict(size=32, family="Arial", color="#171717")),
+        width=1920,
+        height=1080,
+        margin=dict(l=125, r=80, t=120, b=105),
         paper_bgcolor="#FFFFFF",
         plot_bgcolor="#FFFFFF",
         font=dict(family="Arial", color="#111111"),
@@ -342,10 +342,12 @@ def build_kpi_panel_chart(panel: dict[str, Any]) -> go.Figure:
         linecolor="#111111",
         linewidth=1,
         mirror=True,
-        tickfont=dict(size=14, color="#111111"),
+        tickfont=dict(size=18, color="#111111"),
     )
     figure.update_yaxes(
         title_text="Pass rate" if value_type == "percent" else "PPM",
+        title_font=dict(size=21, color="#5B667A"),
+        title_standoff=18,
         range=axis_range,
         tickformat=".1%" if value_type == "percent" else ",.0f",
         showgrid=True,
@@ -354,6 +356,6 @@ def build_kpi_panel_chart(panel: dict[str, Any]) -> go.Figure:
         linecolor="#111111",
         linewidth=1,
         mirror=True,
-        tickfont=dict(size=14, color="#111111"),
+        tickfont=dict(size=18, color="#111111"),
     )
     return figure

@@ -40,7 +40,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.61"
+APP_VERSION = "v0.5.62"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -101,6 +101,7 @@ VERSION_HISTORY = [
     ("v0.5.58", "Added a copy-ready four-panel SMT KPI slide with one selectable analysis period and presentation-standard styling."),
     ("v0.5.59", "Refined the SMT KPI slide with weekly rollups plus latest-week input days, and removed its non-chart header for a cleaner PowerPoint copy."),
     ("v0.5.60", "Moved the SMT KPI Slide into Smart Report's Weekly KPI Review, where it now mirrors the table's two weekly summaries and visible daily columns."),
+    ("v0.5.62", "Added 4K PNG copy and vector SVG download for presentation charts, with larger labels and axes for slide readability."),
     ("v0.5.61", "Replaced the combined SMT KPI slide with four individual copy-ready charts, improving label spacing and keeping 100% values inside each plot."),
     ("v0.5.53", "Classified Assembly CCT_sensor_Calibration failures as functional, including their Mando records in the Function Mando KPI."),
     ("v0.5.52", "Restored the single Analysis period date field and constrained its Streamlit container to the visible control width."),
@@ -1188,6 +1189,23 @@ def apply_global_css() -> None:
             width: 1.65rem !important;
         }
         div[data-testid="stPlotlyChart"] .modebar-btn.jovi-copy-chart-button:hover {
+            color: #0B1F3A !important;
+        }
+        div[data-testid="stPlotlyChart"] .modebar-btn.jovi-download-svg-button {
+            align-items: center !important;
+            color: #52647A !important;
+            cursor: pointer !important;
+            display: inline-flex !important;
+            font-family: Arial, sans-serif !important;
+            font-size: 0.63rem !important;
+            font-weight: 900 !important;
+            height: 1.65rem !important;
+            justify-content: center !important;
+            letter-spacing: 0.02em !important;
+            line-height: 1 !important;
+            width: 2rem !important;
+        }
+        div[data-testid="stPlotlyChart"] .modebar-btn.jovi-download-svg-button:hover {
             color: #0B1F3A !important;
         }
         div[data-testid="stHorizontalBlock"] > div {
@@ -4437,7 +4455,12 @@ PLOTLY_CONFIG = {
     "toImageButtonOptions": {
         "format": "png",
         "filename": "jovi-quality-chart",
-        "scale": 3,
+        # The clipboard action uses Plotly's native PNG export. Fixing the
+        # output dimensions makes every copied chart 4K, independent of the
+        # browser window or the Streamlit column where it is displayed.
+        "width": 1920,
+        "height": 1080,
+        "scale": 2,
     },
 }
 
@@ -4460,9 +4483,10 @@ def install_chart_copy_controls() -> None:
             const parentWindow = window.parent;
             const parentDocument = parentWindow.document;
             const buttonClass = "jovi-copy-chart-button";
+            const svgButtonClass = "jovi-download-svg-button";
             const nativeSelector = '.modebar-btn[data-title*="Download plot as" i]';
 
-            parentDocument.querySelectorAll(`.${buttonClass}`).forEach((button) => button.remove());
+            parentDocument.querySelectorAll(`.${buttonClass}, .${svgButtonClass}`).forEach((button) => button.remove());
 
             const setButtonState = (button, symbol, title, delay = 1800) => {
                 const originalSymbol = button.dataset.originalSymbol || "⧉";
@@ -4554,7 +4578,51 @@ def install_chart_copy_controls() -> None:
                         capture();
                     }
                 });
+
+                const svgButton = parentDocument.createElement("a");
+                svgButton.className = `modebar-btn ${svgButtonClass}`;
+                svgButton.textContent = "SVG";
+                svgButton.setAttribute("data-title", "Download vector SVG for PowerPoint");
+                svgButton.setAttribute("aria-label", "Download vector SVG for PowerPoint");
+                svgButton.setAttribute("role", "button");
+                svgButton.setAttribute("tabindex", "0");
+                const downloadSvg = async () => {
+                    const graphDiv = chartContainer.querySelector(".js-plotly-plot");
+                    if (!graphDiv || !parentWindow.Plotly?.toImage) {
+                        setButtonState(svgButton, "!", "SVG export is unavailable");
+                        return;
+                    }
+                    try {
+                        const href = await parentWindow.Plotly.toImage(graphDiv, {
+                            format: "svg",
+                            width: 1920,
+                            height: 1080,
+                            scale: 1,
+                        });
+                        const link = parentDocument.createElement("a");
+                        link.href = href;
+                        link.download = "jovi-quality-chart.svg";
+                        parentDocument.body.appendChild(link);
+                        link.click();
+                        link.remove();
+                        setButtonState(svgButton, "✓", "SVG downloaded");
+                    } catch (_error) {
+                        setButtonState(svgButton, "!", "Unable to export SVG");
+                    }
+                };
+                svgButton.addEventListener("click", (event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    downloadSvg();
+                });
+                svgButton.addEventListener("keydown", (event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        downloadSvg();
+                    }
+                });
                 nativeButton.insertAdjacentElement("afterend", copyButton);
+                copyButton.insertAdjacentElement("afterend", svgButton);
             };
 
             const scan = () => {
