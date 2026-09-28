@@ -40,7 +40,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.62"
+APP_VERSION = "v0.5.63"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -101,6 +101,7 @@ VERSION_HISTORY = [
     ("v0.5.58", "Added a copy-ready four-panel SMT KPI slide with one selectable analysis period and presentation-standard styling."),
     ("v0.5.59", "Refined the SMT KPI slide with weekly rollups plus latest-week input days, and removed its non-chart header for a cleaner PowerPoint copy."),
     ("v0.5.60", "Moved the SMT KPI Slide into Smart Report's Weekly KPI Review, where it now mirrors the table's two weekly summaries and visible daily columns."),
+    ("v0.5.63", "Sized the PowerPoint SVG export to a 16.17 cm × 8.17 cm chart slot, so it can be inserted without shrinking."),
     ("v0.5.62", "Added 4K PNG copy and vector SVG download for presentation charts, with larger labels and axes for slide readability."),
     ("v0.5.61", "Replaced the combined SMT KPI slide with four individual copy-ready charts, improving label spacing and keeping 100% values inside each plot."),
     ("v0.5.53", "Classified Assembly CCT_sensor_Calibration failures as functional, including their Mando records in the Function Mando KPI."),
@@ -4581,9 +4582,11 @@ def install_chart_copy_controls() -> None:
 
                 const svgButton = parentDocument.createElement("a");
                 svgButton.className = `modebar-btn ${svgButtonClass}`;
-                svgButton.textContent = "SVG";
-                svgButton.setAttribute("data-title", "Download vector SVG for PowerPoint");
-                svgButton.setAttribute("aria-label", "Download vector SVG for PowerPoint");
+                svgButton.textContent = "PPT";
+                svgButton.dataset.originalSymbol = "PPT";
+                svgButton.dataset.originalTitle = "Download vector SVG sized 16.17 cm × 8.17 cm for PowerPoint";
+                svgButton.setAttribute("data-title", svgButton.dataset.originalTitle);
+                svgButton.setAttribute("aria-label", svgButton.dataset.originalTitle);
                 svgButton.setAttribute("role", "button");
                 svgButton.setAttribute("tabindex", "0");
                 const downloadSvg = async () => {
@@ -4595,17 +4598,20 @@ def install_chart_copy_controls() -> None:
                     try {
                         const href = await parentWindow.Plotly.toImage(graphDiv, {
                             format: "svg",
-                            width: 1920,
-                            height: 1080,
+                            // PowerPoint inserts Plotly SVG files at 144 DPI.
+                            // 916 × 463 px therefore opens at 16.17 × 8.17 cm,
+                            // matching the standard two-column KPI chart slot.
+                            width: 916,
+                            height: 463,
                             scale: 1,
                         });
                         const link = parentDocument.createElement("a");
                         link.href = href;
-                        link.download = "jovi-quality-chart.svg";
+                        link.download = "jovi-quality-chart-powerpoint.svg";
                         parentDocument.body.appendChild(link);
                         link.click();
                         link.remove();
-                        setButtonState(svgButton, "✓", "SVG downloaded");
+                        setButtonState(svgButton, "✓", "PowerPoint SVG downloaded");
                     } catch (_error) {
                         setButtonState(svgButton, "!", "Unable to export SVG");
                     }
@@ -6207,7 +6213,8 @@ def weekly_kpi_review_page() -> None:
     with st.expander("SMT KPI Graphs · PowerPoint", expanded=False):
         st.caption(
             "Cada gráfico usa os mesmos acumulados WK e os mesmos dias visíveis da tabela acima. "
-            "Abra o gráfico desejado e use ⧉ para copiá-lo; o ícone de download salva o PNG."
+            "Use PPT para baixar o SVG vetorial já dimensionado para 16,17 cm × 8,17 cm no PowerPoint; "
+            "use ⧉ para copiar um PNG 4K."
         )
         previous_label = f"WK{previous_end.isocalendar().week:02d}"
         current_label = f"WK{week_end.isocalendar().week:02d}"
