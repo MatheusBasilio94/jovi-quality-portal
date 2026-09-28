@@ -40,7 +40,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.71"
+APP_VERSION = "v0.5.72"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -94,6 +94,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.72", "Fixed a missing pandas import in the relocated OQC/FQC inspection history on Data Upload."),
     ("v0.5.71", "Moved SMT OQC and Assembly OQC/FQC manual entry and inspection history from KPI Track into each area's Data Upload page."),
     ("v0.5.54", "Classified Assembly Photosensor_calibration_Dark and Order-Linking defects as functional, aligning the MES functional-analysis scope."),
     ("v0.5.55", "Made refreshed Assembly FPY exports replace obsolete defects only on the MES dates covered by the upload, preserving all other historical data."),
@@ -8597,6 +8598,8 @@ def _assembly_upload_section_v2(store_status: dict) -> None:
 
 def _smt_oqc_data_management() -> None:
     """Manual SMT OQC entry and record history, managed from Data Upload."""
+    import pandas as pd
+
     st.markdown("### Manual SMT OQC input")
     with st.form("smt_oqc_input_form", clear_on_submit=True):
         form_columns = st.columns(5)
@@ -8662,6 +8665,8 @@ def _smt_oqc_data_management() -> None:
 
 def _assembly_oqc_fqc_data_management() -> None:
     """Manual Assembly OQC/FQC entry and record history, managed from Data Upload."""
+    import pandas as pd
+
     st.markdown("### Manual Assembly OQC and FQC input")
     with st.form("assembly_oqc_fqc_input_form", clear_on_submit=True):
         header_columns = st.columns(2)
