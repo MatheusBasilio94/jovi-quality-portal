@@ -124,11 +124,11 @@ class KpiSlideTests(unittest.TestCase):
         self.assertEqual(figure.layout.height, 1080)
         self.assertEqual(len(figure.layout.shapes), 1)
         self.assertEqual(list(figure.layout.yaxis.range), [0.9, 1.0])
-        self.assertTrue(figure.data[0].cliponaxis)
         self.assertEqual(
             list(figure.data[0].textposition),
-            ["bottom right", "bottom center", "top center", "bottom center", "bottom center", "bottom center", "bottom left"],
+            ["top right", "bottom center", "top center", "bottom center", "top center", "bottom center", "top left"],
         )
+        self.assertFalse(figure.data[0].cliponaxis)
 
 
 if __name__ == "__main__":

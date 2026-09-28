@@ -283,17 +283,11 @@ def build_kpi_panel_chart(panel: dict[str, Any]) -> go.Figure:
     x_values = frame.get(x_column, pd.Series(dtype="object"))
     dense = len(frame) >= 5
     positions = ["top center" if not dense or index % 2 == 0 else "bottom center" for index in range(len(frame))]
-    if value_type == "percent":
-        for index, value in enumerate(values):
-            # With a fixed 100% ceiling, labels above values close to the
-            # ceiling would be clipped. Put 99.80%+ labels below their point.
-            if pd.notna(value) and float(value) >= 0.998:
-                positions[index] = "bottom center"
     if positions:
         # Keep labels on the first and last categories inside the plot while
         # using the horizontal breathing room added to the category axis.
-        positions[0] = "bottom right" if value_type == "percent" and float(values.iloc[0]) >= 0.998 else "top right"
-        positions[-1] = "bottom left" if value_type == "percent" and float(values.iloc[-1]) >= 0.998 else "top left"
+        positions[0] = "top right"
+        positions[-1] = "top left"
 
     figure = go.Figure(
         go.Scatter(
@@ -306,7 +300,10 @@ def build_kpi_panel_chart(panel: dict[str, Any]) -> go.Figure:
             text=labels,
             textposition=positions,
             textfont=dict(color="#111111", size=20, family="Arial"),
-            cliponaxis=True,
+            # The percentage axis has a strict 100% ceiling. Let markers,
+            # connecting lines and labels use the margin above that boundary
+            # instead of cutting them in half at the plot edge.
+            cliponaxis=False,
             hovertemplate=(
                 "%{x}<br>Pass rate: %{y:.2%}<extra></extra>"
                 if value_type == "percent"
@@ -341,7 +338,7 @@ def build_kpi_panel_chart(panel: dict[str, Any]) -> go.Figure:
         title=dict(text=str(panel["title"]), x=0.5, xanchor="center", font=dict(size=32, family="Arial", color="#171717")),
         width=1920,
         height=1080,
-        margin=dict(l=125, r=35, t=105, b=55),
+        margin=dict(l=125, r=35, t=125, b=55),
         paper_bgcolor="#FFFFFF",
         plot_bgcolor="#FFFFFF",
         font=dict(family="Arial", color="#111111"),
@@ -351,6 +348,7 @@ def build_kpi_panel_chart(panel: dict[str, Any]) -> go.Figure:
         title_text="",
         range=[-0.35, max(len(frame) - 1, 0) + 0.45],
         showline=True,
+        layer="below traces",
         linecolor="#111111",
         linewidth=1,
         mirror=True,
@@ -364,6 +362,7 @@ def build_kpi_panel_chart(panel: dict[str, Any]) -> go.Figure:
         tickformat=".1%" if value_type == "percent" else ",.0f",
         showgrid=False,
         showline=True,
+        layer="below traces",
         linecolor="#111111",
         linewidth=1,
         mirror=True,
