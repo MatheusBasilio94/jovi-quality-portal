@@ -279,10 +279,17 @@ def build_kpi_panel_chart(panel: dict[str, Any]) -> go.Figure:
     # Keep a narrow buffer above 100% so a valid 100% marker and its label
     # remain inside the plot instead of being clipped at the top boundary.
     if value_type == "percent" and values.notna().any() and float(values.max()) >= 1.0:
-        axis_range[1] = max(axis_range[1], 1.008)
+        # A 100% data label needs more than a few pixels of headroom in the
+        # compact PowerPoint SVG. Keep the label within the plot boundary.
+        axis_range[1] = max(axis_range[1], 1.025)
     x_values = frame.get(x_column, pd.Series(dtype="object"))
     dense = len(frame) >= 5
     positions = ["top center" if not dense or index % 2 == 0 else "bottom center" for index in range(len(frame))]
+    if positions:
+        # Keep labels on the first and last categories inside the plot while
+        # using the horizontal breathing room added to the category axis.
+        positions[0] = "top right"
+        positions[-1] = "top left"
 
     figure = go.Figure(
         go.Scatter(
@@ -330,7 +337,7 @@ def build_kpi_panel_chart(panel: dict[str, Any]) -> go.Figure:
         title=dict(text=str(panel["title"]), x=0.5, xanchor="center", font=dict(size=32, family="Arial", color="#171717")),
         width=1920,
         height=1080,
-        margin=dict(l=125, r=80, t=120, b=105),
+        margin=dict(l=125, r=35, t=105, b=55),
         paper_bgcolor="#FFFFFF",
         plot_bgcolor="#FFFFFF",
         font=dict(family="Arial", color="#111111"),
@@ -338,6 +345,7 @@ def build_kpi_panel_chart(panel: dict[str, Any]) -> go.Figure:
     )
     figure.update_xaxes(
         title_text="",
+        range=[-0.35, max(len(frame) - 1, 0) + 0.45],
         showline=True,
         linecolor="#111111",
         linewidth=1,
@@ -350,8 +358,7 @@ def build_kpi_panel_chart(panel: dict[str, Any]) -> go.Figure:
         title_standoff=18,
         range=axis_range,
         tickformat=".1%" if value_type == "percent" else ",.0f",
-        showgrid=True,
-        gridcolor="#D9DDE3",
+        showgrid=False,
         showline=True,
         linecolor="#111111",
         linewidth=1,
