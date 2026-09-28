@@ -169,6 +169,8 @@ class AssemblyValidatedRulesTest(unittest.TestCase):
         self.assertTrue(assembly_kpi_v2.ASSEMBLY_KPI_RULE_VERSION)
         self.assertIn("Camera-auxiliary-tester", assembly_kpi_v2.FUNCTIONAL_OPERATIONS)
         self.assertIn("CCT_sensor_Calibration", assembly_kpi_v2.FUNCTIONAL_OPERATIONS)
+        self.assertIn("Order-Linking", assembly_kpi_v2.FUNCTIONAL_OPERATIONS)
+        self.assertIn("Photosensor_calibration_Dark", assembly_kpi_v2.FUNCTIONAL_OPERATIONS)
         self.assertIn("Glue_dispensing", assembly_kpi_v2.APPEARANCE_OPERATIONS)
         self.assertIn("PCB-Assembly", assembly_kpi_v2.APPEARANCE_OPERATIONS)
 
