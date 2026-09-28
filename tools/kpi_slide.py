@@ -21,9 +21,13 @@ def _value_range(values: pd.Series, value_type: str, target: float | None) -> li
     if value_type == "percent":
         if numeric.empty:
             return [0.9, 1.0]
-        lower, upper = float(numeric.min()), float(numeric.max())
-        span = max(upper - lower, 0.005)
-        return [max(0.0, lower - span * 1.2), min(1.0, upper + span * 1.8)]
+        lower = float(numeric.min())
+        # Percentage KPIs always use 100% as their ceiling. The lower bound
+        # follows the lowest visible value with a modest 10% range cushion,
+        # rounded down to a whole percent for a readable presentation scale.
+        cushion = max(0.005, (1.0 - lower) * 0.10)
+        lower_bound = max(0.0, lower - cushion)
+        return [int(lower_bound * 100 + 1e-9) / 100, 1.0]
     if numeric.empty or float(numeric.max()) <= 0:
         return [0.0, max(float(target or 0) * 1.2, 1.0)]
     return [0.0, float(numeric.max()) * 1.18]
@@ -276,20 +280,18 @@ def build_kpi_panel_chart(panel: dict[str, Any]) -> go.Figure:
     values = pd.to_numeric(frame.get(y_column, pd.Series(dtype="float64")), errors="coerce")
     labels = _labels(values, value_type)
     axis_range = _value_range(values, value_type, target)
-    # Keep a narrow buffer above 100% so a valid 100% marker and its label
-    # remain inside the plot instead of being clipped at the top boundary.
-    if value_type == "percent" and values.notna().any() and float(values.max()) >= 1.0:
-        # A 100% data label needs more than a few pixels of headroom in the
-        # compact PowerPoint SVG. Keep the label within the plot boundary.
-        axis_range[1] = max(axis_range[1], 1.025)
     x_values = frame.get(x_column, pd.Series(dtype="object"))
     dense = len(frame) >= 5
     positions = ["top center" if not dense or index % 2 == 0 else "bottom center" for index in range(len(frame))]
+    if value_type == "percent":
+        for index, value in enumerate(values):
+            if pd.notna(value) and float(value) >= 1.0 - 1e-9:
+                positions[index] = "bottom center"
     if positions:
         # Keep labels on the first and last categories inside the plot while
         # using the horizontal breathing room added to the category axis.
-        positions[0] = "top right"
-        positions[-1] = "top left"
+        positions[0] = "bottom right" if value_type == "percent" and float(values.iloc[0]) >= 1.0 - 1e-9 else "top right"
+        positions[-1] = "bottom left" if value_type == "percent" and float(values.iloc[-1]) >= 1.0 - 1e-9 else "top left"
 
     figure = go.Figure(
         go.Scatter(
@@ -330,7 +332,7 @@ def build_kpi_panel_chart(panel: dict[str, Any]) -> go.Figure:
             line_color=TARGET_COLOR,
             line_width=2,
             annotation_text=_target_label(target, value_type),
-            annotation_position="top right",
+            annotation_position="bottom left" if value_type == "percent" else "top right",
             annotation_font=dict(color="#C2410C", size=19, family="Arial"),
         )
     figure.update_layout(
