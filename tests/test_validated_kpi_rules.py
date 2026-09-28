@@ -218,6 +218,46 @@ class AssemblyValidatedRulesTest(unittest.TestCase):
             self.assertEqual(result["smt_duty_pcbs"], 1)
             self.assertEqual(result["smt_duty_ppm"], 10_000)
 
+    def test_refreshed_fpy_snapshot_removes_obsolete_events_only_on_covered_dates(self) -> None:
+        """A corrected MES day must replace stale events without losing other history."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+
+            def detail_row(pcb: str, timestamp: str, phenomenon: str) -> dict:
+                return {
+                    "PCB": pcb,
+                    "BadMachEntryTime": timestamp,
+                    "TestTime": timestamp,
+                    "TestOperation": "Audio-Testing",
+                    "Fault Phenomenon": phenomenon,
+                    "DutyType": "SMT Process",
+                    "model": "M1",
+                }
+
+            original = root / "original.xlsx"
+            self.write_book(
+                original,
+                "Detail",
+                pd.DataFrame(
+                    [
+                        detail_row("HISTORIC", "2026-09-20 08:00", "Historic defect"),
+                        detail_row("STALE", "2026-09-25 08:00", "Removed by MES refresh"),
+                        detail_row("CURRENT", "2026-09-25 09:00", "Still confirmed"),
+                    ]
+                ),
+            )
+            refreshed = root / "refreshed.xlsx"
+            self.write_book(
+                refreshed,
+                "Detail",
+                pd.DataFrame([detail_row("CURRENT", "2026-09-25 09:00", "Still confirmed")]),
+            )
+
+            combined = assembly_kpi_v2.combine_fpy_defects([original, refreshed])
+
+            self.assertEqual(set(combined["PCBNormalized"]), {"historic", "current"})
+            self.assertEqual(set(combined["DefectDate"].dt.date), {date(2026, 9, 20), date(2026, 9, 25)})
+
     def test_partial_repair_upload_keeps_prior_event_classifications(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

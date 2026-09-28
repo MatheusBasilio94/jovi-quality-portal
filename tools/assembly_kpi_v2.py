@@ -183,17 +183,32 @@ def read_fpy_defects(source) -> pd.DataFrame:
 
 
 def combine_fpy_defects(sources: Iterable) -> pd.DataFrame:
-    """Combine full, cumulative or partial FPY uploads; newer copies replace only the same event."""
+    """Combine FPY uploads, replacing the covered dates of a newer MES snapshot.
+
+    The MES ``Detail`` export is authoritative for every defect date it
+    contains.  A later upload must therefore remove an older event on those
+    same dates when that event no longer appears in the refreshed export.
+    Dates that the new file does not cover remain untouched, which keeps
+    partial one- or two-day uploads and historical files incremental.
+    """
     source_list = [sources] if isinstance(sources, (str, Path, bytes, bytearray)) else list(sources)
-    frames = []
+    active_frames = []
     for source_order, source in enumerate(source_list):
         frame = read_fpy_defects(source).copy()
         frame["SourceOrder"] = source_order
-        frames.append(frame)
-    if not frames:
+        if active_frames:
+            active = pd.concat(active_frames, ignore_index=True)
+            covered_dates = frame["DefectDate"].dropna().unique()
+            # A refreshed MES Detail file replaces only the dates represented
+            # in that file.  This removes obsolete events without discarding
+            # independent historical or partial uploads.
+            active = active[~active["DefectDate"].isin(covered_dates)].copy()
+            active_frames = [active] if not active.empty else []
+        active_frames.append(frame)
+    if not active_frames:
         raise RuntimeError("Carregue ao menos um arquivo FPY de defeitos de Assembly.")
 
-    active = pd.concat(frames, ignore_index=True)
+    active = pd.concat(active_frames, ignore_index=True)
     return active.sort_values(["DefectDate", "SourceOrder", "EventKey"]).drop_duplicates(
         "EventKey", keep="last"
     ).reset_index(drop=True)
