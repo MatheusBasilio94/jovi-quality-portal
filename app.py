@@ -39,7 +39,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.56"
+APP_VERSION = "v0.5.57"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -96,6 +96,7 @@ VERSION_HISTORY = [
     ("v0.5.54", "Classified Assembly Photosensor_calibration_Dark and Order-Linking defects as functional, aligning the MES functional-analysis scope."),
     ("v0.5.55", "Made refreshed Assembly FPY exports replace obsolete defects only on the MES dates covered by the upload, preserving all other historical data."),
     ("v0.5.56", "Extended MES date-level FPY reconciliation to SMT, so refreshed exports remove obsolete events only within their covered dates."),
+    ("v0.5.57", "Invalidated the prepared Assembly KPI source cache when MES consolidation rules change, applying refreshed defect snapshots immediately."),
     ("v0.5.53", "Classified Assembly CCT_sensor_Calibration failures as functional, including their Mando records in the Function Mando KPI."),
     ("v0.5.52", "Restored the single Analysis period date field and constrained its Streamlit container to the visible control width."),
     ("v0.5.51", "Freed manual SMT and Assembly OQC/FQC inspection dates from the uploaded production period, defaulting to the latest available day."),
@@ -6812,8 +6813,10 @@ def prepare_assembly_kpi_sources_cached(
     input_signatures: tuple[tuple[str, int, int], ...],
     defect_signatures: tuple[tuple[str, int, int], ...],
     repair_signatures: tuple[tuple[str, int, int], ...],
+    rule_version: str,
 ) -> tuple:
     """Read the source workbooks only once for every report period sharing the same uploads."""
+    _ = rule_version  # Cache key: defect consolidation and classification rules affect prepared data.
     input_paths = [Path(signature[0]) for signature in input_signatures]
     defect_paths = [Path(signature[0]) for signature in defect_signatures]
     repair_paths = [Path(signature[0]) for signature in repair_signatures]
@@ -6834,7 +6837,7 @@ def calculate_assembly_kpi_metrics_cached(
     import pandas as pd
 
     inputs, defects = prepare_assembly_kpi_sources_cached(
-        input_signatures, defect_signatures, repair_signatures
+        input_signatures, defect_signatures, repair_signatures, rule_version
     )
     result = assembly_kpi_v2.calculate_from_prepared(
         inputs,
