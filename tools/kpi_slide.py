@@ -336,8 +336,10 @@ def build_kpi_panel_chart(panel: dict[str, Any]) -> go.Figure:
         )
     figure.update_layout(
         title=dict(text=str(panel["title"]), x=0.5, xanchor="center", font=dict(size=32, family="Arial", color="#171717")),
-        width=1920,
-        height=1080,
+        # Compact interactive preview. The PNG and PowerPoint SVG exporters
+        # set their own output dimensions independently of this site view.
+        width=1000,
+        height=520,
         margin=dict(l=125, r=35, t=125, b=55),
         paper_bgcolor="#FFFFFF",
         plot_bgcolor="#FFFFFF",

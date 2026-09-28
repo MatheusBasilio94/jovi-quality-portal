@@ -40,7 +40,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.69"
+APP_VERSION = "v0.5.70"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -101,6 +101,7 @@ VERSION_HISTORY = [
     ("v0.5.58", "Added a copy-ready four-panel SMT KPI slide with one selectable analysis period and presentation-standard styling."),
     ("v0.5.59", "Refined the SMT KPI slide with weekly rollups plus latest-week input days, and removed its non-chart header for a cleaner PowerPoint copy."),
     ("v0.5.60", "Moved the SMT KPI Slide into Smart Report's Weekly KPI Review, where it now mirrors the table's two weekly summaries and visible daily columns."),
+    ("v0.5.70", "Reduced the on-screen presentation-chart preview while keeping its PNG and PowerPoint export dimensions unchanged."),
     ("v0.5.69", "Embedded the 16.17 cm × 8.17 cm physical dimensions in PowerPoint SVG exports so PowerPoint inserts them at the intended size."),
     ("v0.5.68", "Added a black outer frame to PowerPoint chart exports and simplified the inner axes to the bottom baseline only."),
     ("v0.5.67", "Kept the 100% ceiling while allowing presentation-chart labels, markers and lines to render into the top margin without clipping."),

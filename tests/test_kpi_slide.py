@@ -120,8 +120,8 @@ class KpiSlideTests(unittest.TestCase):
             }
         )
 
-        self.assertEqual(figure.layout.width, 1920)
-        self.assertEqual(figure.layout.height, 1080)
+        self.assertEqual(figure.layout.width, 1000)
+        self.assertEqual(figure.layout.height, 520)
         self.assertEqual(len(figure.layout.shapes), 1)
         self.assertEqual(list(figure.layout.yaxis.range), [0.9, 1.0])
         self.assertEqual(
