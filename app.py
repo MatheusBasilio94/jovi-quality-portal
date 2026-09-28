@@ -40,7 +40,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.67"
+APP_VERSION = "v0.5.68"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -101,6 +101,7 @@ VERSION_HISTORY = [
     ("v0.5.58", "Added a copy-ready four-panel SMT KPI slide with one selectable analysis period and presentation-standard styling."),
     ("v0.5.59", "Refined the SMT KPI slide with weekly rollups plus latest-week input days, and removed its non-chart header for a cleaner PowerPoint copy."),
     ("v0.5.60", "Moved the SMT KPI Slide into Smart Report's Weekly KPI Review, where it now mirrors the table's two weekly summaries and visible daily columns."),
+    ("v0.5.68", "Added a black outer frame to PowerPoint chart exports and simplified the inner axes to the bottom baseline only."),
     ("v0.5.67", "Kept the 100% ceiling while allowing presentation-chart labels, markers and lines to render into the top margin without clipping."),
     ("v0.5.66", "Prevented presentation pass-rate labels at 99.80% or above from clipping against the fixed 100% ceiling."),
     ("v0.5.65", "Made presentation pass-rate scales automatic with a fixed 100% ceiling and a compact lower bound based on the period minimum."),
@@ -4519,6 +4520,23 @@ def install_chart_copy_controls() -> None:
                 ]);
             };
 
+            const addPowerPointFrame = async (href, width, height) => {
+                const response = await parentWindow.fetch(href);
+                const svg = await response.text();
+                // The half-pixel inset keeps the full one-pixel stroke within
+                // the SVG canvas. Its overall 916 × 463 dimensions therefore
+                // already include the external frame in PowerPoint.
+                const frame = `<rect x="0.5" y="0.5" width="${width - 1}" height="${height - 1}" `
+                    + `fill="none" stroke="#000000" stroke-width="1" vector-effect="non-scaling-stroke"/>`;
+                const closingTagIndex = svg.lastIndexOf("</svg>");
+                const framedSvg = closingTagIndex >= 0
+                    ? `${svg.slice(0, closingTagIndex)}${frame}${svg.slice(closingTagIndex)}`
+                    : svg;
+                return parentWindow.URL.createObjectURL(
+                    new parentWindow.Blob([framedSvg], {type: "image/svg+xml;charset=utf-8"})
+                );
+            };
+
             const addCopyButton = (chartContainer) => {
                 if (chartContainer.querySelector(`.${buttonClass}`)) return;
                 const nativeButton = chartContainer.querySelector(nativeSelector);
@@ -4600,21 +4618,25 @@ def install_chart_copy_controls() -> None:
                         return;
                     }
                     try {
+                        const svgWidth = 916;
+                        const svgHeight = 463;
                         const href = await parentWindow.Plotly.toImage(graphDiv, {
                             format: "svg",
                             // PowerPoint inserts Plotly SVG files at 144 DPI.
                             // 916 × 463 px therefore opens at 16.17 × 8.17 cm,
                             // matching the standard two-column KPI chart slot.
-                            width: 916,
-                            height: 463,
+                            width: svgWidth,
+                            height: svgHeight,
                             scale: 1,
                         });
+                        const framedHref = await addPowerPointFrame(href, svgWidth, svgHeight);
                         const link = parentDocument.createElement("a");
-                        link.href = href;
+                        link.href = framedHref;
                         link.download = "jovi-quality-chart-powerpoint.svg";
                         parentDocument.body.appendChild(link);
                         link.click();
                         link.remove();
+                        parentWindow.setTimeout(() => parentWindow.URL.revokeObjectURL(framedHref), 1000);
                         setButtonState(svgButton, "✓", "PowerPoint SVG downloaded");
                     } catch (_error) {
                         setButtonState(svgButton, "!", "Unable to export SVG");

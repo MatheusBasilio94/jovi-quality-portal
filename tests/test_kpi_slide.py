@@ -129,6 +129,10 @@ class KpiSlideTests(unittest.TestCase):
             ["top right", "bottom center", "top center", "bottom center", "top center", "bottom center", "top left"],
         )
         self.assertFalse(figure.data[0].cliponaxis)
+        self.assertTrue(figure.layout.xaxis.showline)
+        self.assertFalse(figure.layout.xaxis.mirror)
+        self.assertFalse(figure.layout.yaxis.showline)
+        self.assertFalse(figure.layout.yaxis.mirror)
 
 
 if __name__ == "__main__":

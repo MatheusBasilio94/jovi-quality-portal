@@ -351,7 +351,8 @@ def build_kpi_panel_chart(panel: dict[str, Any]) -> go.Figure:
         layer="below traces",
         linecolor="#111111",
         linewidth=1,
-        mirror=True,
+        mirror=False,
+        zeroline=False,
         tickfont=dict(size=18, color="#111111"),
     )
     figure.update_yaxes(
@@ -361,11 +362,10 @@ def build_kpi_panel_chart(panel: dict[str, Any]) -> go.Figure:
         range=axis_range,
         tickformat=".1%" if value_type == "percent" else ",.0f",
         showgrid=False,
-        showline=True,
+        showline=False,
         layer="below traces",
-        linecolor="#111111",
-        linewidth=1,
-        mirror=True,
+        mirror=False,
+        zeroline=False,
         tickfont=dict(size=18, color="#111111"),
     )
     return figure
