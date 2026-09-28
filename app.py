@@ -40,7 +40,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.72"
+APP_VERSION = "v0.5.73"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -94,6 +94,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.73", "Removed the unnecessary Assembly SMT duty defect breakdown table from SMT KPI Track."),
     ("v0.5.72", "Fixed a missing pandas import in the relocated OQC/FQC inspection history on Data Upload."),
     ("v0.5.71", "Moved SMT OQC and Assembly OQC/FQC manual entry and inspection history from KPI Track into each area's Data Upload page."),
     ("v0.5.54", "Classified Assembly Photosensor_calibration_Dark and Order-Linking defects as functional, aligning the MES functional-analysis scope."),
@@ -7391,11 +7392,6 @@ def smt_kpi_track_page(color: str) -> None:
 
     if not function_exceptions.empty or not process_exceptions.empty or not assembly_duty_exceptions.empty:
         st.caption("A red × marks a daily period where the available input is lower than the defects required by that KPI. The daily KPI is not calculated; a valid larger-period aggregate remains available.")
-
-    if assembly_kpi and not assembly_kpi["breakdown"].empty:
-        st.markdown("### Assembly SMT duty defect breakdown")
-        styled_table(assembly_kpi["breakdown"])
-
 
 def assembly_kpi_track_page(color: str) -> None:
     import pandas as pd
