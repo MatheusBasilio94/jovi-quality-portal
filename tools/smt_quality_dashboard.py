@@ -22,8 +22,8 @@ from tools.trend_rules import requested_trend_grain
 from tools.smt_fpy_sources import read_detail, validate_pair, active_pairs
 
 
-TOOL_VERSION = "v2.0.0"
-SMT_FAILURE_RULE_VERSION = "mes-fpy-authoritative-entry-date-2026-09-17.1"
+TOOL_VERSION = "v2.0.1"
+SMT_FAILURE_RULE_VERSION = "mes-fpy-authoritative-entry-date-2026-09-28.2"
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 SMT_STORE_DIR = PROJECT_DIR / "data_store" / "smt"
 SMT_INPUT_DIR = SMT_STORE_DIR / "fpy" / "input"
@@ -399,19 +399,34 @@ def consolidate_defect_sources(
     defect_signatures: tuple[tuple[str, int, int], ...],
     failure_rule_version: str,
 ) -> tuple[pd.DataFrame, dict]:
-    """Combine cumulative and incremental defect files, keeping the most recent duplicate."""
-    frames = []
+    """Combine SMT FPY snapshots while reconciling the dates they cover.
+
+    A later MES Detail export is authoritative for each ``BadMachEntryTime``
+    date it contains. It replaces older events from those dates, including
+    events that no longer exist in the corrected export. Dates outside the
+    new file stay intact, so partial uploads remain incremental.
+    """
+    active = pd.DataFrame()
     audits = []
-    for signature in defect_signatures:
+    snapshot_rows_replaced = 0
+    # Stored filenames start with a content hash, so alphabetical directory
+    # order is not upload order. Process oldest to newest using the persisted
+    # modification marker before applying date-level replacement.
+    for signature in sorted(defect_signatures, key=lambda value: (value[2], value[0])):
         frame, audit = read_defect_path_cached(*signature, failure_rule_version)
         source = frame.copy()
         source["SourceModified"] = signature[2]
-        frames.append(source)
+        if not active.empty:
+            covered_dates = source["KPIDate"].dropna().unique()
+            replaced = active["KPIDate"].isin(covered_dates)
+            snapshot_rows_replaced += int(replaced.sum())
+            active = active.loc[~replaced].copy()
+        active = pd.concat([active, source], ignore_index=True)
         audits.append(audit)
-    if not frames:
+    if active.empty:
         raise RuntimeError("No SMT defect files are available.")
 
-    combined = pd.concat(frames, ignore_index=True).sort_values("SourceModified")
+    combined = active.sort_values("SourceModified")
     merge_keys = ["PCB", "TestTime", "Operation", "Phenomenon"]
     duplicate_rows = int(combined.duplicated(merge_keys, keep="last").sum())
     combined = combined.drop_duplicates(merge_keys, keep="last").reset_index(drop=True)
@@ -419,6 +434,7 @@ def consolidate_defect_sources(
     audit = {key: int(sum(int(item.get(key, 0)) for item in audits)) for key in audit_keys}
     audit["SourceFiles"] = len(defect_signatures)
     audit["DuplicateRowsRemoved"] = duplicate_rows
+    audit["SnapshotRowsReplaced"] = snapshot_rows_replaced
     return combined.drop(columns=["SourceModified"]), audit
 
 
@@ -1223,7 +1239,7 @@ def bar_chart(frame: pd.DataFrame, category: str, value: str, title: str, color:
 def _upload_section(color: str) -> None:
     status = smt_store_status()
     st.markdown("### Upload Data")
-    st.caption("Carregue inputs FPY diariamente. Defeitos FPY e reparo aceitam arquivos de qualquer período; o histórico é preservado e apenas eventos repetidos são atualizados.")
+    st.caption("Carregue inputs FPY diariamente. Defeitos FPY e reparo aceitam arquivos de qualquer período; uma exportação MES atualizada substitui apenas os eventos das datas que ela cobre e preserva o restante do histórico.")
     columns = st.columns(4)
     with columns[0]:
         metric_card("FPY Input", fmt_int(status["inputs"]), "Arquivos diários", color)

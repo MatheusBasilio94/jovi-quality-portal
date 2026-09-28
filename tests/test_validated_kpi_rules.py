@@ -258,6 +258,54 @@ class AssemblyValidatedRulesTest(unittest.TestCase):
             self.assertEqual(set(combined["PCBNormalized"]), {"historic", "current"})
             self.assertEqual(set(combined["DefectDate"].dt.date), {date(2026, 9, 20), date(2026, 9, 25)})
 
+    def test_refreshed_smt_snapshot_removes_obsolete_events_only_on_covered_dates(self) -> None:
+        """A corrected SMT Detail export replaces stale rows only for its MES dates."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+
+            def write_smt_export(path: Path, rows: list[dict]) -> None:
+                summary = pd.DataFrame([{
+                    "OnceDamage": len(rows), "2TimesDamage": 0, "3TimesDamage": 0,
+                    "4TimesDamage": 0, "5TimesDamage": 0, "6TimesDamage": 0,
+                }])
+                with pd.ExcelWriter(path, engine="openpyxl") as writer:
+                    pd.DataFrame(rows).to_excel(writer, sheet_name="Detail", index=False)
+                    summary.to_excel(writer, sheet_name="BadMachine", index=False)
+
+            def detail_row(pcb: str, timestamp: str, phenomenon: str) -> dict:
+                return {
+                    "PCB": pcb,
+                    "model": "M1",
+                    "BadMachEntryTime": timestamp,
+                    "TestTime": timestamp,
+                    "TestOperation": "Download",
+                    "Fault Phenomenon": phenomenon,
+                }
+
+            original = root / "original-smt.xlsx"
+            write_smt_export(
+                original,
+                [
+                    detail_row("HISTORIC", "2026-09-20 08:00", "Historic defect"),
+                    detail_row("STALE", "2026-09-25 08:00", "Removed by MES refresh"),
+                    detail_row("CURRENT", "2026-09-25 09:00", "Still confirmed"),
+                ],
+            )
+            refreshed = root / "refreshed-smt.xlsx"
+            write_smt_export(refreshed, [detail_row("CURRENT", "2026-09-25 09:00", "Still confirmed")])
+
+            combined, audit = smt_quality_dashboard.consolidate_defect_sources(
+                (
+                    (str(refreshed), refreshed.stat().st_size, 200),
+                    (str(original), original.stat().st_size, 100),
+                ),
+                smt_quality_dashboard.SMT_FAILURE_RULE_VERSION,
+            )
+
+            self.assertEqual(set(combined["PCB"]), {"HISTORIC", "CURRENT"})
+            self.assertEqual(set(combined["KPIDate"].dt.date), {date(2026, 9, 20), date(2026, 9, 25)})
+            self.assertEqual(audit["SnapshotRowsReplaced"], 2)
+
     def test_partial_repair_upload_keeps_prior_event_classifications(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
