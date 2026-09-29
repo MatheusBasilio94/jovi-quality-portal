@@ -446,6 +446,64 @@ def heatmap_chart(
     return chart
 
 
+def recurrence_heatmap_chart(
+    frame: pd.DataFrame,
+    title: str = "Recurring defect history",
+    max_items: int = 6,
+) -> go.Figure:
+    """Show which repair reasons remain active from week to week."""
+    required = {"TopIssue", "WeekStart", "Week", "NGPCBs"}
+    if frame is None or frame.empty or not required.issubset(frame.columns):
+        return _base_layout(go.Figure(), title)
+    data = frame[["TopIssue", "WeekStart", "Week", "NGPCBs"]].copy()
+    data["NGPCBs"] = pd.to_numeric(data["NGPCBs"], errors="coerce").fillna(0)
+    totals = data.groupby("TopIssue", as_index=False)["NGPCBs"].sum()
+    top_issues = totals.sort_values(["NGPCBs", "TopIssue"], ascending=[False, True]).head(max_items)["TopIssue"].tolist()
+    data = data[data["TopIssue"].isin(top_issues)].copy()
+    week_order = data.sort_values("WeekStart")[["WeekStart", "Week"]].drop_duplicates()["Week"].tolist()
+    issue_order = [
+        issue
+        for issue in top_issues
+        if issue in set(data["TopIssue"])
+    ]
+    matrix = (
+        data.pivot_table(index="TopIssue", columns="Week", values="NGPCBs", aggfunc="sum", fill_value=0)
+        .reindex(index=issue_order, columns=week_order, fill_value=0)
+    )
+    y_labels = unique_short_labels(pd.Series(matrix.index, index=matrix.index), 24).tolist()
+    customdata = [
+        [[issue] for _ in matrix.columns]
+        for issue in matrix.index
+    ]
+    chart = go.Figure(
+        data=[
+            go.Heatmap(
+                z=matrix.to_numpy(),
+                x=matrix.columns.tolist(),
+                y=y_labels,
+                text=matrix.to_numpy(),
+                texttemplate="%{text:.0f}",
+                textfont=dict(color=NAVY, size=11),
+                customdata=customdata,
+                colorscale=[[0, "#F1F5F9"], [0.15, "#CDEDDC"], [1, "#0D7A45"]],
+                zmin=0,
+                colorbar=dict(title="NG PCBs"),
+                hovertemplate="%{customdata[0]}<br>%{x}<br>NG PCBs: %{z:,.0f}<extra></extra>",
+            )
+        ]
+    )
+    _base_layout(
+        chart,
+        title,
+        height=350,
+        margin=dict(l=125, r=65, t=75, b=75),
+        legend_y=-0.18,
+    )
+    chart.update_xaxes(title_text="Week")
+    chart.update_yaxes(title_text="Repair conclusion", autorange="reversed")
+    return chart
+
+
 def ranked_bar_chart(
     frame: pd.DataFrame,
     category: str,
