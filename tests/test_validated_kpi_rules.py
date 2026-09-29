@@ -32,6 +32,35 @@ class AssemblyValidatedRulesTest(unittest.TestCase):
         with pd.ExcelWriter(path, engine="openpyxl") as writer:
             frame.to_excel(writer, sheet_name=sheet, index=False)
 
+    def test_repair_cause_and_remark_flow_to_confirmed_defects(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            input_path = root / "input.xlsx"
+            defect_path = root / "defects.xlsx"
+            repair_path = root / "repair.xlsx"
+            self.write_book(input_path, "ModelData", pd.DataFrame([
+                {"model": "M1", "Input": 100, "BeginDate": "2026-09-01", "EndDate": "2026-09-01"},
+            ]))
+            event = {
+                "PCB": "A1", "BadMachEntryTime": "2026-09-01 08:00",
+                "TestTime": "2026-09-01 08:00", "TestOperation": "Audio-Testing",
+                "Fault Phenomenon": "No sound", "DutyType": "Assembly Process", "model": "M1",
+                "Fault reason": "FPY reason", "RepaireRemark": "FPY remark",
+            }
+            self.write_book(defect_path, "Detail", pd.DataFrame([event]))
+            self.write_book(repair_path, "QueryData", pd.DataFrame([{
+                **{key: event[key] for key in assembly_kpi_v2.EVENT_KEY_COLUMNS},
+                "DutyType": "Assembly Process", "RepairDate": "2026-09-02 09:00",
+                "Fault reason": "Speaker cable", "RepaireRemark": "Cable reseated",
+            }]))
+            result = assembly_kpi_v2.calculate(
+                [input_path], [defect_path], [repair_path], date(2026, 9, 1), date(2026, 9, 1)
+            )
+            record = result["defects"].iloc[0]
+            self.assertEqual(record["FaultReason"], "Speaker cable")
+            self.assertEqual(record["RepairRemark"], "Cable reseated")
+            self.assertEqual(result["functional_pcbs"], 1)
+
     def test_period_deduplication_classification_and_final_responsibility(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
