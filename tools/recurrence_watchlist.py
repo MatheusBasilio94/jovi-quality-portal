@@ -73,6 +73,8 @@ def build_recurrence_watchlist(
     board = data.get("PCB", data.get("Barcode", pd.Series("", index=data.index)))
     data["_BoardKey"] = board.fillna("").astype(str).str.strip()
     data.loc[data["_BoardKey"].eq(""), "_BoardKey"] = data.index.astype(str)
+    if "Model" in data.columns:
+        data["_BoardKey"] = data["Model"].fillna("").astype(str).str.strip() + "::" + data["_BoardKey"]
     data["TopIssue"] = top_issue_reasons(data)
     data["WeekStart"] = data["_RecurrenceDate"] - pd.to_timedelta(data["_RecurrenceDate"].dt.weekday, unit="D")
     data["Week"] = data["WeekStart"].dt.strftime("WK%V · %d/%m")

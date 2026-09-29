@@ -87,6 +87,7 @@ MODULES = {
     "Learning Area": {"color": "#1D5FBF", "tabs": ["Overview", "Procedures", "Process Map", "KPI's"]},
     "SMT": {"color": "#0D7A45", "tabs": ["KPI Track", "Quality Dashboard", "BOM Comparison Tool - SMT", "Data Upload"]},
     "Assembly": {"color": "#6532C8", "tabs": ["KPI Track", "Quality Dashboard", "BOM Comparison Tool - Assembly", "Data Upload"]},
+    "Model Comparison": {"color": "#1D5FBF", "tabs": []},
     "IQC": {"color": "#B45309", "tabs": ["Overview"]},
     "Smart Report": {"color": "#0F766E", "tabs": []},
     "About": {"color": "#1D5FBF", "tabs": []},
@@ -2012,6 +2013,9 @@ def sync_navigation_from_query() -> None:
     if module not in MODULES:
         module = "Home"
 
+    if module in {"SMT", "Assembly"} and get_query_value("tab") == "Model Comparison":
+        module = "Model Comparison"
+
     tabs = MODULES[module]["tabs"]
     tab = get_query_value("tab", st.session_state.tab)
     if tabs and tab not in tabs:
@@ -2028,6 +2032,8 @@ def navigation_key(value: str) -> str:
 
 
 def set_navigation(module: str, tab: str = "") -> None:
+    if module in {"SMT", "Assembly"} and tab == "Model Comparison":
+        module = "Model Comparison"
     if module not in MODULES:
         module = "Home"
     available_tabs = MODULES[module]["tabs"]
@@ -2050,6 +2056,7 @@ def top_navigation() -> None:
         ("Home", "Home", 0.58),
         ("SMT", "SMT", 0.48),
         ("Assembly", "Assembly", 0.74),
+        ("Model Comparison", "Compare Models", 1.06),
         ("IQC", "IQC", 0.46),
         ("Smart Report", "Smart Report", 0.98),
         ("Learning Area", "Learning", 0.84),
@@ -2399,6 +2406,7 @@ def analysis_period_control(
     *,
     default_start=None,
     default_end=None,
+    show_presets: bool = True,
 ) -> tuple[date, date]:
     """Render the shared compact period menu used by KPI and quality dashboards."""
     minimum_date = _as_date(minimum_value)
@@ -2435,27 +2443,30 @@ def analysis_period_control(
     if range_key not in st.session_state:
         st.session_state[range_key] = initial_range
 
-    with st.container(key=f"analysis_period_{navigation_key(key)}", width=455):
-        preset_col, range_col = st.columns([0.48, 0.82], gap="small", width=455)
-        with preset_col:
-            st.selectbox(
-                "Quick selection",
-                ANALYSIS_PERIOD_OPTIONS,
-                key=preset_key,
-                on_change=_apply_period_preset,
-                args=(preset_key, range_key, remembered_range_key, minimum_date, maximum_date),
-                width=160,
-            )
-        with range_col:
+    with st.container(key=f"analysis_period_{navigation_key(key)}", width="stretch"):
+        if show_presets:
+            preset_col, range_col = st.columns([0.48, 0.82], gap="small", width=455)
+            with preset_col:
+                st.selectbox(
+                    "Quick selection",
+                    ANALYSIS_PERIOD_OPTIONS,
+                    key=preset_key,
+                    on_change=_apply_period_preset,
+                    args=(preset_key, range_key, remembered_range_key, minimum_date, maximum_date),
+                    width=160,
+                )
+            with range_col:
+                selected_period = st.date_input(
+                    "Analysis period", min_value=minimum_date, max_value=maximum_date,
+                    format="DD/MM/YYYY", key=range_key,
+                    on_change=_remember_period_range, args=(range_key, remembered_range_key), width=270,
+                )
+        else:
             selected_period = st.date_input(
-                "Analysis period",
-                min_value=minimum_date,
-                max_value=maximum_date,
-                format="DD/MM/YYYY",
-                key=range_key,
-                on_change=_remember_period_range,
-                args=(range_key, remembered_range_key),
-                width=270,
+                "Analysis period", min_value=minimum_date, max_value=maximum_date,
+                format="DD/MM/YYYY", key=range_key,
+                on_change=_remember_period_range, args=(range_key, remembered_range_key),
+                width="stretch",
             )
 
     if isinstance(selected_period, (tuple, list)) and len(selected_period) >= 2:
@@ -7648,31 +7659,42 @@ def _dashboard_priority(value: float, target: float | None = None) -> str:
     return "Monitor"
 
 
-def _build_smt_dashboard_view(analysis: dict, model: str, station: str, failure_type: str) -> dict:
+def _build_smt_dashboard_view(analysis: dict, model: str | list[str], station: str, failure_type: str, duty_type: str = "All") -> dict:
     import pandas as pd
     from tools import smt_quality_dashboard
 
     covered = analysis["covered_raw"].copy()
     calendar = analysis["raw"].copy()
     selected_input = analysis["selected_input"].copy()
+    selected_models = (
+        None
+        if model == "All" or model == []
+        else {model} if isinstance(model, str) else set(model)
+    )
+    use_model_scoped_board_keys = selected_models is None or len(selected_models) > 1
 
     def apply_filters(frame):
         view = frame.copy()
-        if model != "All":
-            view = view[view["Model"].eq(model)]
+        if selected_models is not None:
+            view = view[view["Model"].isin(selected_models)]
         if station != "All":
             view = view[view["Operation"].eq(station)]
         if failure_type != "All":
             view = view[view["FailureType"].eq(failure_type)]
+        if duty_type != "All":
+            view = view[view["DutyType"].eq(duty_type)]
         return view
 
     covered = apply_filters(covered)
     calendar = apply_filters(calendar)
-    if model != "All":
-        selected_input = selected_input[selected_input["Model"].eq(model)].copy()
+    if selected_models is not None:
+        selected_input = selected_input[selected_input["Model"].isin(selected_models)].copy()
 
     covered["_DefectKey"] = _dashboard_defect_key(covered)
     calendar["_DefectKey"] = _dashboard_defect_key(calendar)
+    if use_model_scoped_board_keys:
+        covered["_DefectKey"] = covered["Model"].fillna("").astype(str) + "::" + covered["_DefectKey"]
+        calendar["_DefectKey"] = calendar["Model"].fillna("").astype(str) + "::" + calendar["_DefectKey"]
     confirmed = covered[~covered["IsRejudgeOK"].fillna(False).astype(bool)].copy()
     rejudge = covered[covered["IsRejudgeOK"].fillna(False).astype(bool)].copy()
     classified = confirmed[
@@ -7930,10 +7952,655 @@ def smt_dashboard_driver_detail(confirmed):
     )
 
 
-def smt_quality_dashboard_v2(color: str) -> None:
+SMT_DEFECT_DIMENSIONS = (
+    ("Functional vs appearance", "FailureType", "Failure classification", "#2677D8"),
+    ("TestOperation", "Operation", "Station where the failure was recorded", "#6532C8"),
+    ("Fault Phenomenon", "Phenomenon", "Observed symptom", "#0C936C"),
+    ("Fault reason", "FaultReason", "Recorded cause", "#D97706"),
+    ("RepaireRemark", "RepairRemark", "Repair conclusion", "#C54B80"),
+    ("DutyType", "DutyType", "Assigned responsibility", "#1E7191"),
+)
+
+ASSEMBLY_DEFECT_DIMENSIONS = (
+    ("Functional vs appearance", "FailureType", "Failure classification", "#2677D8"),
+    ("TestOperation", "TestOperation", "Station where the failure was recorded", "#6532C8"),
+    ("Fault Phenomenon", "Phenomenon", "Observed symptom", "#0C936C"),
+    ("Fault reason", "FaultReason", "Recorded cause", "#D97706"),
+    ("RepaireRemark", "RepairRemark", "Repair conclusion", "#C54B80"),
+    ("DutyType", "DutyType", "Assigned responsibility", "#1E7191"),
+)
+
+
+def _smt_breakdown_source(confirmed):
+    """Normalize the six MES fields once, keeping one row per confirmed record."""
+    source = confirmed.copy()
+    for _, column, _, _ in SMT_DEFECT_DIMENSIONS:
+        if column not in source:
+            source[column] = ""
+        source[column] = source[column].fillna("").astype(str).str.strip()
+        source[column] = source[column].replace({"": "Not specified", "nan": "Not specified"})
+    return source
+
+
+def _smt_breakdown_scope(source, selections, excluded_column=None):
+    """Apply other-card selections; a card keeps its own category distribution."""
+    scope = source
+    for column, category in selections.items():
+        if category != "All" and column != excluded_column:
+            scope = scope[scope[column].eq(category)]
+    return scope
+
+
+def _clear_smt_breakdown_selections() -> None:
+    for _, column, _, _ in SMT_DEFECT_DIMENSIONS:
+        st.session_state[f"smt_breakdown_{column}"] = "All"
+
+
+def _select_smt_breakdown_category(column: str, category: str) -> None:
+    key = f"smt_breakdown_{column}"
+    st.session_state[key] = "All" if st.session_state.get(key) == category else category
+
+
+def render_smt_defect_dimension_cards(confirmed):
+    """Render six cross-filtering cards and return records matching all selections."""
+    source = _smt_breakdown_source(confirmed)
+    selections = {}
+    for _, column, _, _ in SMT_DEFECT_DIMENSIONS:
+        selections[column] = st.session_state.get(f"smt_breakdown_{column}", "All")
+
+    css = [
+        '<style>',
+        '.smt-dimension-title{color:#102D5B;font-size:1.04rem;font-weight:800;line-height:1.25}',
+        '.smt-dimension-subtitle{color:#6680A6;font-size:.73rem;margin:5px 0 14px;min-height:29px}',
+        '.smt-dimension-track{height:5px;border-radius:6px;background:#EDF2F9;margin:0 8px 8px;overflow:hidden}.smt-dimension-track i{display:block;height:100%;border-radius:6px}',
+        '.smt-dimension-empty{color:#6680A6;font-size:.75rem;margin-top:12px}',
+        'div[class*="st-key-smt_breakdown_item_"]{padding:0 3px}',
+        'div[class*="st-key-smt_breakdown_item_"] .stButton button{width:100%;min-height:32px;padding:4px 8px;justify-content:space-between;text-align:left;border:1px solid transparent;background:transparent;color:#17375F;font-size:.78rem;font-weight:600;box-shadow:none}',
+        'div[class*="st-key-smt_breakdown_item_"] .stButton button:hover{background:#F1F6FD;border-color:#CFDBEE}',
+        'div[class*="st-key-smt_breakdown_item_"] .stButton button p{width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+    ]
+    for index, (_, _, _, accent) in enumerate(SMT_DEFECT_DIMENSIONS):
+        css.append(
+            f'div[class*="st-key-smt_dimension_{index}"]{{background:#fff;border:1px solid #CFDBEE;'
+            f'border-top:3px solid {accent};border-radius:13px;padding:16px 17px 12px;'
+            'min-height:332px;box-shadow:0 2px 7px rgba(19,48,91,.04)}'
+        )
+    css.append('</style>')
+    st.markdown(''.join(css), unsafe_allow_html=True)
+
+    for start in (0, 3):
+        columns = st.columns(3, gap="medium")
+        for offset, slot in enumerate(columns):
+            index = start + offset
+            title, column, subtitle, accent = SMT_DEFECT_DIMENSIONS[index]
+            with slot:
+                with st.container(key=f"smt_dimension_{index}"):
+                    scope = _smt_breakdown_scope(source, selections, excluded_column=column)
+                    counts = (
+                        scope.groupby(column)["_DefectKey"].nunique().sort_values(ascending=False, kind="stable")
+                        if not scope.empty else None
+                    )
+                    maximum = max(int(counts.iloc[0]), 1) if counts is not None and not counts.empty else 1
+                    selected = selections[column]
+                    st.markdown(
+                        f'<div class="smt-dimension-title">{escape(title)}</div>'
+                        f'<div class="smt-dimension-subtitle">{escape(subtitle)} · unique NG PCBs per category</div>',
+                        unsafe_allow_html=True,
+                    )
+                    ranked = counts.index.tolist() if counts is not None else []
+                    if selected != "All" and selected not in ranked:
+                        ranked.insert(0, selected)
+                    with st.container(height=208, border=False, key=f"smt_dimension_list_{index}"):
+                        if not ranked:
+                            st.markdown('<div class="smt-dimension-empty">No defects match the other selections.</div>', unsafe_allow_html=True)
+                        for rank, category in enumerate(ranked):
+                            count = int(counts.get(category, 0)) if counts is not None else 0
+                            width = max(3, round(count / maximum * 100)) if count else 0
+                            item_key = f"smt_breakdown_item_{index}_{rank}"
+                            with st.container(key=item_key):
+                                st.button(
+                                    f"{category}   ·   {count:,}", key=f"smt_breakdown_click_{index}_{rank}",
+                                    on_click=_select_smt_breakdown_category, args=(column, category),
+                                    use_container_width=True,
+                                )
+                                st.markdown(
+                                    f'<div class="smt-dimension-track"><i style="width:{width}%;background:{accent}"></i></div>',
+                                    unsafe_allow_html=True,
+                                )
+                            if category == selected:
+                                st.markdown(
+                                    f'<style>div[class*="st-key-{item_key}"] .stButton button{{background:{accent}18;'
+                                    f'border-color:{accent};color:{accent};font-weight:800}}</style>',
+                                    unsafe_allow_html=True,
+                                )
+
+    active = [
+        f"{title}: {selections[column]}"
+        for title, column, _, _ in SMT_DEFECT_DIMENSIONS if selections[column] != "All"
+    ]
+    if active:
+        st.caption("Selected: " + " · ".join(active))
+    return _smt_breakdown_scope(source, selections)
+
+
+def _clear_assembly_breakdown_selections() -> None:
+    for _, column, _, _ in ASSEMBLY_DEFECT_DIMENSIONS:
+        st.session_state[f"assembly_breakdown_{column}"] = "All"
+
+
+def _select_assembly_breakdown_category(column: str, category: str) -> None:
+    key = f"assembly_breakdown_{column}"
+    st.session_state[key] = "All" if st.session_state.get(key) == category else category
+
+
+def render_assembly_defect_dimension_cards(confirmed):
+    """Show the same clickable, scrolling six-card breakdown for Assembly."""
+    source = confirmed.copy()
+    selections = {}
+    for _, column, _, _ in ASSEMBLY_DEFECT_DIMENSIONS:
+        if column not in source:
+            source[column] = ""
+        source[column] = source[column].fillna("").astype(str).str.strip()
+        source[column] = source[column].replace({"": "Not specified", "nan": "Not specified"})
+        selections[column] = st.session_state.get(f"assembly_breakdown_{column}", "All")
+
+    st.markdown("""<style>
+    .assembly-dimension-title{color:#102D5B;font-size:1.04rem;font-weight:800;line-height:1.25}
+    .assembly-dimension-subtitle{color:#6680A6;font-size:.73rem;margin:5px 0 14px;min-height:29px}
+    .assembly-dimension-track{height:5px;border-radius:6px;background:#EDF2F9;margin:0 8px 8px;overflow:hidden}
+    .assembly-dimension-track i{display:block;height:100%;border-radius:6px}
+    .assembly-dimension-empty{color:#6680A6;font-size:.75rem;margin-top:12px}
+    div[class*="st-key-assembly_breakdown_item_"]{padding:0 3px}
+    div[class*="st-key-assembly_breakdown_item_"] .stButton button{width:100%;min-height:32px;padding:4px 8px;justify-content:space-between;text-align:left;border:1px solid transparent;background:transparent;color:#17375F;font-size:.78rem;font-weight:600;box-shadow:none}
+    div[class*="st-key-assembly_breakdown_item_"] .stButton button:hover{background:#F1F6FD;border-color:#CFDBEE}
+    div[class*="st-key-assembly_breakdown_item_"] .stButton button p{width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    div[class*="st-key-assembly_breakdown_clear"]{max-width:245px}
+    div[class*="st-key-assembly_breakdown_clear"] button{min-height:40px;background:linear-gradient(135deg,#2F80ED,#1D5FBF)!important;border:1px solid #4B8DEF!important;border-radius:.55rem!important;color:#F8FBFF!important;font-weight:750}
+    div[class*="st-key-assembly_breakdown_clear"] button p{color:#F8FBFF!important}
+    </style>""", unsafe_allow_html=True)
+    for index, (_, _, _, accent) in enumerate(ASSEMBLY_DEFECT_DIMENSIONS):
+        st.markdown(
+            f'<style>div[class*="st-key-assembly_dimension_{index}"]{{background:#fff;'
+            f'border:1px solid #CFDBEE;border-top:3px solid {accent};border-radius:13px;'
+            'padding:16px 17px 12px;min-height:332px;box-shadow:0 2px 7px rgba(19,48,91,.04)}</style>',
+            unsafe_allow_html=True,
+        )
+    for start in (0, 3):
+        slots = st.columns(3, gap="medium")
+        for offset, slot in enumerate(slots):
+            index = start + offset
+            title, column, subtitle, accent = ASSEMBLY_DEFECT_DIMENSIONS[index]
+            with slot:
+                with st.container(key=f"assembly_dimension_{index}"):
+                    scope = _smt_breakdown_scope(source, selections, excluded_column=column)
+                    counts = (
+                        scope.groupby(column)["_DefectKey"].nunique().sort_values(ascending=False, kind="stable")
+                        if not scope.empty else None
+                    )
+                    maximum = max(int(counts.iloc[0]), 1) if counts is not None and not counts.empty else 1
+                    selected = selections[column]
+                    st.markdown(
+                        f'<div class="assembly-dimension-title">{escape(title)}</div>'
+                        f'<div class="assembly-dimension-subtitle">{escape(subtitle)} · unique NG PCBs per category</div>',
+                        unsafe_allow_html=True,
+                    )
+                    ranked = counts.index.tolist() if counts is not None else []
+                    if selected != "All" and selected not in ranked:
+                        ranked.insert(0, selected)
+                    with st.container(height=208, border=False, key=f"assembly_dimension_list_{index}"):
+                        if not ranked:
+                            st.markdown('<div class="assembly-dimension-empty">No defects match the other selections.</div>', unsafe_allow_html=True)
+                        for rank, category in enumerate(ranked):
+                            count = int(counts.get(category, 0)) if counts is not None else 0
+                            width = max(3, round(count / maximum * 100)) if count else 0
+                            item_key = f"assembly_breakdown_item_{index}_{rank}"
+                            with st.container(key=item_key):
+                                st.button(
+                                    f"{category}   ·   {count:,}", key=f"assembly_breakdown_click_{index}_{rank}",
+                                    on_click=_select_assembly_breakdown_category, args=(column, category),
+                                    use_container_width=True,
+                                )
+                                st.markdown(
+                                    f'<div class="assembly-dimension-track"><i style="width:{width}%;background:{accent}"></i></div>',
+                                    unsafe_allow_html=True,
+                                )
+                            if category == selected:
+                                st.markdown(
+                                    f'<style>div[class*="st-key-{item_key}"] .stButton button{{background:{accent}18;'
+                                    f'border-color:{accent};color:{accent};font-weight:800}}</style>',
+                                    unsafe_allow_html=True,
+                                )
+    active = [f"{title}: {selections[column]}" for title, column, _, _ in ASSEMBLY_DEFECT_DIMENSIONS if selections[column] != "All"]
+    if active:
+        st.caption("Selected: " + " · ".join(active))
+    return _smt_breakdown_scope(source, selections)
+
+
+def _render_smt_model_comparison(
+    model_a: str,
+    model_b: str,
+    view_a: dict,
+    view_b: dict,
+    history_a: dict,
+    history_b: dict,
+    history_start: date,
+    end_date: date,
+    color: str,
+) -> None:
     import pandas as pd
-    from tools import dashboard_charts, smt_quality_dashboard
+    from tools import dashboard_charts
     from tools.recurrence_watchlist import build_recurrence_watchlist
+
+    target_directory = {item["source"]: item for item in configured_kpi_directory()}
+    function_target = target_directory["smt_function"]["target"]
+    process_target = target_directory["smt_process"]["target"]
+    recurrence_a = build_recurrence_watchlist(history_a["confirmed"], history_start, end_date)
+    recurrence_b = build_recurrence_watchlist(history_b["confirmed"], history_start, end_date)
+
+    def pass_rate(view: dict, defect_key: str) -> float | None:
+        produced = view["produced"]
+        defects = view[defect_key]
+        return 1 - defects / produced if produced and defects <= produced else None
+
+    def metric_specs(view: dict, recurrence: dict) -> list[tuple[str, object, str, str]]:
+        return [
+            ("SMT input", view["produced"], "count", "—"),
+            ("Defect PCB", view["confirmed_pcbs"], "count", "Lower is better"),
+            ("Overall defect PPM", view["overall_ppm"], "ppm", "Lower is better"),
+            ("Functional Pass Rate", pass_rate(view, "functional_pcbs"), "rate", f"Target {function_target:.2%}"),
+            ("Appearance Pass Rate", pass_rate(view, "appearance_pcbs"), "rate", "Higher is better"),
+            ("SMT Process NG Rate", view["process_ppm"], "ppm", f"Target ≤ {fmt_ppm(process_target)} PPM"),
+            ("Recurring defect causes", recurrence["summary"]["recurring_issues"], "count", "Present in 2+ weeks"),
+            ("Repeated PCBs", int(view["repeat_detail"]["_DefectKey"].nunique()), "count", "Multiple confirmed records"),
+        ]
+
+    specs_a = metric_specs(view_a, recurrence_a)
+    specs_b = metric_specs(view_b, recurrence_b)
+
+    def formatted(value, kind: str) -> str:
+        if value is None or pd.isna(value):
+            return "N/A"
+        if kind == "rate":
+            return fmt_kpi_pct(float(value))
+        if kind == "ppm":
+            return f"{fmt_ppm(float(value))} PPM"
+        return fmt_int(value)
+
+    rows = []
+    for (label, value_a, kind, target), (_, value_b, _, _) in zip(specs_a, specs_b):
+        if value_a is None or value_b is None or pd.isna(value_a) or pd.isna(value_b):
+            delta = "N/A"
+        elif kind == "rate":
+            delta = f"{(float(value_a) - float(value_b)) * 100:+.2f} pp"
+        elif kind == "ppm":
+            delta = f"{float(value_a) - float(value_b):+,.0f} PPM"
+        else:
+            delta = f"{int(value_a) - int(value_b):+,.0f}"
+
+        if label == "Functional Pass Rate" and value_a is not None and value_b is not None:
+            good_a, good_b = value_a >= function_target, value_b >= function_target
+            status = "Both on target" if good_a and good_b else "Both below" if not good_a and not good_b else f"{model_a} on target" if good_a else f"{model_b} on target"
+        elif label == "SMT Process NG Rate" and value_a is not None and value_b is not None:
+            good_a, good_b = value_a <= process_target, value_b <= process_target
+            status = "Both on target" if good_a and good_b else "Both above" if not good_a and not good_b else f"{model_a} on target" if good_a else f"{model_b} on target"
+        elif kind == "rate":
+            status = "Higher is better"
+        elif label in {"Defect PCB", "Overall defect PPM", "Recurring defect causes", "Repeated PCBs"}:
+            status = f"{model_a} lower" if value_a < value_b else f"{model_b} lower" if value_b < value_a else "Equal"
+        else:
+            status = "Same scope"
+        rows.append(
+            {
+                "KPI": label,
+                "Target / guide": target,
+                model_a: formatted(value_a, kind),
+                model_b: formatted(value_b, kind),
+                "Δ A − B": delta,
+                "Status": status,
+            }
+        )
+
+    primary_labels = {
+        "Functional Pass Rate", "SMT Process NG Rate", "Appearance Pass Rate", "Repeated PCBs"
+    }
+    primary_rows = [row for row in rows if row["KPI"] in primary_labels]
+    primary_rows.sort(key=lambda row: [
+        "Functional Pass Rate", "SMT Process NG Rate", "Appearance Pass Rate", "Repeated PCBs"
+    ].index(row["KPI"]))
+
+    def table_markup(headers: list[str], values: list[list[str]], *, emph_first: bool = True) -> str:
+        head = "".join(f"<th>{escape(str(value))}</th>" for value in headers)
+        body = "".join(
+            "<tr>" + "".join(
+                f'<td class="{"strong" if emph_first and index == 0 else ""}">{value}</td>'
+                for index, value in enumerate(line)
+            ) + "</tr>"
+            for line in values
+        )
+        return f'<table class="smt-compare-table"><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>'
+
+    kpi_values = []
+    for row in primary_rows:
+        status = row["Status"]
+        status_class = "good" if "on target" in status.lower() or "lower" in status.lower() else "alert" if "below" in status.lower() or "above" in status.lower() else "neutral"
+        delta = row["Δ A − B"]
+        delta_class = "positive" if delta.startswith("+") else "negative" if delta.startswith("−") or delta.startswith("-") else ""
+        kpi_values.append([
+            escape(row["KPI"].replace("Repeated PCBs", "Repeated defect boards")),
+            escape(row["Target / guide"]),
+            f'<strong>{escape(row[model_a])}</strong>',
+            f'<strong>{escape(row[model_b])}</strong>',
+            f'<strong class="{delta_class}">{escape(delta)}</strong>',
+            f'<span class="smt-compare-pill {status_class}">{escape(status)}</span>',
+        ])
+    st.markdown(
+        '<div class="smt-compare-card smt-compare-kpi-card">'
+        '<h3>KPI comparison</h3><p>Rates show percentage-point difference; defect rates show PPM difference.</p>'
+        + table_markup(["KPI", "TARGET / GUIDE", model_a, model_b, "DELTA A − B", "STATUS"], kpi_values)
+        + '</div>', unsafe_allow_html=True,
+    )
+
+    issues_a = smt_dashboard_issue_pareto(view_a["confirmed"]).rename(columns={"NGPCBs": model_a})
+    issues_b = smt_dashboard_issue_pareto(view_b["confirmed"]).rename(columns={"NGPCBs": model_b})
+    issue_comparison = issues_a.merge(issues_b, on="TopIssue", how="outer").fillna(0)
+    if issue_comparison.empty:
+        issue_comparison = pd.DataFrame(columns=["TopIssue", model_a, model_b, "Δ A − B"])
+    else:
+        issue_comparison[[model_a, model_b]] = issue_comparison[[model_a, model_b]].astype(int)
+        issue_comparison["Δ A − B"] = issue_comparison[model_a] - issue_comparison[model_b]
+        issue_comparison = issue_comparison.sort_values(
+            [model_a, model_b, "TopIssue"], ascending=[False, False, True]
+        ).head(10)
+        issue_comparison["Δ A − B"] = issue_comparison["Δ A − B"].map(lambda value: f"{value:+,}")
+    from tools.smart_report_rules import top_issue_reasons
+    phenomenon_map = {}
+    for frame in (view_a["confirmed"], view_b["confirmed"]):
+        if not frame.empty:
+            frame = frame.copy()
+            frame["TopIssue"] = top_issue_reasons(frame)
+            dominant = (
+                frame.groupby(["TopIssue", "Phenomenon"], dropna=False).size()
+                .reset_index(name="Count").sort_values(["TopIssue", "Count"], ascending=[True, False])
+                .drop_duplicates("TopIssue")
+            )
+            for issue, phenomenon in dominant[["TopIssue", "Phenomenon"]].itertuples(index=False, name=None):
+                phenomenon_map.setdefault(issue, phenomenon)
+
+    trend_a = view_a["trend"][["PeriodDate", "Period", "ConfirmedDefectPCBs"]].rename(columns={"ConfirmedDefectPCBs": "ModelA_NG"})
+    trend_b = view_b["trend"][["PeriodDate", "ConfirmedDefectPCBs"]].rename(columns={"ConfirmedDefectPCBs": "ModelB_NG"})
+    trend = trend_a.merge(trend_b, on="PeriodDate", how="outer").sort_values("PeriodDate")
+
+    left, right = st.columns([1.45, 0.8], gap="medium")
+    with left:
+        cause_values = []
+        for row in issue_comparison.head(3).itertuples(index=False):
+            cause, count_a, count_b, delta = row[0], row[1], row[2], row[3]
+            cause_values.append([
+                escape(str(cause)), escape(str(phenomenon_map.get(cause, "—"))),
+                f"<strong>{int(count_a):,}</strong>", f"<strong>{int(count_b):,}</strong>",
+                escape(str(delta)),
+            ])
+        if not cause_values:
+            cause_values = [["No confirmed defects", "—", "—", "—", "—"]]
+        st.markdown(
+            '<div class="smt-compare-card smt-compare-bottom-card">'
+            '<h3>Defect causes · item-by-item</h3>'
+            '<p>Primary grouping: RepaireRemark · fallback: Fault Phenomenon</p>'
+            + table_markup(["REPAIR REMARK / CAUSE", "PHENOMENON", model_a, model_b, "Δ BOARDS"], cause_values)
+            + '<span class="smt-compare-hint">Select a cause below for station, DutyType and PCB detail</span>'
+            + '</div>', unsafe_allow_html=True,
+        )
+    with right:
+        with st.container(key="smt_compare_trend_card"):
+            grain = requested_trend_grain(history_start, end_date)
+            st.markdown(
+                f'<h3>{"Weekly" if grain == "week" else "Defect"} defect trend</h3>'
+                '<p>Confirmed defect boards · same date buckets</p>', unsafe_allow_html=True,
+            )
+            if trend.empty:
+                st.info("No comparable trend data is available for these models.")
+            else:
+                import plotly.graph_objects as go
+                figure = go.Figure()
+                for column, name, line_color in (("ModelA_NG", model_a, "#2879DF"), ("ModelB_NG", model_b, "#6532C8")):
+                    figure.add_trace(go.Scatter(
+                        x=trend["Period"], y=trend[column], mode="lines+markers",
+                        name=name, line=dict(color=line_color, width=2), marker=dict(size=6),
+                        connectgaps=False,
+                    ))
+                figure.update_layout(
+                    height=220, margin=dict(l=8, r=8, t=10, b=15),
+                    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                    font=dict(size=11, color="#6380A6"),
+                    legend=dict(orientation="h", y=-0.22, x=0),
+                    xaxis=dict(title=None, showgrid=False, linecolor="#C7D4E7"),
+                    yaxis=dict(title=None, rangemode="tozero", gridcolor="#E8EEF7", zeroline=False),
+                )
+                st.plotly_chart(figure, use_container_width=True, config={"displayModeBar": False})
+
+    with st.expander("More comparison metrics and defect details"):
+        styled_table(pd.DataFrame([row for row in rows if row["KPI"] not in primary_labels]), table_class="compact-dashboard-table")
+        if not issue_comparison.empty:
+            styled_table(issue_comparison.rename(columns={"TopIssue": "Repair conclusion / cause"}), max_rows=10, table_class="compact-dashboard-table")
+
+
+def smt_model_comparison_page(color: str) -> None:
+    """Compare two or three SMT models over one period and the same defect dimensions."""
+    import pandas as pd
+    from tools import smt_quality_dashboard
+    from tools.smt_model_comparison import build_comparison_workbook, build_dimension_rows, defect_ppm
+
+    st.markdown(
+        f"<h1 class='section-title' style='color:{color};'>SMT · Model Comparison</h1>",
+        unsafe_allow_html=True,
+    )
+    st.caption("Compare two or three models over the same period, KPI by KPI and defect category by defect category.")
+    input_paths, defect_paths = smt_quality_dashboard.stored_smt_sources()
+    if not input_paths or not defect_paths:
+        st.warning("SMT data is incomplete. Open Data Upload to add the required files.")
+        return
+    input_signatures = tuple(smt_quality_dashboard.path_signature(path) for path in input_paths)
+    defect_signatures = tuple(smt_quality_dashboard.path_signature(path) for path in defect_paths)
+    minimum_date, maximum_date = smt_quality_dashboard.input_bounds(input_signatures)
+    start_date, end_date = analysis_period_control(
+        "smt_compare_period", minimum_date.date(), maximum_date.date(),
+        default_start=minimum_date.date(), default_end=maximum_date.date(), show_presets=False,
+    )
+    try:
+        analysis = smt_quality_dashboard.analyze_smt_quality_paths(
+            input_signatures, defect_signatures, start_date.isoformat(), end_date.isoformat(),
+            smt_quality_dashboard.SMT_FAILURE_RULE_VERSION,
+        )
+    except Exception as exc:
+        st.error(f"Unable to calculate the SMT comparison: {exc}")
+        return
+
+    model_options = sorted(set(analysis["selected_input"]["Model"].dropna().astype(str)))
+    if len(model_options) < 2:
+        st.info("At least two models with input in the selected period are needed for comparison.")
+        return
+    st.markdown(
+        """<style>
+        div[class*="st-key-smt_compare_model_"] [data-baseweb="select"] > div,
+        div[class*="st-key-smt_compare_model_"] [data-testid="stSelectbox"] > div > div {
+            background:linear-gradient(135deg,#2F80ED 0%,#1D5FBF 100%) !important;
+            border-color:#4B8DEF !important;color:#F8FBFF !important;
+        }
+        div[class*="st-key-smt_compare_model_"] [data-baseweb="select"] * {color:#F8FBFF !important;}
+        div[class*="st-key-smt_compare_run"] button {
+            min-height:40px;background:linear-gradient(135deg,#2F80ED,#1D5FBF) !important;
+            border:1px solid #4B8DEF !important;color:#fff !important;font-weight:800;
+            box-shadow:0 4px 12px rgba(8,45,97,.18);
+        }
+        div[class*="st-key-smt_compare_run"] button p {color:#fff !important;}
+        .smt-model-compare-table-wrap {max-height:410px;overflow:auto;border:1px solid #D6E2F1;border-radius:10px;margin:8px 0 18px;}
+        .smt-model-compare-table-wrap.compare-kpi-wrap {max-height:none;overflow:visible;}
+        .smt-model-compare-table-wrap.compare-kpi-wrap th {position:static;}
+        .smt-model-compare-table {width:100%;border-collapse:collapse;table-layout:fixed;background:#fff;color:#17375F;font-size:.82rem;}
+        .smt-model-compare-table th {position:sticky;top:0;z-index:1;padding:12px 13px;background:#EAF2FF;color:#0B2D5A;text-align:left;border-bottom:2px solid #A9C9EF;overflow-wrap:anywhere;}
+        .smt-model-compare-table td {padding:10px 13px;border-bottom:1px solid #E6EDF7;vertical-align:top;overflow-wrap:anywhere;}
+        .smt-model-compare-table tbody tr:nth-child(even) {background:#F7FAFE;}
+        .smt-model-compare-table th:first-child,.smt-model-compare-table td:first-child {width:28%;font-weight:750;}
+        .smt-model-compare-table small {display:block;margin-top:3px;color:#607A9F;font-size:.71rem;font-weight:500;}
+        .smt-model-compare-table .compare-bad {color:#B91C1C;font-weight:800;}
+        .smt-model-compare-table .compare-good {color:#087C4B;font-weight:800;}
+        .smt-model-compare-table .compare-value {font-weight:800;}
+        </style>""",
+        unsafe_allow_html=True,
+    )
+    slots = st.columns([1, 1, 1, 0.72], gap="small", vertical_alignment="bottom")
+    selected = []
+    for index in range(3):
+        with slots[index]:
+            choice = st.selectbox(
+                f"Model {index + 1}" + (" · optional" if index == 2 else ""),
+                ["Select a model", *model_options], key=f"smt_compare_model_{index + 1}",
+            )
+            if choice != "Select a model":
+                selected.append(choice)
+    valid_selection = len(selected) >= 2 and len(set(selected)) == len(selected)
+    with slots[3]:
+        compare_clicked = st.button(
+            "Compare →", key="smt_compare_run", use_container_width=True,
+            disabled=not valid_selection,
+        )
+    request = (tuple(selected), start_date, end_date)
+    if compare_clicked:
+        st.session_state["smt_compare_request"] = request
+    if not valid_selection:
+        st.info("Select two different models. A third model is optional.")
+        return
+    if st.session_state.get("smt_compare_request") != request:
+        st.info("Click Compare to view the selected models over this period.")
+        return
+
+    views = {
+        model: _build_smt_dashboard_view(analysis, model, "All", "All")
+        for model in selected
+    }
+    models = list(views)
+    targets = {item["source"]: item["target"] for item in configured_kpi_directory()}
+    function_target = targets["smt_function"]
+    process_target = targets["smt_process"]
+
+    def table(headers: list[str], rows: list[tuple[str, list[str]]], *, scroll: bool = True) -> str:
+        header = "".join(f"<th>{escape(value)}</th>" for value in headers)
+        body = "".join(
+            "<tr><td>" + label + "</td>" + "".join(f"<td>{cell}</td>" for cell in cells) + "</tr>"
+            for label, cells in rows
+        )
+        wrap_class = "smt-model-compare-table-wrap" if scroll else "smt-model-compare-table-wrap compare-kpi-wrap"
+        return (
+            f'<div class="{wrap_class}"><table class="smt-model-compare-table">'
+            f"<thead><tr>{header}</tr></thead><tbody>{body}</tbody></table></div>"
+        )
+
+    def pass_rate(view: dict, defect_field: str) -> float | None:
+        input_count = view["produced"]
+        defect_count = view[defect_field]
+        return 1 - defect_count / input_count if input_count > 0 and defect_count <= input_count else None
+
+    def metric_cell(value: object, kind: str, target: float | None = None, lower_is_better: bool = False) -> str:
+        if value is None or pd.isna(value):
+            return "N/A"
+        numeric = float(value)
+        formatted = (
+            fmt_kpi_pct(numeric) if kind == "rate" else
+            f"{fmt_ppm(numeric)} PPM" if kind == "ppm" else fmt_int(int(numeric))
+        )
+        if target is None:
+            return f'<span class="compare-value">{escape(formatted)}</span>'
+        on_target = numeric <= target if lower_is_better else numeric >= target
+        status = "On target" if on_target else "Off target"
+        style = "compare-good" if on_target else "compare-bad"
+        return f'<span class="{style}">{escape(formatted)}</span><small>{status}</small>'
+
+    metric_specs = [
+        ("SMT input", "produced", "count", None, False),
+        ("Defect PCB", "confirmed_pcbs", "count", None, False),
+        ("Overall defect PPM", "overall_ppm", "ppm", None, True),
+        (f"Functional Pass Rate<small>Target {fmt_kpi_pct(function_target)}</small>", "functional_rate", "rate", function_target, False),
+        ("Appearance Pass Rate", "appearance_rate", "rate", None, False),
+        (f"SMT Process NG Rate<small>Target {fmt_ppm(process_target)} PPM</small>", "process_ppm", "ppm", process_target, True),
+        ("Functional NG PCBs", "functional_pcbs", "count", None, False),
+        ("Appearance NG PCBs", "appearance_pcbs", "count", None, False),
+    ]
+    metric_rows = []
+    workbook_metrics = []
+    for label, field, kind, target, lower_is_better in metric_specs:
+        cells = []
+        values = {}
+        for model in models:
+            view = views[model]
+            value = (
+                pass_rate(view, "functional_pcbs") if field == "functional_rate" else
+                pass_rate(view, "appearance_pcbs") if field == "appearance_rate" else view[field]
+            )
+            values[model] = value
+            cells.append(metric_cell(value, kind, target, lower_is_better))
+        metric_rows.append((label, cells))
+        workbook_metrics.append({
+            "label": label.split("<small>", 1)[0], "kind": kind, "target": target,
+            "lower_is_better": lower_is_better, "values": values,
+        })
+    top_detractors = []
+    top_detractor_values = {}
+    for model in models:
+        issue_pareto = smt_dashboard_issue_pareto(views[model]["confirmed"])
+        if issue_pareto.empty:
+            top_detractors.append("—")
+            top_detractor_values[model] = "—"
+        else:
+            first = issue_pareto.iloc[0]
+            top_detractors.append(
+                f'<span class="compare-value">{escape(str(first.TopIssue))}</span>'
+                f'<small>{fmt_int(int(first.NGPCBs))} NG PCBs</small>'
+            )
+            top_detractor_values[model] = f"{first.TopIssue} · {int(first.NGPCBs)} NG PCBs"
+    metric_rows.append(("Top detractor", top_detractors))
+    workbook_metrics.append({
+        "label": "Top detractor", "kind": "text", "target": None,
+        "lower_is_better": False, "values": top_detractor_values,
+    })
+    st.markdown("### KPI comparison")
+    st.markdown(table(["KPI", *models], metric_rows, scroll=False), unsafe_allow_html=True)
+
+    st.markdown("### Defect breakdown comparison")
+    st.caption("Each category shows unique NG PCBs and PPM based on that model's input. A PCB can appear in multiple categories.")
+    workbook_dimensions = []
+    for index, (title, column, _, _) in enumerate(SMT_DEFECT_DIMENSIONS):
+        rows = build_dimension_rows(views, column)
+        workbook_dimensions.append((title, rows))
+        with st.expander(f"{title} · {len(rows)} categories", expanded=index < 2):
+            if not rows:
+                st.info("No confirmed defects for these models in the selected period.")
+                continue
+            display_rows = []
+            for row in rows:
+                cells = []
+                for model in models:
+                    count = row["counts"][model]
+                    ppm = defect_ppm(count, views[model]["produced"])
+                    cells.append(
+                        f'<span class="compare-value">{fmt_int(count)} PCBs</span>'
+                        f'<small>{fmt_ppm(ppm) if ppm is not None else "N/A"} PPM</small>'
+                    )
+                display_rows.append((escape(row["category"]), cells))
+            st.markdown(table([title, *models], display_rows), unsafe_allow_html=True)
+    workbook_bytes = build_comparison_workbook(
+        models, start_date, end_date, workbook_metrics, workbook_dimensions,
+        {model: views[model]["produced"] for model in models},
+    )
+    st.download_button(
+        "Download formatted Excel report", data=workbook_bytes,
+        file_name=f"smt_model_comparison_{start_date:%Y-%m-%d}_{end_date:%Y-%m-%d}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key="smt_compare_download",
+    )
+
+
+def smt_quality_dashboard_v2(color: str) -> None:
+    from tools import smt_quality_dashboard
 
     page_started = perf_counter()
     source_started = perf_counter()
@@ -7941,7 +8608,7 @@ def smt_quality_dashboard_v2(color: str) -> None:
         f"<h1 class='section-title' style='color:{color};'>SMT · Quality Dashboard</h1>",
         unsafe_allow_html=True,
     )
-    st.caption("Defect intelligence for reducing general defects: trend, repair conclusions, recurrence and operational context.")
+    st.caption("Analyze confirmed SMT defects by failure class, station, symptom, cause, repair conclusion and responsibility.")
     input_paths, defect_paths = smt_quality_dashboard.stored_smt_sources()
     source_seconds = perf_counter() - source_started
     if not input_paths or not defect_paths:
@@ -7953,13 +8620,15 @@ def smt_quality_dashboard_v2(color: str) -> None:
     minimum_date, maximum_date = smt_quality_dashboard.input_bounds(input_signatures)
     filter_panel = st.container(key="smt_quality_v2_filter_panel")
     with filter_panel:
-        start_date, end_date = analysis_period_control(
-            "smt_quality_v2_period",
-            minimum_date.date(),
-            maximum_date.date(),
-            default_start=minimum_date.date(),
-            default_end=maximum_date.date(),
+        period_column, model_column, failure_column, duty_column, station_column = st.columns(
+            [1.35, 1.15, 0.85, 0.75, 1.0], gap="small"
         )
+        with period_column:
+            start_date, end_date = analysis_period_control(
+                "smt_quality_v2_period", minimum_date.date(), maximum_date.date(),
+                default_start=minimum_date.date(), default_end=maximum_date.date(),
+                show_presets=False,
+            )
 
     analysis_started = perf_counter()
     try:
@@ -7979,47 +8648,36 @@ def smt_quality_dashboard_v2(color: str) -> None:
     }
     analysis_seconds = perf_counter() - analysis_started
     raw = analysis["raw"]
-    model_options = ["All", *sorted(set(analysis["selected_input"]["Model"].dropna().astype(str)))]
+    model_options = sorted(set(analysis["selected_input"]["Model"].dropna().astype(str)))
     station_options = ["All", *sorted(set(raw["Operation"].dropna().astype(str)))]
     failure_options = ["All", "Functional Failure", "Appearance Failure", "Unclassified"]
+    duty_options = ["All", *sorted(set(raw["DutyType"].dropna().astype(str)))]
     with filter_panel:
-        filter_columns = st.columns(3)
-        with filter_columns[0]:
-            model = st.selectbox("Model", model_options, key="smt_quality_v2_model")
-        with filter_columns[1]:
-            station = st.selectbox("Process / Station", station_options, key="smt_quality_v2_station")
-        with filter_columns[2]:
-            failure_type = st.selectbox("Failure type", failure_options, key="smt_quality_v2_failure_type")
-
-    view = _build_smt_dashboard_view(analysis, model, station, failure_type)
-    issue_pareto = smt_dashboard_issue_pareto(view["confirmed"])
-    driver_detail = smt_dashboard_driver_detail(view["confirmed"])
-    history_start = max(minimum_date.date(), end_date - timedelta(days=55))
-    if history_start == start_date:
-        history_analysis = analysis
-    else:
-        try:
-            history_analysis = smt_quality_dashboard.analyze_smt_quality_paths(
-                input_signatures,
-                defect_signatures,
-                history_start.isoformat(),
-                end_date.isoformat(),
-                smt_quality_dashboard.SMT_FAILURE_RULE_VERSION,
+        with model_column:
+            selected_models = st.multiselect(
+                "Model",
+                model_options,
+                key="smt_quality_v2_models",
+                placeholder="All models",
+                help="Select one or more models. With no selection, all models are included.",
             )
-        except Exception:
-            history_analysis = analysis
-            history_start = start_date
-    history_view = _build_smt_dashboard_view(history_analysis, model, station, failure_type)
-    recurrence = build_recurrence_watchlist(history_view["confirmed"], history_start, end_date)
-    recurrence_summary = recurrence["summary"]
-    grain_label = trend_grain_labels(requested_trend_grain(start_date, end_date))[0]
+        with failure_column:
+            failure_type = st.selectbox("Failure type", failure_options, key="smt_quality_v2_failure_type")
+        with duty_column:
+            duty_type = st.selectbox("DutyType", duty_options, key="smt_quality_v2_duty_type")
+        with station_column:
+            station = st.selectbox("Process / Station", station_options, key="smt_quality_v2_station")
+
+    model_filter = selected_models or "All"
+    view = _build_smt_dashboard_view(analysis, model_filter, station, failure_type, duty_type)
+    issue_pareto = smt_dashboard_issue_pareto(view["confirmed"])
     top_issue = issue_pareto.iloc[0] if not issue_pareto.empty else None
 
     cards = st.columns(4)
     with cards[0]:
         smt_kpi_card("SMT input", fmt_int(view["produced"]), "Boards in the selected scope", color)
     with cards[1]:
-        smt_kpi_card("Affected PCBs", fmt_int(view["confirmed_pcbs"]), "Confirmed general defects", color)
+        smt_kpi_card("Defect PCB", fmt_int(view["confirmed_pcbs"]), "Confirmed general defects", color)
     with cards[2]:
         smt_kpi_card(
             "Overall defect PPM",
@@ -8035,135 +8693,61 @@ def smt_quality_dashboard_v2(color: str) -> None:
             color,
         )
 
-    section = st.radio(
-        "Dashboard view",
-        ["Priority overview", "Where it occurs", "Details & data health"],
-        horizontal=True,
-        key="smt_quality_v2_dashboard_view",
-        label_visibility="collapsed",
+    st.markdown("### Defect breakdown")
+    st.markdown(
+        """<style>
+        div[class*="st-key-smt_breakdown_clear"] {max-width:245px;}
+        div[class*="st-key-smt_breakdown_clear"] button {
+            min-height:40px;
+            background:linear-gradient(135deg,#2F80ED 0%,#1D5FBF 100%) !important;
+            border:1px solid #4B8DEF !important;
+            border-radius:.55rem !important;
+            box-shadow:0 4px 12px rgba(8,45,97,.18);
+            color:#F8FBFF !important;
+        }
+        div[class*="st-key-smt_breakdown_clear"] button p {color:#F8FBFF !important;font-weight:750;}
+        div[class*="st-key-smt_breakdown_clear"] button:hover {
+            border-color:#93C5FD !important;
+            box-shadow:0 5px 14px rgba(37,99,235,.28);
+        }
+        </style>""",
+        unsafe_allow_html=True,
     )
-    if section == "Priority overview":
-        st.markdown("### Defect priority")
-        left, right = st.columns(2)
-        with left:
-            show_chart(
-                dashboard_charts.ppm_trend_chart(
-                    view["trend"],
-                    f"Overall and SMT Process PPM trend · {grain_label}",
-                    [("OverallPPM", "Overall defects", color), ("ProcessPPM", "SMT Process NG", "#64748B")],
-                    target_value=5_000,
-                    exception_mask=view["trend"]["Status"].ne("Valid"),
-                )
-            )
-        with right:
-            show_chart(
-                dashboard_charts.pareto_chart(
-                    issue_pareto,
-                    "TopIssue",
-                    "NGPCBs",
-                    "Top defect causes · repair conclusion",
-                    color,
-                )
-            )
+    st.button(
+        "Clear breakdown selections", key="smt_breakdown_clear",
+        on_click=_clear_smt_breakdown_selections,
+        use_container_width=True,
+    )
+    breakdown_detail = render_smt_defect_dimension_cards(view["confirmed"])
 
-        st.markdown("### Recurrence Watchlist")
+    active_breakdown = any(
+        st.session_state.get(f"smt_breakdown_{column}", "All") != "All"
+        for _, column, _, _ in SMT_DEFECT_DIMENSIONS
+    )
+    if active_breakdown:
+        st.markdown("### Matching PCB details")
+        unique_boards = breakdown_detail["_DefectKey"].nunique() if not breakdown_detail.empty else 0
         st.caption(
-            f"Last {recurrence_summary['history_weeks']} active weeks through {end_date.strftime('%d/%m/%Y')}. "
-            "Critical = present in at least three weeks and active in the latest week."
+            f"{fmt_int(unique_boards)} unique NG PCBs · {fmt_int(len(breakdown_detail))} confirmed records "
+            "match the selected breakdown categories."
         )
-        watch_cards = st.columns(4)
-        with watch_cards[0]:
-            smt_kpi_card("Recurring issues", fmt_int(recurrence_summary["recurring_issues"]), "Present in 2+ weeks", "#C2410C")
-        with watch_cards[1]:
-            smt_kpi_card("Persistent issues", fmt_int(recurrence_summary["persistent_issues"]), "3+ weeks and current", "#DC2626")
-        with watch_cards[2]:
-            smt_kpi_card("Recidivist PCBs", fmt_int(recurrence_summary["recidivist_pcbs"]), "Same board in 2+ weeks", "#6532C8")
-        with watch_cards[3]:
-            smt_kpi_card("History window", f"{recurrence_summary['history_weeks']} weeks", "Rolling eight-week view", "#0D7A45")
-        if recurrence["watchlist"].empty:
-            st.info("No repair conclusion recurred in two distinct weeks within the available history.")
-        else:
-            left, right = st.columns([1.18, 1])
-            with left:
-                show_chart(
-                    dashboard_charts.recurrence_heatmap_chart(
-                        recurrence["weekly"],
-                        "Recurring defect history · unique NG PCBs by week",
-                    )
-                )
-            with right:
-                display = recurrence["watchlist"].rename(
-                    columns={
-                        "TopIssue": "Repair conclusion",
-                        "AffectedPCBs": "Affected PCBs",
-                        "ActiveWeeks": "Active weeks",
-                        "CurrentWeekPCBs": "Latest week",
-                        "RecidivistPCBs": "Recidivist PCBs",
-                        "LastSeen": "Last seen",
-                    }
-                )
-                styled_table(display, max_rows=8, table_class="compact-dashboard-table")
-
-    elif section == "Where it occurs":
-        st.markdown("### Where the defects occur")
-        st.caption("PPM by model uses that model's own input. Station and responsibility views use affected PCB counts because station-level input is not available.")
-        left, right = st.columns(2)
-        with left:
-            show_chart(
-                dashboard_charts.model_ppm_input_chart(
-                    view["models"], "Models with the highest defect PPM", color
-                )
-            )
-        with right:
-            show_chart(
-                dashboard_charts.ranked_bar_chart(
-                    view["operation_summary"],
-                    "Operation",
-                    "NGPCBs",
-                    "Affected PCBs by process / station",
-                    color,
-                )
-            )
-        left, right = st.columns(2)
-        with left:
-            show_chart(
-                dashboard_charts.ranked_bar_chart(
-                    view["duty_summary"],
-                    "DutyType",
-                    "NGPCBs",
-                    "Affected PCBs by responsibility",
-                    "#6532C8",
-                )
-            )
-        with right:
-            st.markdown("#### Leading defect contexts")
-            styled_table(driver_detail.head(15), max_rows=15, table_class="compact-dashboard-table")
-
-    else:
-        st.markdown("### Details & data health")
-        data_quality = st.columns(4)
-        with data_quality[0]:
-            smt_kpi_card("Input coverage", fmt_kpi_pct(view["coverage_rate"]), "Defect records with matching input", "#0D7A45")
-        with data_quality[1]:
-            smt_kpi_card("Exceptions", fmt_int(view["exceptions"]), "Periods blocked from PPM", "#DC2626")
-        with data_quality[2]:
-            smt_kpi_card("Classification coverage", fmt_kpi_pct(view["classification_rate"]), f"{fmt_int(view['unclassified_records'])} unclassified records", "#64748B")
-        with data_quality[3]:
-            smt_kpi_card("Repeated PCBs", fmt_int(view["repeat_detail"]["_DefectKey"].nunique()), "Repeated in selected period", "#6532C8")
-        visible_columns = [
-            "PCB", "EntryTime", "TestTime", "Model", "Operation", "FailureType", "Phenomenon", "RepaireRemark", "RepairRemark", "DutyType", "Maintenance",
+        detail_columns = [
+            "PCB", "Model", "KPIDate", "Operation", "FailureType", "Phenomenon",
+            "FaultReason", "RepairRemark", "DutyType",
         ]
-        detail = view["confirmed"][[column for column in visible_columns if column in view["confirmed"].columns]].copy()
-        st.caption(f"{fmt_int(len(detail))} confirmed records match the global filters.")
-        if not detail.empty:
-            styled_table(detail, max_rows=50, table_class="compact-dashboard-table")
-        st.download_button(
-            "Download filtered SMT detail CSV",
-            data=detail.to_csv(index=False).encode("utf-8-sig"),
-            file_name="smt_quality_filtered_detail.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
+        details = breakdown_detail[
+            [column for column in detail_columns if column in breakdown_detail.columns]
+        ].copy()
+        if details.empty:
+            st.info("No confirmed defects match this combination. Clear a selection to broaden the view.")
+        else:
+            st.dataframe(details, hide_index=True, width="stretch", height=310)
+            st.download_button(
+                "Download matching defect records",
+                data=details.to_csv(index=False).encode("utf-8-sig"),
+                file_name="smt_breakdown_selection.csv", mime="text/csv",
+                width="stretch", key="smt_breakdown_download",
+            )
 
     record_dashboard_performance(
         "SMT Quality Dashboard",
@@ -8462,6 +9046,456 @@ def _build_assembly_dashboard_view(
     }
 
 
+def _assembly_analysis_from_metrics(metrics: dict, start_date: date, end_date: date) -> tuple[dict, dict]:
+    """Use the validated Assembly KPI records for dashboard and comparison alike."""
+    import pandas as pd
+
+    rules = load_rules().copy()
+    rules["assembly_functional_operations"] = list(assembly_kpi_v2.FUNCTIONAL_OPERATIONS)
+    rules["assembly_appearance_operations"] = list(assembly_kpi_v2.APPEARANCE_OPERATIONS)
+    rules["mando_column"] = "DutyType"
+    rules["date_start"] = start_date.isoformat()
+    rules["date_end"] = end_date.isoformat()
+    raw = metrics["defects"].copy()
+    raw["TestOperation"] = raw["Operation"]
+    raw["DutyType"] = raw["FinalDutyType"]
+    raw["ConfirmedDefect"] = True
+    raw["IsRejudgeOK"] = False
+    raw["_Date"] = raw["DefectDate"]
+    if "Line" not in raw:
+        raw["Line"] = raw["TestLine"] if "TestLine" in raw else ""
+    if "Maintenance" not in raw:
+        raw["Maintenance"] = ""
+    production_detail = metrics["inputs"].rename(
+        columns={"Date": "ProductionStart", "Input": "Produced"}
+    ).copy()
+    production_detail["ProductionEnd"] = production_detail["ProductionStart"]
+    analysis = {
+        "raw": raw,
+        "production_detail": production_detail,
+        "trend_settings": trend_granularity(
+            pd.Timestamp(start_date), pd.Timestamp(end_date), production_detail
+        ),
+        "defect_merge_stats": {"merged_updates": 0},
+        "production_input_audit": pd.DataFrame(),
+        "production_input_stats": {},
+    }
+    return analysis, rules
+
+
+def assembly_model_comparison_page(color: str) -> None:
+    """Compare Assembly models with the validated MES KPI rules and defect records."""
+    import pandas as pd
+    from tools.smt_model_comparison import build_comparison_workbook, build_dimension_rows, defect_ppm
+
+    st.markdown(
+        f"<h1 class='section-title' style='color:{color};'>Assembly · Model Comparison</h1>",
+        unsafe_allow_html=True,
+    )
+    st.caption("Compare two or three models over the same period, KPI by KPI and defect category by defect category.")
+    sources = stored_assembly_sources_v2()
+    if not sources["input"] or not sources["defects"] or not sources["repair"]:
+        st.warning("Assembly data is incomplete. Open Data Upload to add input, FPY defects and repair files.")
+        return
+    try:
+        minimum_date, maximum_date = assembly_input_bounds(sources["input"])
+        start_date, end_date = analysis_period_control(
+            "assembly_compare_period", minimum_date, maximum_date,
+            default_start=minimum_date, default_end=maximum_date, show_presets=False,
+        )
+        metrics = calculate_assembly_kpi_metrics(start_date, end_date)
+        analysis, rules = _assembly_analysis_from_metrics(metrics, start_date, end_date)
+    except Exception as exc:
+        st.error(f"Unable to calculate the Assembly comparison: {exc}")
+        return
+
+    model_options = sorted(set(analysis["production_detail"]["Model"].dropna().astype(str)))
+    if len(model_options) < 2:
+        st.info("At least two models with input in the selected period are needed for comparison.")
+        return
+    st.markdown("""<style>
+    div[class*="st-key-assembly_compare_model_"] [data-baseweb="select"] > div,
+    div[class*="st-key-assembly_compare_model_"] [data-testid="stSelectbox"] > div > div {
+        background:linear-gradient(135deg,#2F80ED,#1D5FBF)!important;border-color:#4B8DEF!important;color:#F8FBFF!important}
+    div[class*="st-key-assembly_compare_model_"] [data-baseweb="select"] * {color:#F8FBFF!important}
+    div[class*="st-key-assembly_compare_run"] button {min-height:40px;background:linear-gradient(135deg,#2F80ED,#1D5FBF)!important;border:1px solid #4B8DEF!important;color:#fff!important;font-weight:800}
+    div[class*="st-key-assembly_compare_run"] button p {color:#fff!important}
+    .assembly-compare-wrap {max-height:410px;overflow:auto;border:1px solid #D6E2F1;border-radius:10px;margin:8px 0 18px}
+    .assembly-compare-wrap.kpi {max-height:none;overflow:visible}
+    .assembly-compare-table {width:100%;border-collapse:collapse;table-layout:fixed;background:#fff;color:#17375F;font-size:.82rem}
+    .assembly-compare-table th {position:sticky;top:0;z-index:1;padding:12px 13px;background:#EAF2FF;color:#0B2D5A;text-align:left;border-bottom:2px solid #A9C9EF;overflow-wrap:anywhere}
+    .assembly-compare-wrap.kpi th {position:static}
+    .assembly-compare-table td {padding:10px 13px;border-bottom:1px solid #E6EDF7;vertical-align:top;overflow-wrap:anywhere}
+    .assembly-compare-table tbody tr:nth-child(even) {background:#F7FAFE}
+    .assembly-compare-table th:first-child,.assembly-compare-table td:first-child {width:28%;font-weight:750}
+    .assembly-compare-table small {display:block;margin-top:3px;color:#607A9F;font-size:.71rem;font-weight:500}
+    .assembly-compare-table .bad {color:#B91C1C;font-weight:800}
+    .assembly-compare-table .good {color:#087C4B;font-weight:800}
+    .assembly-compare-table .value {font-weight:800}
+    </style>""", unsafe_allow_html=True)
+    slots = st.columns([1, 1, 1, .72], gap="small", vertical_alignment="bottom")
+    selected = []
+    for index in range(3):
+        with slots[index]:
+            choice = st.selectbox(
+                f"Model {index + 1}" + (" · optional" if index == 2 else ""),
+                ["Select a model", *model_options], key=f"assembly_compare_model_{index + 1}",
+            )
+            if choice != "Select a model":
+                selected.append(choice)
+    valid = len(selected) >= 2 and len(set(selected)) == len(selected)
+    with slots[3]:
+        clicked = st.button("Compare →", key="assembly_compare_run", use_container_width=True, disabled=not valid)
+    request = (tuple(selected), start_date, end_date)
+    if clicked:
+        st.session_state["assembly_compare_request"] = request
+    if not valid:
+        st.info("Select two different models. A third model is optional.")
+        return
+    if st.session_state.get("assembly_compare_request") != request:
+        st.info("Click Compare to view the selected models over this period.")
+        return
+
+    views = {model: _build_assembly_dashboard_view(analysis, rules, model, "All", "All", "All") for model in selected}
+    targets = {item["source"]: item["target"] for item in configured_kpi_directory()}
+
+    def table(headers, rows, *, kpi=False):
+        head = "".join(f"<th>{escape(value)}</th>" for value in headers)
+        body = "".join(
+            "<tr><td>" + label + "</td>" + "".join(f"<td>{cell}</td>" for cell in cells) + "</tr>"
+            for label, cells in rows
+        )
+        return f'<div class="assembly-compare-wrap{" kpi" if kpi else ""}"><table class="assembly-compare-table"><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>'
+
+    def pass_rate(view, field):
+        produced, defects = view["produced"], view[field]
+        return 1 - defects / produced if produced > 0 and defects <= produced else None
+
+    def cell(value, kind, target=None, lower_is_better=False):
+        if value is None or pd.isna(value):
+            return "N/A"
+        numeric = float(value)
+        formatted = fmt_kpi_pct(numeric) if kind == "rate" else f"{fmt_ppm(numeric)} PPM" if kind == "ppm" else fmt_int(int(numeric))
+        if target is None:
+            return f'<span class="value">{escape(formatted)}</span>'
+        on_target = numeric <= target if lower_is_better else numeric >= target
+        return f'<span class="{"good" if on_target else "bad"}">{escape(formatted)}</span><small>{"On target" if on_target else "Off target"}</small>'
+
+    specs = [
+        ("Assembly input", "produced", "count", None, False),
+        ("Defect PCB", "confirmed_pcbs", "count", None, False),
+        ("Overall defect PPM", "overall_ppm", "ppm", None, True),
+        ("Functional Pass Rate", "functional_rate", "rate", targets["assembly_function"], False),
+        ("Appearance Pass Rate", "appearance_rate", "rate", targets["assembly_appearance"], False),
+        ("Function Mando", "mando_ppm", "ppm", targets["assembly_mando"], True),
+        ("Assembly SMT Process Duty NG Rate", "smt_ppm", "ppm", targets["smt_assembly_duty"], True),
+        ("Functional NG PCBs", "functional_pcbs", "count", None, False),
+        ("Appearance NG PCBs", "appearance_pcbs", "count", None, False),
+        ("Function Mando NG PCBs", "mando_pcbs", "count", None, False),
+        ("SMT-origin NG PCBs", "smt_pcbs", "count", None, False),
+    ]
+    metric_rows, workbook_metrics = [], []
+    for label, field, kind, target, lower_is_better in specs:
+        values = {
+            model: (pass_rate(view, "functional_pcbs") if field == "functional_rate" else
+                    pass_rate(view, "appearance_pcbs") if field == "appearance_rate" else view[field])
+            for model, view in views.items()
+        }
+        display_label = escape(label)
+        if target is not None:
+            target_text = fmt_kpi_pct(target) if kind == "rate" else f"{fmt_ppm(target)} PPM"
+            display_label += f"<small>Target {escape(target_text)}</small>"
+        metric_rows.append((display_label, [cell(values[model], kind, target, lower_is_better) for model in selected]))
+        workbook_metrics.append({
+            "label": label, "kind": kind, "target": target,
+            "lower_is_better": lower_is_better, "values": values,
+        })
+    top_values = {}
+    top_cells = []
+    for model, view in views.items():
+        if view["pareto"].empty:
+            top_values[model] = "—"
+            top_cells.append("—")
+        else:
+            first = view["pareto"].iloc[0]
+            top_values[model] = f"{first.Phenomenon} · {int(first.NGPCBs)} NG PCBs"
+            top_cells.append(f'<span class="value">{escape(str(first.Phenomenon))}</span><small>{fmt_int(int(first.NGPCBs))} NG PCBs</small>')
+    metric_rows.append(("Top detractor", top_cells))
+    workbook_metrics.append({"label": "Top detractor", "kind": "text", "target": None, "lower_is_better": False, "values": top_values})
+    st.markdown("### KPI comparison")
+    st.markdown(table(["KPI", *selected], metric_rows, kpi=True), unsafe_allow_html=True)
+
+    st.markdown("### Defect breakdown comparison")
+    st.caption("Each category shows unique NG PCBs and PPM based on that model's input. A PCB can appear in multiple categories.")
+    workbook_dimensions = []
+    for index, (title, column, _, _) in enumerate(ASSEMBLY_DEFECT_DIMENSIONS):
+        rows = build_dimension_rows(views, column)
+        workbook_dimensions.append((title, rows))
+        with st.expander(f"{title} · {len(rows)} categories", expanded=index < 2):
+            if not rows:
+                st.info("No confirmed defects for these models in the selected period.")
+                continue
+            display_rows = []
+            for row in rows:
+                cells = []
+                for model in selected:
+                    count = row["counts"][model]
+                    ppm = defect_ppm(count, views[model]["produced"])
+                    cells.append(f'<span class="value">{fmt_int(count)} PCBs</span><small>{fmt_ppm(ppm) if ppm is not None else "N/A"} PPM</small>')
+                display_rows.append((escape(row["category"]), cells))
+            st.markdown(table([title, *selected], display_rows), unsafe_allow_html=True)
+    workbook_bytes = build_comparison_workbook(
+        selected, start_date, end_date, workbook_metrics, workbook_dimensions,
+        {model: views[model]["produced"] for model in selected}, area="Assembly",
+    )
+    st.download_button(
+        "Download formatted Excel report", data=workbook_bytes,
+        file_name=f"assembly_model_comparison_{start_date:%Y-%m-%d}_{end_date:%Y-%m-%d}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key="assembly_compare_download",
+    )
+
+
+def model_comparison_page(color: str) -> None:
+    """Compare selected models across SMT and Assembly using one period."""
+    import pandas as pd
+    from tools import smt_quality_dashboard
+    from tools.smt_model_comparison import build_comparison_workbook, build_dimension_rows, defect_ppm
+
+    st.markdown(
+        f"<h1 class='section-title' style='color:{color};'>Model Comparison</h1>",
+        unsafe_allow_html=True,
+    )
+    st.caption("Select two or three models once to compare their SMT and Assembly quality over the same period.")
+    smt_inputs, smt_defects = smt_quality_dashboard.stored_smt_sources()
+    assembly_sources = stored_assembly_sources_v2()
+    smt_ready = bool(smt_inputs and smt_defects)
+    assembly_ready = all(assembly_sources[kind] for kind in ("input", "defects", "repair"))
+    if not smt_ready and not assembly_ready:
+        st.warning("Upload SMT and/or Assembly input and defect files before comparing models.")
+        return
+
+    bounds = []
+    smt_input_signatures = smt_defect_signatures = ()
+    try:
+        if smt_ready:
+            smt_input_signatures = tuple(smt_quality_dashboard.path_signature(path) for path in smt_inputs)
+            smt_defect_signatures = tuple(smt_quality_dashboard.path_signature(path) for path in smt_defects)
+            lower, upper = smt_quality_dashboard.input_bounds(smt_input_signatures)
+            bounds.append((lower.date(), upper.date()))
+        if assembly_ready:
+            bounds.append(assembly_input_bounds(assembly_sources["input"]))
+    except Exception as exc:
+        st.error(f"Unable to read model comparison input dates: {exc}")
+        return
+    start_date, end_date = analysis_period_control(
+        "model_compare_period", min(lower for lower, _ in bounds), max(upper for _, upper in bounds),
+        show_presets=False,
+    )
+
+    smt_analysis = assembly_analysis = assembly_rules = None
+    if smt_ready:
+        try:
+            smt_analysis = smt_quality_dashboard.analyze_smt_quality_paths(
+                smt_input_signatures, smt_defect_signatures, start_date.isoformat(), end_date.isoformat(),
+                smt_quality_dashboard.SMT_FAILURE_RULE_VERSION,
+            )
+        except Exception as exc:
+            st.warning(f"SMT data could not be calculated for this period: {exc}")
+    else:
+        st.info("SMT source files are incomplete; SMT rows will be unavailable until they are uploaded.")
+    if assembly_ready:
+        try:
+            assembly_metrics = calculate_assembly_kpi_metrics(start_date, end_date)
+            assembly_analysis, assembly_rules = _assembly_analysis_from_metrics(
+                assembly_metrics, start_date, end_date
+            )
+        except Exception as exc:
+            st.warning(f"Assembly data could not be calculated for this period: {exc}")
+    else:
+        st.info("Assembly source files are incomplete; Assembly rows will be unavailable until they are uploaded.")
+    if smt_analysis is None and assembly_analysis is None:
+        return
+
+    model_options = set()
+    if smt_analysis is not None:
+        model_options.update(smt_analysis["selected_input"]["Model"].dropna().astype(str))
+    if assembly_analysis is not None:
+        model_options.update(assembly_analysis["production_detail"]["Model"].dropna().astype(str))
+    model_options = sorted(model for model in model_options if model.strip())
+    if len(model_options) < 2:
+        st.info("At least two models with input in the selected period are needed for comparison.")
+        return
+
+    st.markdown("""<style>
+    div[class*="st-key-model_compare_model_"] [data-baseweb="select"] > div,
+    div[class*="st-key-model_compare_model_"] [data-testid="stSelectbox"] > div > div {
+        background:linear-gradient(135deg,#2F80ED,#1D5FBF)!important;border-color:#4B8DEF!important;color:#F8FBFF!important}
+    div[class*="st-key-model_compare_model_"] [data-baseweb="select"] * {color:#F8FBFF!important}
+    div[class*="st-key-model_compare_run"] button {min-height:40px;background:linear-gradient(135deg,#2F80ED,#1D5FBF)!important;border:1px solid #4B8DEF!important;color:#fff!important;font-weight:800}
+    div[class*="st-key-model_compare_run"] button p {color:#fff!important}
+    .model-compare-wrap {max-height:410px;overflow:auto;border:1px solid #D6E2F1;border-radius:10px;margin:8px 0 18px}
+    .model-compare-wrap.kpi {max-height:none;overflow:visible}
+    .model-compare-table {width:100%;border-collapse:collapse;table-layout:fixed;background:#fff;color:#17375F;font-size:.82rem}
+    .model-compare-table th {position:sticky;top:0;z-index:1;padding:12px 13px;background:#EAF2FF;color:#0B2D5A;text-align:left;border-bottom:2px solid #A9C9EF;overflow-wrap:anywhere}
+    .model-compare-wrap.kpi th {position:static}
+    .model-compare-table td {padding:10px 13px;border-bottom:1px solid #E6EDF7;vertical-align:top;overflow-wrap:anywhere}
+    .model-compare-table tbody tr:nth-child(even) {background:#F7FAFE}
+    .model-compare-table th:first-child,.model-compare-table td:first-child {width:28%;font-weight:750}
+    .model-compare-table small {display:block;margin-top:3px;color:#607A9F;font-size:.71rem;font-weight:500}
+    .model-compare-table .bad {color:#B91C1C;font-weight:800}
+    .model-compare-table .good {color:#087C4B;font-weight:800}
+    .model-compare-table .value {font-weight:800}
+    </style>""", unsafe_allow_html=True)
+    slots = st.columns([1, 1, 1, .72], gap="small", vertical_alignment="bottom")
+    selected = []
+    for index in range(3):
+        with slots[index]:
+            choice = st.selectbox(
+                f"Model {index + 1}" + (" · optional" if index == 2 else ""),
+                ["Select a model", *model_options], key=f"model_compare_model_{index + 1}",
+            )
+            if choice != "Select a model":
+                selected.append(choice)
+    valid = len(selected) >= 2 and len(set(selected)) == len(selected)
+    with slots[3]:
+        clicked = st.button("Compare →", key="model_compare_run", use_container_width=True, disabled=not valid)
+    request = (tuple(selected), start_date, end_date)
+    if clicked:
+        st.session_state["model_compare_request"] = request
+    if not valid:
+        st.info("Select two different models. A third model is optional.")
+        return
+    if st.session_state.get("model_compare_request") != request:
+        st.info("Click Compare to view the selected models over this period.")
+        return
+
+    views = {}
+    if smt_analysis is not None:
+        views["SMT"] = {
+            model: _build_smt_dashboard_view(smt_analysis, model, "All", "All") for model in selected
+        }
+    if assembly_analysis is not None:
+        views["Assembly"] = {
+            model: _build_assembly_dashboard_view(assembly_analysis, assembly_rules, model, "All", "All", "All")
+            for model in selected
+        }
+    targets = {item["source"]: item["target"] for item in configured_kpi_directory()}
+
+    def table(headers, rows, *, kpi=False):
+        head = "".join(f"<th>{escape(value)}</th>" for value in headers)
+        body = "".join(
+            "<tr><td>" + label + "</td>" + "".join(f"<td>{cell}</td>" for cell in cells) + "</tr>"
+            for label, cells in rows
+        )
+        return f'<div class="model-compare-wrap{" kpi" if kpi else ""}"><table class="model-compare-table"><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>'
+
+    def metric_cell(value, kind, target=None, lower_is_better=False):
+        if value is None or pd.isna(value):
+            return "N/A"
+        numeric = float(value)
+        formatted = fmt_kpi_pct(numeric) if kind == "rate" else f"{fmt_ppm(numeric)} PPM" if kind == "ppm" else fmt_int(int(numeric))
+        if target is None:
+            return f'<span class="value">{escape(formatted)}</span>'
+        on_target = numeric <= target if lower_is_better else numeric >= target
+        return f'<span class="{"good" if on_target else "bad"}">{escape(formatted)}</span><small>{"On target" if on_target else "Off target"}</small>'
+
+    specs = {
+        "SMT": [
+            ("SMT input", "produced", "count", None, False),
+            ("Defect PCB", "confirmed_pcbs", "count", None, False),
+            ("Overall defect PPM", "overall_ppm", "ppm", None, True),
+            ("Functional Pass Rate", "functional_rate", "rate", targets["smt_function"], False),
+            ("Appearance Pass Rate", "appearance_rate", "rate", None, False),
+            ("SMT Process NG Rate", "process_ppm", "ppm", targets["smt_process"], True),
+            ("Functional NG PCBs", "functional_pcbs", "count", None, False),
+            ("Appearance NG PCBs", "appearance_pcbs", "count", None, False),
+        ],
+        "Assembly": [
+            ("Assembly input", "produced", "count", None, False),
+            ("Defect PCB", "confirmed_pcbs", "count", None, False),
+            ("Overall defect PPM", "overall_ppm", "ppm", None, True),
+            ("Functional Pass Rate", "functional_rate", "rate", targets["assembly_function"], False),
+            ("Appearance Pass Rate", "appearance_rate", "rate", targets["assembly_appearance"], False),
+            ("Function Mando", "mando_ppm", "ppm", targets["assembly_mando"], True),
+            ("Assembly SMT Process Duty NG Rate", "smt_ppm", "ppm", targets["smt_assembly_duty"], True),
+            ("Functional NG PCBs", "functional_pcbs", "count", None, False),
+            ("Appearance NG PCBs", "appearance_pcbs", "count", None, False),
+            ("Function Mando NG PCBs", "mando_pcbs", "count", None, False),
+            ("SMT-origin NG PCBs", "smt_pcbs", "count", None, False),
+        ],
+    }
+    workbook_metrics = []
+    st.markdown("### KPI comparison")
+    st.caption("SMT and Assembly use separate production inputs and targets. N/A means no input or an invalid rate for that model and area.")
+    for area in ("SMT", "Assembly"):
+        st.markdown(f"#### {area}")
+        if area not in views:
+            st.info(f"{area} source data is unavailable for this comparison.")
+            continue
+        metric_rows = []
+        for label, field, kind, target, lower_is_better in specs[area]:
+            values = {}
+            for model, view in views[area].items():
+                if view["produced"] <= 0:
+                    value = None
+                elif field == "functional_rate":
+                    defects = view["functional_pcbs"]
+                    value = 1 - defects / view["produced"] if defects <= view["produced"] else None
+                elif field == "appearance_rate":
+                    defects = view["appearance_pcbs"]
+                    value = 1 - defects / view["produced"] if defects <= view["produced"] else None
+                else:
+                    value = view[field]
+                values[model] = value
+            display_label = escape(label)
+            if target is not None:
+                target_text = fmt_kpi_pct(target) if kind == "rate" else f"{fmt_ppm(target)} PPM"
+                display_label += f"<small>Target {escape(target_text)}</small>"
+            metric_rows.append((display_label, [metric_cell(values[model], kind, target, lower_is_better) for model in selected]))
+            workbook_metrics.append({
+                "label": f"{area} · {label}", "kind": kind, "target": target,
+                "lower_is_better": lower_is_better, "values": values,
+            })
+        st.markdown(table(["KPI", *selected], metric_rows, kpi=True), unsafe_allow_html=True)
+
+    st.markdown("### Defect breakdown comparison")
+    st.caption("Counts are unique NG PCBs within each category. PPM always uses that model's input in the same area.")
+    workbook_dimensions = []
+    for area, dimensions in (("SMT", SMT_DEFECT_DIMENSIONS), ("Assembly", ASSEMBLY_DEFECT_DIMENSIONS)):
+        st.markdown(f"#### {area}")
+        if area not in views:
+            st.info(f"{area} source data is unavailable for this comparison.")
+            continue
+        area_inputs = {model: views[area][model]["produced"] for model in selected}
+        for index, (title, column, _, _) in enumerate(dimensions):
+            rows = build_dimension_rows(views[area], column)
+            workbook_dimensions.append((f"{area} · {title}", rows, area_inputs))
+            with st.expander(f"{title} · {len(rows)} categories", expanded=index < 2):
+                if not rows:
+                    st.info("No confirmed defects for these models in the selected period.")
+                    continue
+                display_rows = []
+                for row in rows:
+                    cells = []
+                    for model in selected:
+                        count = row["counts"][model]
+                        ppm = defect_ppm(count, area_inputs[model])
+                        cells.append(f'<span class="value">{fmt_int(count)} PCBs</span><small>{fmt_ppm(ppm) if ppm is not None else "N/A"} PPM</small>')
+                    display_rows.append((escape(row["category"]), cells))
+                st.markdown(table([title, *selected], display_rows), unsafe_allow_html=True)
+    workbook_bytes = build_comparison_workbook(
+        selected, start_date, end_date, workbook_metrics, workbook_dimensions,
+        {model: 0 for model in selected}, area="SMT + Assembly",
+    )
+    st.download_button(
+        "Download formatted Excel report", data=workbook_bytes,
+        file_name=f"model_comparison_{start_date:%Y-%m-%d}_{end_date:%Y-%m-%d}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key="model_compare_download",
+    )
+
+
 def _assembly_upload_section_v2(store_status: dict) -> None:
     st.caption(
         "Carregue inputs FPY diariamente. Defeitos FPY e reparo aceitam arquivos de qualquer período: o portal preserva o histórico e atualiza apenas eventos repetidos."
@@ -8582,42 +9616,13 @@ def assembly_quality_dashboard_v2(color: str) -> None:
             default_end=maximum_date,
         )
 
-    rules = load_rules().copy()
-    rules["assembly_functional_operations"] = list(assembly_kpi_v2.FUNCTIONAL_OPERATIONS)
-    rules["assembly_appearance_operations"] = list(assembly_kpi_v2.APPEARANCE_OPERATIONS)
-    rules["mando_column"] = "DutyType"
-    rules["date_start"] = start_date.isoformat()
-    rules["date_end"] = end_date.isoformat()
     analysis_started = perf_counter()
     try:
         metrics = calculate_assembly_kpi_metrics(start_date, end_date)
     except Exception as exc:
         st.error(f"Unable to calculate the Assembly dashboard: {exc}")
         return
-    raw = metrics["defects"].copy()
-    raw["TestOperation"] = raw["Operation"]
-    raw["DutyType"] = raw["FinalDutyType"]
-    raw["ConfirmedDefect"] = True
-    raw["IsRejudgeOK"] = False
-    raw["_Date"] = raw["DefectDate"]
-    if "Line" not in raw:
-        raw["Line"] = raw["TestLine"] if "TestLine" in raw else ""
-    if "Maintenance" not in raw:
-        raw["Maintenance"] = ""
-    production_detail = metrics["inputs"].rename(
-        columns={"Date": "ProductionStart", "Input": "Produced"}
-    ).copy()
-    production_detail["ProductionEnd"] = production_detail["ProductionStart"]
-    analysis = {
-        "raw": raw,
-        "production_detail": production_detail,
-        "trend_settings": trend_granularity(
-            pd.Timestamp(start_date), pd.Timestamp(end_date), production_detail
-        ),
-        "defect_merge_stats": {"merged_updates": 0},
-        "production_input_audit": pd.DataFrame(),
-        "production_input_stats": {},
-    }
+    analysis, rules = _assembly_analysis_from_metrics(metrics, start_date, end_date)
     analysis_seconds = perf_counter() - analysis_started
 
     raw = analysis["raw"].copy()
@@ -8689,6 +9694,41 @@ def assembly_quality_dashboard_v2(color: str) -> None:
             f"{fmt_int(view['mando_pcbs'])} functional Mando NG PCBs",
             color,
         )
+
+    st.markdown("### Defect breakdown")
+    st.button(
+        "Clear breakdown selections", key="assembly_breakdown_clear",
+        on_click=_clear_assembly_breakdown_selections,
+        use_container_width=True,
+    )
+    breakdown_detail = render_assembly_defect_dimension_cards(view["confirmed"])
+    if any(
+        st.session_state.get(f"assembly_breakdown_{column}", "All") != "All"
+        for _, column, _, _ in ASSEMBLY_DEFECT_DIMENSIONS
+    ):
+        st.markdown("### Matching PCB details")
+        unique_boards = breakdown_detail["_DefectKey"].nunique() if not breakdown_detail.empty else 0
+        st.caption(
+            f"{fmt_int(unique_boards)} unique NG PCBs · {fmt_int(len(breakdown_detail))} confirmed records "
+            "match the selected breakdown categories."
+        )
+        detail_columns = [
+            "PCB", "Model", "DefectDate", "TestOperation", "FailureType", "Phenomenon",
+            "FaultReason", "RepairRemark", "DutyType",
+        ]
+        details = breakdown_detail[
+            [column for column in detail_columns if column in breakdown_detail.columns]
+        ].copy()
+        if details.empty:
+            st.info("No confirmed defects match this combination. Clear a selection to broaden the view.")
+        else:
+            st.dataframe(details, hide_index=True, width="stretch", height=310)
+            st.download_button(
+                "Download matching defect records",
+                data=details.to_csv(index=False).encode("utf-8-sig"),
+                file_name="assembly_breakdown_selection.csv", mime="text/csv",
+                width="stretch", key="assembly_breakdown_download",
+            )
 
     st.markdown("<div class='dashboard-kpi-chart-gap'></div>", unsafe_allow_html=True)
     left, right = st.columns(2)
@@ -9229,6 +10269,8 @@ def render_page() -> None:
         iqc_page()
     elif module == "Smart Report":
         smart_report_page()
+    elif module == "Model Comparison":
+        model_comparison_page(MODULES[module]["color"])
     elif module == "About":
         about_page()
 

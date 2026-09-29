@@ -11,7 +11,7 @@ import pandas as pd
 
 # Bump whenever a validated Assembly classification or responsibility rule
 # changes.  It is part of the dashboard cache key in app.py.
-ASSEMBLY_KPI_RULE_VERSION = "mes-operation-map-2026-09-23.1"
+ASSEMBLY_KPI_RULE_VERSION = "mes-operation-map-2026-09-23.2"
 
 
 FUNCTIONAL_OPERATIONS = (
@@ -76,6 +76,15 @@ def _read_excel(source, sheet_name: str) -> pd.DataFrame:
 
 def _text(series: pd.Series) -> pd.Series:
     return series.fillna("").astype(str).str.strip()
+
+
+def _optional_text(frame: pd.DataFrame, *aliases: str) -> pd.Series:
+    columns = {"".join(char for char in str(name).casefold() if char.isalnum()): name for name in frame.columns}
+    for alias in aliases:
+        matched = columns.get("".join(char for char in alias.casefold() if char.isalnum()))
+        if matched is not None:
+            return _text(frame[matched])
+    return pd.Series("", index=frame.index, dtype="object")
 
 
 def _norm(series: pd.Series) -> pd.Series:
@@ -166,6 +175,8 @@ def read_fpy_defects(source) -> pd.DataFrame:
     result["PCBNormalized"] = _norm(result["PCB"])
     result["Operation"] = _text(result["TestOperation"])
     result["Phenomenon"] = _text(result["Fault Phenomenon"])
+    result["FPYFaultReason"] = _optional_text(result, "Fault reason", "FaultReason")
+    result["FPYRepairRemark"] = _optional_text(result, "RepaireRemark", "RepairRemark")
     result["Model"] = _text(result["model"]) if "model" in result else ""
     result["FPYDutyType"] = _text(result["DutyType"])
     result = result[result["DefectDate"].notna() & result["PCBNormalized"].ne("")].copy()
@@ -206,6 +217,8 @@ def read_repair(source) -> pd.DataFrame:
     result = frame.copy()
     result["EventKey"] = event_key(result)
     result["RepairDutyType"] = _text(result["DutyType"])
+    result["RepairFaultReason"] = _optional_text(result, "Fault reason", "FaultReason")
+    result["RepairRepairRemark"] = _optional_text(result, "RepaireRemark", "RepairRemark")
     result["RepairDateParsed"] = _datetime(result["RepairDate"])
     if "BadMachEntryTime" in result:
         result["RepairBadMachEntryTime"] = _datetime(result["BadMachEntryTime"])
@@ -215,13 +228,13 @@ def read_repair(source) -> pd.DataFrame:
     result = result.sort_values(
         ["EventKey", "RepairDateParsed", "RepairBadMachEntryTime", "_RowOrder"], na_position="first"
     ).drop_duplicates("EventKey", keep="last")
-    return result[["EventKey", "RepairDutyType", "RepairDateParsed"]]
+    return result[["EventKey", "RepairDutyType", "RepairDateParsed", "RepairFaultReason", "RepairRepairRemark"]]
 
 
 def combine_repairs(sources: Iterable) -> pd.DataFrame:
     """Merge repair uploads incrementally, with the newest record winning for the same event."""
     if sources is None:
-        return pd.DataFrame(columns=["EventKey", "RepairDutyType", "RepairDateParsed"])
+        return pd.DataFrame(columns=["EventKey", "RepairDutyType", "RepairDateParsed", "RepairFaultReason", "RepairRepairRemark"])
     source_list = [sources] if isinstance(sources, (str, Path, bytes, bytearray)) else list(sources)
     frames = []
     for source_order, source in enumerate(source_list):
@@ -229,7 +242,7 @@ def combine_repairs(sources: Iterable) -> pd.DataFrame:
         frame["SourceOrder"] = source_order
         frames.append(frame)
     if not frames:
-        return pd.DataFrame(columns=["EventKey", "RepairDutyType", "RepairDateParsed"])
+        return pd.DataFrame(columns=["EventKey", "RepairDutyType", "RepairDateParsed", "RepairFaultReason", "RepairRepairRemark"])
     combined = pd.concat(frames, ignore_index=True).sort_values("SourceOrder")
     return combined.drop_duplicates("EventKey", keep="last").drop(columns="SourceOrder").reset_index(drop=True)
 
@@ -251,10 +264,17 @@ def enrich_responsibility(defects: pd.DataFrame, repair: pd.DataFrame | None) ->
         result["RepairMatched"] = False
         result["RepairDutyType"] = ""
         result["RepairDateParsed"] = pd.NaT
+        result["RepairFaultReason"] = ""
+        result["RepairRepairRemark"] = ""
     else:
         result = result.merge(repair, on="EventKey", how="left", validate="one_to_one")
         result["RepairMatched"] = result["EventKey"].isin(set(repair["EventKey"]))
     result["RepairDutyType"] = _text(result["RepairDutyType"])
+    for field in ("FaultReason", "RepairRemark"):
+        repair_column = "Repair" + field
+        fpy_column = "FPY" + field
+        repair_value = _text(result[repair_column])
+        result[field] = repair_value.where(repair_value.ne(""), _text(result[fpy_column]))
     result["ResponsibilityPending"] = (
         result["RepairMatched"]
         & (result["RepairDutyType"].eq("") | result["RepairDateParsed"].isna())
