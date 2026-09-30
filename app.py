@@ -13,6 +13,7 @@ from io import BytesIO
 from numbers import Number
 from pathlib import Path
 from time import perf_counter
+from zoneinfo import ZoneInfo
 
 from tools.supabase_store import (
     DATABASE_OBJECT,
@@ -32,6 +33,7 @@ from tools.supabase_store import (
 from tools.trend_rules import analysis_period_days, requested_trend_grain, trend_grain_labels
 from tools import assembly_kpi_v2
 from tools.kpi_slide import build_kpi_panel_chart
+from tools.auth_session import COOKIE_NAME, SESSION_SECONDS, issue_token, revoke_token, verify_token
 from tools.historical_inspection_archive import apply_archive as apply_historical_inspection_archive
 from tools.inspection_store import (
     create_inspection_tables,
@@ -40,7 +42,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.75"
+APP_VERSION = "v0.5.76"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -95,6 +97,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.76", "Kept login through browser refresh, restored the last subtab and analysis selections, retained temporary comparison uploads, and opened Monthly KPI Review on the current month."),
     ("v0.5.75", "Accepted SMT FPY summaries with extra OrgDisplay line input from retests while preserving ModelData as the KPI denominator and auditing the difference."),
     ("v0.5.74", "Added a shared SMT and Assembly Model Comparison page with KPI, defect breakdown and formatted Excel reporting; expanded Assembly dashboard defect analysis."),
     ("v0.5.73", "Removed the unnecessary Assembly SMT duty defect breakdown table from SMT KPI Track."),
@@ -1951,6 +1954,27 @@ def credentials_are_valid(username: str, password: str) -> bool:
     return username_matches and password_matches
 
 
+def render_auth_cookie(token: str = "") -> None:
+    """Write the signed browser cookie without exposing the password to JavaScript."""
+    value = f"{COOKIE_NAME}={token}; Path=/; SameSite=Lax"
+    value += f"; Max-Age={SESSION_SECONDS if token else 0}"
+    st.html(
+        "<script>document.cookie = " + json.dumps(value)
+        + " + (location.protocol === 'https:' ? '; Secure' : '');</script>",
+        unsafe_allow_javascript=True,
+    )
+
+
+def restore_authentication() -> None:
+    if st.session_state.get("authenticated"):
+        return
+    token = st.context.cookies.get(COOKIE_NAME)
+    if verify_token(token, LOGIN_USERNAME, LOGIN_PASSWORD_SHA256):
+        st.session_state["authenticated"] = True
+        st.session_state["authenticated_user"] = LOGIN_USERNAME
+        st.session_state["auth_cookie_token"] = token
+
+
 def login_page() -> None:
     apply_login_css()
     hero_column, form_column = st.columns([1.15, 0.85], gap="large")
@@ -2007,6 +2031,8 @@ def login_page() -> None:
                 if credentials_are_valid(username, password):
                     st.session_state["authenticated"] = True
                     st.session_state["authenticated_user"] = LOGIN_USERNAME
+                    st.session_state["auth_cookie_token"] = issue_token(LOGIN_USERNAME, LOGIN_PASSWORD_SHA256)
+                    st.session_state.pop("auth_logout_pending", None)
                     st.session_state.pop("login_error", None)
                     st.rerun()
                 else:
@@ -2027,7 +2053,9 @@ def login_page() -> None:
 
 
 def logout() -> None:
+    revoke_token(st.session_state.get("auth_cookie_token") or st.context.cookies.get(COOKIE_NAME))
     st.session_state.clear()
+    st.session_state["auth_logout_pending"] = True
     st.query_params.clear()
     st.rerun()
 
@@ -2065,6 +2093,8 @@ def sync_navigation_from_query() -> None:
 
     st.session_state.module = module
     st.session_state.tab = tab
+    if tab:
+        st.session_state[f"last_tab_{navigation_key(module)}"] = tab
 
 
 def navigation_key(value: str) -> str:
@@ -2078,12 +2108,16 @@ def set_navigation(module: str, tab: str = "") -> None:
         module = "Home"
     available_tabs = MODULES[module]["tabs"]
     if available_tabs:
-        tab = tab if tab in available_tabs else available_tabs[0]
+        remembered_tab = st.session_state.get(f"last_tab_{navigation_key(module)}")
+        if tab not in available_tabs:
+            tab = remembered_tab if remembered_tab in available_tabs else available_tabs[0]
     else:
         tab = ""
 
     st.session_state.module = module
     st.session_state.tab = tab
+    if tab:
+        st.session_state[f"last_tab_{navigation_key(module)}"] = tab
     query_values = {"module": module}
     if tab:
         query_values["tab"] = tab
@@ -2117,7 +2151,7 @@ def top_navigation() -> None:
                     type="primary" if st.session_state.module == module else "secondary",
                     use_container_width=True,
                     on_click=set_navigation,
-                    args=(module, cfg["tabs"][0] if cfg["tabs"] else ""),
+                    args=(module, ""),
                 )
         with columns[-1]:
             with st.popover("More", use_container_width=True):
@@ -2491,6 +2525,7 @@ def analysis_period_control(
                     "Quick selection",
                     ANALYSIS_PERIOD_OPTIONS,
                     key=preset_key,
+                    persist_state="session",
                     on_change=_apply_period_preset,
                     args=(preset_key, range_key, remembered_range_key, minimum_date, maximum_date),
                     width=160,
@@ -2499,12 +2534,14 @@ def analysis_period_control(
                 selected_period = st.date_input(
                     "Analysis period", min_value=minimum_date, max_value=maximum_date,
                     format="DD/MM/YYYY", key=range_key,
+                    persist_state="session",
                     on_change=_remember_period_range, args=(range_key, remembered_range_key), width=270,
                 )
         else:
             selected_period = st.date_input(
                 "Analysis period", min_value=minimum_date, max_value=maximum_date,
                 format="DD/MM/YYYY", key=range_key,
+                persist_state="session",
                 on_change=_remember_period_range, args=(range_key, remembered_range_key),
                 width=270,
             )
@@ -5017,6 +5054,7 @@ def assembly_quality_dashboard(color: str) -> None:
         horizontal=True,
         label_visibility="collapsed",
         key="assembly_dashboard_section",
+        persist_state="session",
     )
     use_local_store = store_status["ready"]
     uploaded_defects = None
@@ -5338,9 +5376,9 @@ def assembly_quality_dashboard(color: str) -> None:
 
     if active_section == "Details":
         raw = analysis["raw"].copy()
-        selected_model = st.selectbox("Model", ["All", *sorted(raw["Model"].dropna().unique())])
-        selected_line = st.selectbox("Line", ["All", *sorted(raw["Line"].dropna().unique())])
-        selected_type = st.selectbox("Record type", ["All", "Confirmed defects", "Excluded retest", "ManDo only"])
+        selected_model = st.selectbox("Model", ["All", *sorted(raw["Model"].dropna().unique())], key="assembly_detail_model", persist_state="session")
+        selected_line = st.selectbox("Line", ["All", *sorted(raw["Line"].dropna().unique())], key="assembly_detail_line", persist_state="session")
+        selected_type = st.selectbox("Record type", ["All", "Confirmed defects", "Excluded retest", "ManDo only"], key="assembly_detail_type", persist_state="session")
         view = raw
         if selected_model != "All":
             view = view[view["Model"] == selected_model]
@@ -5470,12 +5508,14 @@ def smart_report_period_selector(reference_date: date) -> tuple[str, date, date,
         default="Daily",
         selection_mode="single",
         key="smart_report_type",
+        persist_state="session",
         label_visibility="collapsed",
     ) or "Daily"
     selected = st.date_input(
         "Reference date",
         value=reference_date,
         key="smart_report_reference_date",
+        persist_state="session",
         label_visibility="collapsed",
     )
     if report_type == "Daily":
@@ -5687,6 +5727,7 @@ def smart_report_area_panel(area: str, color: str, candidates: list[dict], perio
             default=default_labels,
             max_selections=3,
             key=f"smart_report_selection_{area}_{period_key}",
+            persist_state="session",
         )
         st.caption("Suggestions are ranked by affected PCB count. Select the defects that are operationally relevant.")
     selected = [by_label[label] for label in labels if label in selected_labels]
@@ -5697,6 +5738,7 @@ def smart_report_area_panel(area: str, color: str, candidates: list[dict], perio
                 "Defect being edited",
                 labels,
                 key=f"smart_report_edit_{area}_{period_key}",
+                persist_state="session",
             )
             item = by_label[selected_label]
             action = smart_report_action_defaults(actions, item)
@@ -5804,6 +5846,7 @@ def defect_action_report_page() -> None:
             default="All",
             selection_mode="single",
             key="smart_report_area_filter",
+            persist_state="session",
             label_visibility="collapsed",
         ) or "All"
     with action_column:
@@ -6203,7 +6246,7 @@ def weekly_kpi_review_page() -> None:
     default_week_end = date.today() - timedelta(days=date.today().weekday() + 1)
     controls, visibility_column, action_column = st.columns([1.1, 1.55, 0.75])
     with controls:
-        week_end = st.date_input("Week ending", value=default_week_end, key="weekly_kpi_week_end", help="Select the Sunday that closes the report week.")
+        week_end = st.date_input("Week ending", value=default_week_end, key="weekly_kpi_week_end", persist_state="session", help="Select the Sunday that closes the report week.")
     start_date = week_end - timedelta(days=6)
     days = [start_date + timedelta(days=offset) for offset in range(7)]
     week_label = f"WK{week_end.isocalendar().week:02d} · {start_date.strftime('%d/%m')} – {week_end.strftime('%d/%m/%Y')}"
@@ -6214,6 +6257,7 @@ def weekly_kpi_review_page() -> None:
             default=[],
             format_func=lambda value: value.strftime("%d-%b"),
             key=f"weekly_kpi_hidden_days_{week_end.isoformat()}",
+            persist_state="session",
             help="The selected columns are removed only from the displayed and copied table. Weekly KPI calculations remain unchanged.",
         )
     visible_days = [day for day in days if day not in hidden_days]
@@ -6335,8 +6379,8 @@ def weekly_kpi_review_page() -> None:
 
 def monthly_kpi_review_page() -> None:
     st.markdown("<div class='smart-report-title'>Monthly KPI Review</div><div class='smart-report-subtitle'>Independent SMT or Assembly monthly review, with the same KPI status, problem and action-plan structure used in the weekly report.</div>", unsafe_allow_html=True)
-    today = date.today()
-    default_month = (today.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
+    today = datetime.now(ZoneInfo("America/Manaus")).date()
+    default_month = today.strftime("%Y-%m")
     controls, area_control, _ = st.columns([0.6, 0.6, 1.8], gap="small")
     with controls:
         with st.container(key="monthly_kpi_start_month_control"):
@@ -6344,10 +6388,11 @@ def monthly_kpi_review_page() -> None:
                 "Start date",
                 value=default_month,
                 key="monthly_kpi_start_month",
+                persist_state="session",
                 max_chars=7,
             ).strip()
     with area_control:
-        area = st.segmented_control("Area", ["SMT", "Assembly"], default="SMT", selection_mode="single", key="monthly_kpi_area") or "SMT"
+        area = st.segmented_control("Area", ["SMT", "Assembly"], default="SMT", selection_mode="single", key="monthly_kpi_area", persist_state="session") or "SMT"
     try:
         start_date = datetime.strptime(selected_month, "%Y-%m").date().replace(day=1)
     except ValueError:
@@ -8496,6 +8541,7 @@ def smt_model_comparison_page(color: str) -> None:
             choice = st.selectbox(
                 f"Model {index + 1}" + (" · optional" if index == 2 else ""),
                 ["Select a model", *model_options], key=f"smt_compare_model_{index + 1}",
+                persist_state="session",
             )
             if choice != "Select a model":
                 selected.append(choice)
@@ -8699,15 +8745,16 @@ def smt_quality_dashboard_v2(color: str) -> None:
                 "Model",
                 model_options,
                 key="smt_quality_v2_models",
+                persist_state="session",
                 placeholder="All models",
                 help="Select one or more models. With no selection, all models are included.",
             )
         with failure_column:
-            failure_type = st.selectbox("Failure type", failure_options, key="smt_quality_v2_failure_type")
+            failure_type = st.selectbox("Failure type", failure_options, key="smt_quality_v2_failure_type", persist_state="session")
         with duty_column:
-            duty_type = st.selectbox("DutyType", duty_options, key="smt_quality_v2_duty_type")
+            duty_type = st.selectbox("DutyType", duty_options, key="smt_quality_v2_duty_type", persist_state="session")
         with station_column:
-            station = st.selectbox("Process / Station", station_options, key="smt_quality_v2_station")
+            station = st.selectbox("Process / Station", station_options, key="smt_quality_v2_station", persist_state="session")
 
     model_filter = selected_models or "All"
     view = _build_smt_dashboard_view(analysis, model_filter, station, failure_type, duty_type)
@@ -9181,6 +9228,7 @@ def assembly_model_comparison_page(color: str) -> None:
             choice = st.selectbox(
                 f"Model {index + 1}" + (" · optional" if index == 2 else ""),
                 ["Select a model", *model_options], key=f"assembly_compare_model_{index + 1}",
+                persist_state="session",
             )
             if choice != "Select a model":
                 selected.append(choice)
@@ -9395,6 +9443,7 @@ def model_comparison_page(color: str) -> None:
             choice = st.selectbox(
                 f"Model {index + 1}" + (" · optional" if index == 2 else ""),
                 ["Select a model", *model_options], key=f"model_compare_model_{index + 1}",
+                persist_state="session",
             )
             if choice != "Select a model":
                 selected.append(choice)
@@ -9833,18 +9882,18 @@ def assembly_quality_dashboard_v2(color: str) -> None:
     with filter_panel:
         filter_columns = st.columns(4)
         with filter_columns[0]:
-            model = st.selectbox("Model", model_options, key="assembly_quality_v2_model")
+            model = st.selectbox("Model", model_options, key="assembly_quality_v2_model", persist_state="session")
         with filter_columns[1]:
             station = st.selectbox(
-                "Process / Station", station_options, key="assembly_quality_v2_station"
+                "Process / Station", station_options, key="assembly_quality_v2_station", persist_state="session"
             )
         with filter_columns[2]:
             failure_type = st.selectbox(
-                "Failure type", failure_options, key="assembly_quality_v2_failure"
+                "Failure type", failure_options, key="assembly_quality_v2_failure", persist_state="session"
             )
         with filter_columns[3]:
             duty_category = st.selectbox(
-                "DutyType", duty_options, key="assembly_quality_v2_duty"
+                "DutyType", duty_options, key="assembly_quality_v2_duty", persist_state="session"
             )
 
     view = _build_assembly_dashboard_view(
@@ -10466,9 +10515,16 @@ def render_page() -> None:
 
 
 init_state()
+if st.session_state.get("auth_logout_pending"):
+    render_auth_cookie()
+    login_page()
+    st.stop()
+restore_authentication()
 if not st.session_state.get("authenticated", False):
     login_page()
     st.stop()
+if (token := st.session_state.get("auth_cookie_token")) and st.context.cookies.get(COOKIE_NAME) != token:
+    render_auth_cookie(token)
 
 sync_navigation_from_query()
 apply_global_css()

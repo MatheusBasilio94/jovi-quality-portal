@@ -6,6 +6,7 @@ from typing import Any
 
 import pandas as pd
 import streamlit as st
+from tools.retained_upload import retain_upload
 
 
 TOOL_VERSION = "v2.0.8"
@@ -324,11 +325,17 @@ def render_bom_comparison_assy_tool(color: str) -> None:
     with left:
         st.markdown("#### BOM Microsiga")
         st.caption("Compared structure · XLSX, XLS or CSV")
-        microsiga_file = st.file_uploader("Upload BOM Microsiga", type=["xlsx", "xls", "csv"], key="bom_assy_microsiga")
+        microsiga_uploaded = st.file_uploader("Upload BOM Microsiga", type=["xlsx", "xls", "csv"], key="bom_assy_microsiga")
+        microsiga_file = retain_upload(microsiga_uploaded, "bom_assy_microsiga_retained")
+        if microsiga_uploaded is None and microsiga_file is not None:
+            st.caption(f"Using retained file: {microsiga_file.name}")
     with right:
         st.markdown("#### BOM Jovi")
         st.caption("Official reference · XLSX, XLS or CSV")
-        jovi_file = st.file_uploader("Upload BOM Jovi", type=["xlsx", "xls", "csv"], key="bom_assy_jovi")
+        jovi_uploaded = st.file_uploader("Upload BOM Jovi", type=["xlsx", "xls", "csv"], key="bom_assy_jovi")
+        jovi_file = retain_upload(jovi_uploaded, "bom_assy_jovi_retained")
+        if jovi_uploaded is None and jovi_file is not None:
+            st.caption(f"Using retained file: {jovi_file.name}")
 
     if not microsiga_file or not jovi_file:
         st.info("Upload the Microsiga BOM and Jovi BOM to start the Assembly comparison.")
@@ -392,13 +399,13 @@ def render_bom_comparison_assy_tool(color: str) -> None:
                 st.success("No issues found.")
             else:
                 issue_types = ["All", *sorted(analysis["issues"]["Issue Type"].unique())]
-                selected_issue = st.selectbox("Issue type", issue_types, key="bom_assy_issue_filter")
+                selected_issue = st.selectbox("Issue type", issue_types, key="bom_assy_issue_filter", persist_state="session")
                 issue_view = analysis["issues"] if selected_issue == "All" else analysis["issues"][analysis["issues"]["Issue Type"].eq(selected_issue)]
                 st.dataframe(issue_view, use_container_width=True, height=390)
         with results_tab:
             statuses = ["All", *sorted(analysis["result"]["Status"].unique())]
-            selected_status = st.selectbox("Status", statuses, key="bom_assy_status_filter")
-            search = st.text_input("Search code or description", key="bom_assy_search")
+            selected_status = st.selectbox("Status", statuses, key="bom_assy_status_filter", persist_state="session")
+            search = st.text_input("Search code or description", key="bom_assy_search", persist_state="session")
             result_view = analysis["result"] if selected_status == "All" else analysis["result"][analysis["result"]["Status"].eq(selected_status)]
             if search.strip():
                 term = re.escape(search.strip())
