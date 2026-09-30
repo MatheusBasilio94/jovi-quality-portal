@@ -42,7 +42,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.78"
+APP_VERSION = "v0.5.79"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -97,6 +97,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.79", "Added hover balloons to Home model trend points with defect PCB count, FPY input and daily PPM."),
     ("v0.5.78", "Added scrollable SMT Process NG and Assembly Function Mando daily model trends to Home, ordered by the latest FPY input."),
     ("v0.5.77", "Added Model, BadMachLocation and ItemCode cross-filter cards to SMT and Assembly Quality Dashboards."),
     ("v0.5.76", "Kept login through browser refresh, restored the last subtab and analysis selections, retained temporary comparison uploads, and opened Monthly KPI Review on the current month."),
@@ -1664,6 +1665,7 @@ def apply_global_css() -> None:
         .home-model-heading p,.home-model-count { color:#607895;font-size:.76rem;margin:0; }
         .home-model-count { font-weight:800;white-space:nowrap; }
         .home-model-row { display:grid;grid-template-columns:minmax(145px,18%) minmax(0,1fr) minmax(0,1fr);gap:0;background:#fff;border:1px solid #D3DDED;border-left:5px solid var(--row-color);border-radius:.72rem;margin:0 0 .5rem;min-height:148px;box-sizing:border-box; }
+        .home-model-row:hover,.home-model-row:focus-within { position:relative;z-index:2; }
         .home-model-id { padding:.85rem .9rem;min-width:0; }
         .home-model-id strong { color:#102D5B;display:block;font-size:1.08rem;overflow-wrap:anywhere; }
         .home-model-id small { color:#7085A0;display:block;font-size:.68rem;margin:.24rem 0 .55rem; }
@@ -1673,7 +1675,12 @@ def apply_global_css() -> None:
         .home-model-chart-head b { color:#18365E;font-size:.78rem; }
         .home-model-chart-head strong { color:var(--value-color);font-size:1.02rem;white-space:nowrap; }
         .home-model-chart-note { color:#7789A0;font-size:.64rem;margin-top:-.1rem; }
-        .home-model-svg { display:block;height:88px;width:100%; }
+        .home-model-svg { display:block;height:96px;width:100%;overflow:visible; }
+        .home-model-point { cursor:help;outline:none; }
+        .home-model-point .home-model-tooltip { opacity:0;pointer-events:none;transition:opacity .12s ease; }
+        .home-model-point:hover .home-model-tooltip,
+        .home-model-point:focus .home-model-tooltip { opacity:1; }
+        .home-model-point:focus .home-model-dot { stroke:#0B2D5A;stroke-width:2.5; }
         .home-model-empty { color:#8393A8;display:flex;align-items:center;font-size:.72rem;height:82px; }
         @media (max-width:900px) {
             .home-model-row { grid-template-columns:1fr 1fr; }

@@ -124,6 +124,7 @@ def mini_trend_svg(daily: pd.DataFrame, target: float, color: str) -> str:
     target_y = y_at(float(target))
     elements = [
         '<svg class="home-model-svg" viewBox="0 0 500 105" role="img" '
+        'font-family="Arial,Helvetica,sans-serif" '
         'aria-label="Daily PPM trend with target line">',
         f'<line x1="{left}" y1="{bottom_y}" x2="{right}" y2="{bottom_y}" stroke="#CAD7E7"/>',
         f'<line x1="{left}" y1="{target_y:.1f}" x2="{right}" y2="{target_y:.1f}" '
@@ -131,12 +132,15 @@ def mini_trend_svg(daily: pd.DataFrame, target: float, color: str) -> str:
         f'<text x="2" y="{target_y + 3:.1f}" fill="#BA5627" font-size="9">'
         f'{target:,.0f}</text>',
     ]
+    lines = []
+    points = []
+    labels = []
     segment = []
 
     def flush_segment() -> None:
         if len(segment) >= 2:
             points = " ".join(f"{x:.1f},{y:.1f}" for x, y in segment)
-            elements.append(
+            lines.append(
                 f'<polyline points="{points}" fill="none" stroke="{color}" '
                 'stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>'
             )
@@ -149,16 +153,48 @@ def mini_trend_svg(daily: pd.DataFrame, target: float, color: str) -> str:
         else:
             point = (x_at(index), y_at(float(value)))
             segment.append(point)
-            elements.append(
-                f'<circle cx="{point[0]:.1f}" cy="{point[1]:.1f}" r="3.6" '
+            px, py = point
+            tooltip_width, tooltip_height = 185, 56
+            tooltip_x = min(max(px - tooltip_width / 2, 2), 498 - tooltip_width)
+            above = py >= 65
+            tooltip_y = max(2, py - tooltip_height - 8) if above else py + 9
+            pointer_y = tooltip_y + tooltip_height if above else tooltip_y
+            pointer_tip = pointer_y + 6 if above else pointer_y - 6
+            label = pd.Timestamp(row["Date"]).strftime("%d/%m/%Y")
+            short_label = pd.Timestamp(row["Date"]).strftime("%d/%m")
+            defect_pcbs = int(row.get("Defects", 0))
+            input_pcbs = int(row.get("Input", 0))
+            aria = escape(
+                f"{label}: {float(value):,.0f} PPM; {defect_pcbs:,} defect PCBs; "
+                f"{input_pcbs:,} input PCBs", quote=True,
+            )
+            points.append(
+                f'<g class="home-model-point" tabindex="0" aria-label="{aria}">'
+                f'<circle class="home-model-dot" cx="{px:.1f}" cy="{py:.1f}" r="3.6" '
                 f'fill="{color}" stroke="white" stroke-width="1"/>'
+                f'<circle cx="{px:.1f}" cy="{py:.1f}" r="11" fill="transparent" pointer-events="all"/>'
+                '<g class="home-model-tooltip">'
+                f'<rect x="{tooltip_x:.1f}" y="{tooltip_y:.1f}" width="{tooltip_width}" '
+                f'height="{tooltip_height}" rx="7" fill="#102D5B"/>'
+                f'<path d="M{px - 5:.1f},{pointer_y:.1f} L{px:.1f},{pointer_tip:.1f} '
+                f'L{px + 5:.1f},{pointer_y:.1f} Z" fill="#102D5B"/>'
+                f'<text x="{tooltip_x + 10:.1f}" y="{tooltip_y + 17:.1f}" '
+                f'fill="#FFFFFF" font-size="12" font-weight="700">{escape(short_label)} · {float(value):,.0f} PPM</text>'
+                f'<text x="{tooltip_x + 10:.1f}" y="{tooltip_y + 34:.1f}" '
+                f'fill="#FFFFFF" font-size="12">Defect PCBs: {defect_pcbs:,}</text>'
+                f'<text x="{tooltip_x + 10:.1f}" y="{tooltip_y + 50:.1f}" '
+                f'fill="#FFFFFF" font-size="12">Input: {input_pcbs:,} PCBs</text>'
+                '</g></g>'
             )
         if index == 0 or index == len(recent) - 1 or index % 2 == 0:
             label = pd.Timestamp(row["Date"]).strftime("%d/%m")
-            elements.append(
+            labels.append(
                 f'<text x="{x_at(index):.1f}" y="99" text-anchor="middle" '
                 f'fill="#6B7F9B" font-size="9">{escape(label)}</text>'
             )
     flush_segment()
+    elements.extend(lines)
+    elements.extend(labels)
+    elements.extend(points)
     elements.append("</svg>")
     return "".join(elements)
