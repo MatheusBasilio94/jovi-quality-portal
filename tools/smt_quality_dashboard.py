@@ -251,12 +251,22 @@ def read_summary_input_bytes(data: bytes, filename: str) -> tuple[pd.DataFrame, 
         raise RuntimeError(f"{filename}: the new FPY flow accepts daily input files only.")
     if model.duplicated(["Model", "BeginDate", "EndDateExclusive"]).any():
         raise RuntimeError(f"{filename}: ModelData contains duplicate model rows for the same day.")
+    keys = ["Model", "BeginDate", "EndDateExclusive"]
+    model_totals = model.set_index(keys)[["Input", "BadMachine"]].sort_index()
+    org_totals = org.groupby(keys)[["Input", "BadMachine"]].sum().sort_index()
+    if not model_totals.index.equals(org_totals.index):
+        raise RuntimeError(f"{filename}: ModelData and OrgDisplay have different models or dates.")
+    input_difference = org_totals["Input"] - model_totals["Input"]
+    bad_difference = org_totals["BadMachine"] - model_totals["BadMachine"]
+    if input_difference.lt(0).any() or bad_difference.ne(0).any():
+        raise RuntimeError(
+            f"{filename}: ModelData and OrgDisplay do not reconcile by model and day "
+            "(OrgDisplay has less input or different BadMachine counts)."
+        )
     model_input = int(model["Input"].sum())
     org_input = int(org["Input"].sum())
     model_bad = int(model["BadMachine"].sum())
     org_bad = int(org["BadMachine"].sum())
-    if model_input != org_input or model_bad != org_bad:
-        raise RuntimeError(f"{filename}: ModelData and OrgDisplay totals do not reconcile.")
     audit = {
         "SourceFile": filename,
         "ModelRows": model_audit["valid_rows"],
@@ -266,6 +276,7 @@ def read_summary_input_bytes(data: bytes, filename: str) -> tuple[pd.DataFrame, 
         "OrgInput": org_input,
         "OrgBadMachine": org_bad,
         "OrgReconciles": model_input == org_input and model_bad == org_bad,
+        "OrgExcessInput": int(input_difference.sum()),
         "BadGreaterThanInputRows": model_audit["bad_greater_than_input"],
         "InvalidRows": model_audit["raw_rows"] - model_audit["valid_rows"] + org_audit["raw_rows"] - org_audit["valid_rows"],
     }
@@ -1268,8 +1279,10 @@ def _upload_section(color: str) -> None:
         results = []
         try:
             for uploaded in uploaded_inputs or []:
-                read_summary_input_bytes(uploaded.getvalue(), uploaded.name)
-                results.append(persist_smt_source(uploaded, "input"))
+                _, _, audit = read_summary_input_bytes(uploaded.getvalue(), uploaded.name)
+                result = persist_smt_source(uploaded, "input")
+                result["OrgExcessInput"] = audit["OrgExcessInput"]
+                results.append(result)
             if uploaded_defect:
                 read_detail(uploaded_defect.getvalue(), uploaded_defect.name)
                 results.append(persist_smt_source(uploaded_defect, "defects"))
@@ -1283,12 +1296,19 @@ def _upload_section(color: str) -> None:
             st.success("Arquivos de SMT processados.")
             st.rerun()
     if "smt_last_import_results" in st.session_state:
+        imported = st.session_state["smt_last_import_results"]
         st.dataframe(
-            pd.DataFrame(st.session_state["smt_last_import_results"]),
+            pd.DataFrame(imported),
             use_container_width=True,
             hide_index=True,
             height="content",
         )
+        excess = sum(int(item.get("OrgExcessInput", 0)) for item in imported)
+        if excess:
+            st.warning(
+                f"OrgDisplay registra {excess} inputs adicionais por linha. "
+                "Os KPIs usam apenas o input consolidado de ModelData; confira no MES se os adicionais são retestes."
+            )
     render_smt_source_manager()
     st.info(
         "Os três grupos ficam armazenados separadamente por área e tipo de fonte. "
