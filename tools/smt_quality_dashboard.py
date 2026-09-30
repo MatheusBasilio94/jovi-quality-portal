@@ -1320,7 +1320,7 @@ def render_smt_quality_dashboard(color: str) -> None:
     init_smt_store()
     st.markdown(f"<h1 class='section-title' style='color:{color};'>SMT · Quality Dashboard</h1>", unsafe_allow_html=True)
     sections = ["Overview", "Failure Types", "Models", "Defects / Pareto", "Process", "Excluded MES rules / Repeats", "Data Quality", "Upload Data", "Details", "About"]
-    active_section = st.radio("SMT dashboard section", sections, horizontal=True, label_visibility="collapsed", key="smt_quality_dashboard_section")
+    active_section = st.radio("SMT dashboard section", sections, horizontal=True, label_visibility="collapsed", key="smt_quality_dashboard_section", persist_state="session")
     if active_section == "Upload Data":
         _upload_section(color)
         return
@@ -1335,9 +1335,9 @@ def render_smt_quality_dashboard(color: str) -> None:
 
     date_columns = st.columns(2)
     with date_columns[0]:
-        start_date = st.date_input("Start date", value=minimum_date.date(), min_value=minimum_date.date(), max_value=maximum_date.date(), key="smt_quality_start")
+        start_date = st.date_input("Start date", value=minimum_date.date(), min_value=minimum_date.date(), max_value=maximum_date.date(), key="smt_quality_start", persist_state="session")
     with date_columns[1]:
-        end_date = st.date_input("End date", value=maximum_date.date(), min_value=minimum_date.date(), max_value=maximum_date.date(), key="smt_quality_end")
+        end_date = st.date_input("End date", value=maximum_date.date(), min_value=minimum_date.date(), max_value=maximum_date.date(), key="smt_quality_end", persist_state="session")
     if end_date < start_date:
         st.error("End date must be on or after start date.")
         return
@@ -1549,11 +1549,12 @@ def render_smt_quality_dashboard(color: str) -> None:
     if active_section == "Details":
         raw = analysis["raw"].copy()
         model_options = ["All", *sorted(raw["Model"].dropna().unique())]
-        selected_model = st.selectbox("Model", model_options, key="smt_detail_model")
+        selected_model = st.selectbox("Model", model_options, key="smt_detail_model", persist_state="session")
         record_type = st.selectbox(
             "Record type",
             ["All", "Confirmed", "Functional Failure", "Appearance Failure", "Unclassified Station", "Excluded MES rule", "Without input coverage"],
             key="smt_detail_type",
+            persist_state="session",
         )
         view = raw
         if selected_model != "All":
@@ -1581,6 +1582,7 @@ def render_smt_quality_dashboard(color: str) -> None:
                 options=range(1, page_count + 1),
                 format_func=lambda page: f"Page {page} of {page_count}",
                 key=f"smt_detail_page_{selected_model}_{record_type}",
+                persist_state="session",
             )
         else:
             page_number = 1

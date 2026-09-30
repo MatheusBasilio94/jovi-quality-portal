@@ -7,6 +7,7 @@ from typing import Any
 
 import pandas as pd
 import streamlit as st
+from tools.retained_upload import retain_upload
 
 
 REF_COL = "位号 (Ref.)"
@@ -1209,6 +1210,9 @@ def render_bom_comparison_tool(color: str) -> None:
             key="bom_table1_upload",
             label_visibility="collapsed",
         )
+        arquivo1 = retain_upload(arquivo1, "bom_table1_retained")
+        if arquivo1 is not None and st.session_state.get("bom_table1_upload") is None:
+            st.caption(f"Using retained file: {arquivo1.name}")
 
     with upload_col2:
         st.markdown(upload_card_html(TEXT["table2"], TEXT["table2_caption"], TEXT["supported_files"]), unsafe_allow_html=True)
@@ -1218,6 +1222,9 @@ def render_bom_comparison_tool(color: str) -> None:
             key="bom_table2_upload",
             label_visibility="collapsed",
         )
+        arquivo2 = retain_upload(arquivo2, "bom_table2_retained")
+        if arquivo2 is not None and st.session_state.get("bom_table2_upload") is None:
+            st.caption(f"Using retained file: {arquivo2.name}")
 
     if not arquivo1 or not arquivo2:
         st.info(TEXT["upload_warning"])
@@ -1290,12 +1297,14 @@ def render_bom_comparison_tool(color: str) -> None:
                 df1.columns,
                 index=list(df1.columns).index(suggested_ref_t1),
                 key=f"bom_ref_t1_{widget_signature}",
+                persist_state="session",
             )
             col_pn_t1 = st.selectbox(
                 TEXT["pn_col_t1"],
                 df1.columns,
                 index=list(df1.columns).index(suggested_pn_t1),
                 key=f"bom_pn_t1_{widget_signature}",
+                persist_state="session",
             )
         with c2:
             st.markdown(f"**{TEXT['table2']}**")
@@ -1304,12 +1313,14 @@ def render_bom_comparison_tool(color: str) -> None:
                 df2.columns,
                 index=list(df2.columns).index(suggested_ref_t2),
                 key=f"bom_ref_t2_{widget_signature}",
+                persist_state="session",
             )
             col_pn_t2 = st.selectbox(
                 TEXT["pn_col_t2"],
                 df2.columns,
                 index=list(df2.columns).index(suggested_pn_t2),
                 key=f"bom_pn_t2_{widget_signature}",
+                persist_state="session",
             )
 
         auto_split_t1 = coluna_tem_refs_multiplas(df1, col_ref_t1)
@@ -1409,7 +1420,7 @@ def render_bom_comparison_tool(color: str) -> None:
                 issue_col1, issue_col2 = st.columns([2, 4])
                 issue_filter_options = [TEXT["all_issues"], TABLE_TEXT["critical"], TABLE_TEXT["high"], TABLE_TEXT["medium"]]
                 with issue_col1:
-                    issue_filter_label = st.selectbox(TEXT["issue_filter"], issue_filter_options, key="bom_issue_filter")
+                    issue_filter_label = st.selectbox(TEXT["issue_filter"], issue_filter_options, key="bom_issue_filter", persist_state="session")
                 with issue_col2:
                     st.markdown(f"<div class='bom-caption'>{escape(TEXT['issue_filter_note'])}</div>", unsafe_allow_html=True)
 
@@ -1434,9 +1445,9 @@ def render_bom_comparison_tool(color: str) -> None:
             comp_col1, comp_col2, comp_col3 = st.columns([2, 3, 3])
             result_filter_options = [TEXT["all"], TABLE_TEXT["match"], TABLE_TEXT["mismatch"], TABLE_TEXT["missing"], TABLE_TEXT["extra"]]
             with comp_col1:
-                result_filter_label = st.selectbox(TEXT["result_filter"], result_filter_options, key="bom_result_filter")
+                result_filter_label = st.selectbox(TEXT["result_filter"], result_filter_options, key="bom_result_filter", persist_state="session")
             with comp_col2:
-                search_text = st.text_input(TEXT["search"], key="bom_search_text")
+                search_text = st.text_input(TEXT["search"], key="bom_search_text", persist_state="session")
             with comp_col3:
                 st.markdown(f"<div class='bom-caption'>{escape(TEXT['comparison_filter_note'])}</div>", unsafe_allow_html=True)
 
