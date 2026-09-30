@@ -42,7 +42,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.77"
+APP_VERSION = "v0.5.78"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -97,6 +97,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.78", "Added scrollable SMT Process NG and Assembly Function Mando daily model trends to Home, ordered by the latest FPY input."),
     ("v0.5.77", "Added Model, BadMachLocation and ItemCode cross-filter cards to SMT and Assembly Quality Dashboards."),
     ("v0.5.76", "Kept login through browser refresh, restored the last subtab and analysis selections, retained temporary comparison uploads, and opened Monthly KPI Review on the current month."),
     ("v0.5.75", "Accepted SMT FPY summaries with extra OrgDisplay line input from retests while preserving ModelData as the KPI denominator and auditing the difference."),
@@ -1658,6 +1659,31 @@ def apply_global_css() -> None:
         div[class*="st-key-home_overview_assembly"] { border-top:4px solid #6532C8 !important; }
         div[class*="st-key-home_open_smt_kpi"] button { background:#0D7A45 !important; border-color:#0D7A45 !important; }
         div[class*="st-key-home_open_assembly_kpi"] button { background:#6532C8 !important; border-color:#6532C8 !important; }
+        .home-model-heading { display:flex;align-items:end;justify-content:space-between;gap:1rem;margin:.65rem 0 .55rem; }
+        .home-model-heading h2 { color:#102D5B;font-size:1.3rem;line-height:1.1;margin:0 0 .2rem; }
+        .home-model-heading p,.home-model-count { color:#607895;font-size:.76rem;margin:0; }
+        .home-model-count { font-weight:800;white-space:nowrap; }
+        .home-model-row { display:grid;grid-template-columns:minmax(145px,18%) minmax(0,1fr) minmax(0,1fr);gap:0;background:#fff;border:1px solid #D3DDED;border-left:5px solid var(--row-color);border-radius:.72rem;margin:0 0 .5rem;min-height:148px;box-sizing:border-box; }
+        .home-model-id { padding:.85rem .9rem;min-width:0; }
+        .home-model-id strong { color:#102D5B;display:block;font-size:1.08rem;overflow-wrap:anywhere; }
+        .home-model-id small { color:#7085A0;display:block;font-size:.68rem;margin:.24rem 0 .55rem; }
+        .home-model-badge { background:var(--badge-bg);border-radius:99px;color:var(--badge-color);display:inline-block;font-size:.67rem;font-weight:850;padding:.35rem .55rem; }
+        .home-model-chart { border-left:1px solid #E0E7F2;min-width:0;padding:.75rem .8rem .45rem; }
+        .home-model-chart-head { align-items:baseline;display:flex;gap:.5rem;justify-content:space-between;min-height:1.55rem; }
+        .home-model-chart-head b { color:#18365E;font-size:.78rem; }
+        .home-model-chart-head strong { color:var(--value-color);font-size:1.02rem;white-space:nowrap; }
+        .home-model-chart-note { color:#7789A0;font-size:.64rem;margin-top:-.1rem; }
+        .home-model-svg { display:block;height:88px;width:100%; }
+        .home-model-empty { color:#8393A8;display:flex;align-items:center;font-size:.72rem;height:82px; }
+        @media (max-width:900px) {
+            .home-model-row { grid-template-columns:1fr 1fr; }
+            .home-model-id { grid-column:1 / -1;padding:.7rem .8rem; }
+            .home-model-chart:nth-child(2) { border-left:0; }
+        }
+        @media (max-width:600px) {
+            .home-model-row { grid-template-columns:1fr; }
+            .home-model-chart { border-left:0;border-top:1px solid #E0E7F2; }
+        }
         .weekly-review-period { color:#526781; font-size:.82rem; font-weight:850; margin:.15rem 0 .55rem; }
         .jovi-copy-kpi-table { align-items:center; background:#FFF; border:1px solid #C9D7E7; border-radius:.45rem; box-shadow:0 2px 6px rgba(20,48,86,.10); color:#173A67; cursor:pointer; display:flex; font-size:.76rem; font-weight:850; gap:.35rem; margin:0 0 .38rem auto; padding:.38rem .62rem; }
         .jovi-copy-kpi-table:hover { background:#F2F7FD; border-color:#2F80ED; }
@@ -6513,6 +6539,92 @@ def home_area_heading(title: str, subtitle: str, color: str, status: str, attent
     )
 
 
+def home_model_performance(smt_context: dict, assembly_context: dict, smt_target: float, assembly_target: float) -> None:
+    """Show every model with FPY input, newest production first."""
+    from tools.home_model_performance import (
+        assembly_model_daily, mini_trend_svg, recent_models, smt_model_daily,
+    )
+    import pandas as pd
+
+    smt_daily = (
+        smt_model_daily(smt_context["analysis"])
+        if smt_context.get("ready") and "analysis" in smt_context
+        else pd.DataFrame(columns=["Model", "Date", "Input", "PPM", "Status"])
+    )
+    assembly_daily = (
+        assembly_model_daily(assembly_context["metrics"])
+        if assembly_context.get("ready") and "metrics" in assembly_context
+        else pd.DataFrame(columns=["Model", "Date", "Input", "PPM", "Status"])
+    )
+    ranking = recent_models(smt_daily, assembly_daily)
+    st.markdown(
+        '<div class="home-model-heading"><div><h2>Model performance</h2>'
+        '<p>Up to 10 recent days with daily FPY input per model · newest input first</p></div>'
+        f'<div class="home-model-count">{len(ranking)} models</div></div>',
+        unsafe_allow_html=True,
+    )
+    if not ranking:
+        st.info("No models have FPY input in the selected period.")
+        return
+
+    def panel(model_rows, title: str, target: float, color: str) -> tuple[str, str | None]:
+        latest = model_rows.iloc[-1] if not model_rows.empty else None
+        actual = float(latest["PPM"]) if latest is not None and latest["Status"] == "Valid" else None
+        state = kpi_target_state(actual, target, "max")
+        value_color = "#087A47" if state == "on-target" else "#CB2424" if state else "#657B98"
+        value = f"{fmt_ppm(actual)} PPM" if actual is not None else "N/A"
+        if latest is None:
+            note = "No daily FPY input in the selected period"
+        else:
+            day = pd.Timestamp(latest["Date"]).strftime("%d/%m")
+            note = (
+                f"{day} · Target ≤ {fmt_ppm(target)} PPM"
+                if latest["Status"] == "Valid"
+                else f"{day} · {latest['Status']}"
+            )
+        html = (
+            f'<div class="home-model-chart" style="--value-color:{value_color}">'
+            f'<div class="home-model-chart-head"><b>{escape(title)}</b><strong>{escape(value)}</strong></div>'
+            f'<div class="home-model-chart-note">{escape(note)}</div>'
+            f'{mini_trend_svg(model_rows, target, color)}</div>'
+        )
+        return html, state
+
+    html_rows = []
+    for item in ranking:
+        model = str(item["Model"])
+        smt_rows = smt_daily[smt_daily["Model"].eq(model)]
+        assembly_rows = assembly_daily[assembly_daily["Model"].eq(model)]
+        smt_panel, smt_state = panel(smt_rows, "SMT · Process NG PPM", smt_target, "#087A8C")
+        assembly_panel, assembly_state = panel(
+            assembly_rows, "Assembly · Function Mando PPM", assembly_target, "#6532C8"
+        )
+        states = (smt_state, assembly_state)
+        attention_count = states.count("below-target")
+        if attention_count:
+            badge = "2 KPIs need attention" if attention_count == 2 else "1 KPI needs attention"
+            badge_bg, badge_color, row_color = "#FDEBEC", "#C52329", "#D63A3A"
+        elif states.count("on-target") == 2:
+            badge = "Both on target"
+            badge_bg, badge_color, row_color = "#E6F6EC", "#087A47", "#0B7A4B"
+        elif states.count("on-target") == 1:
+            badge = "1 KPI on target"
+            badge_bg, badge_color, row_color = "#EAF2FC", "#2768C7", "#2D70DF"
+        else:
+            badge = "Awaiting KPI data"
+            badge_bg, badge_color, row_color = "#EEF2F7", "#61758F", "#8A9AB0"
+        latest_label = pd.Timestamp(item["LatestInput"]).strftime("%d/%m/%Y")
+        html_rows.append(
+            f'<div class="home-model-row" style="--row-color:{row_color};'
+            f'--badge-bg:{badge_bg};--badge-color:{badge_color}">'
+            f'<div class="home-model-id"><strong>{escape(model)}</strong>'
+            f'<small>Latest FPY input · {latest_label}</small>'
+            f'<span class="home-model-badge">{escape(badge)}</span></div>'
+            f'{smt_panel}{assembly_panel}</div>'
+        )
+    st.markdown("".join(html_rows), unsafe_allow_html=True)
+
+
 def home_page() -> None:
     """Render the Home as a compact, independent SMT and Assembly triage view."""
     from tools import smt_quality_dashboard
@@ -6557,12 +6669,8 @@ def home_page() -> None:
     )
 
     if bounds:
-        shared_start = max(start for start, _ in bounds)
-        shared_end = min(end for _, end in bounds)
-        if shared_end < shared_start:
-            shared_start = min(start for start, _ in bounds)
-            shared_end = max(end for _, end in bounds)
-            st.info("The available SMT and Assembly source periods do not overlap. Each panel shows the selected range when its data is available.")
+        shared_start = min(start for start, _ in bounds)
+        shared_end = max(end for _, end in bounds)
         start_date, end_date = analysis_period_control(
             "home_overview_period",
             shared_start,
@@ -6596,6 +6704,7 @@ def home_page() -> None:
             oqc_inspected = int(oqc["Inspected"].sum()) if not oqc.empty else 0
             oqc_rate = int(oqc["OK"].sum()) / oqc_inspected if oqc_inspected else None
             smt_context.update(
+                analysis=smt_analysis,
                 totals=totals,
                 oqc_rate=oqc_rate,
                 attention=any(
@@ -6742,6 +6851,8 @@ def home_page() -> None:
                 st.button("KPI Track", key="home_open_assembly_kpi", width="stretch", type="primary", on_click=set_navigation, args=("Assembly", "KPI Track"))
             with actions[1]:
                 st.button("Quality Dashboard", key="home_open_assembly_dashboard", width="stretch", on_click=set_navigation, args=("Assembly", "Quality Dashboard"))
+
+    home_model_performance(smt_context, assembly_context, smt_process_target, assembly_mando_target)
 
 def overview_page(module: str, color: str) -> None:
     status = "Normal" if module != "Assembly" else "Attention"
