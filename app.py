@@ -40,7 +40,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.74"
+APP_VERSION = "v0.5.75"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -95,6 +95,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.75", "Accepted SMT FPY summaries with extra OrgDisplay line input from retests while preserving ModelData as the KPI denominator and auditing the difference."),
     ("v0.5.74", "Added a shared SMT and Assembly Model Comparison page with KPI, defect breakdown and formatted Excel reporting; expanded Assembly dashboard defect analysis."),
     ("v0.5.73", "Removed the unnecessary Assembly SMT duty defect breakdown table from SMT KPI Track."),
     ("v0.5.72", "Fixed a missing pandas import in the relocated OQC/FQC inspection history on Data Upload."),
