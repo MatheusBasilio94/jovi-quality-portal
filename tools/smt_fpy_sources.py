@@ -37,7 +37,7 @@ def read_detail(data: bytes, filename: str) -> tuple[pd.DataFrame, dict]:
 
 def validate_pair(model: pd.DataFrame, org_audit: dict, detail: pd.DataFrame) -> dict:
     """Require the two reports to describe the same full period and model population."""
-    if not org_audit["OrgReconciles"] or org_audit["InvalidRows"]:
+    if (not org_audit["OrgReconciles"] and not org_audit.get("OrgExcessInput")) or org_audit["InvalidRows"]:
         raise ValueError("Input summary is incomplete or ModelData and OrgDisplay do not reconcile.")
     periods = model[["BeginDate", "EndDateExclusive"]].drop_duplicates()
     if len(periods) != 1 or model["Model"].duplicated().any():

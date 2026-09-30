@@ -202,6 +202,27 @@ def _object_fingerprint(row: dict) -> str:
     return json.dumps(marker, sort_keys=True, default=str)
 
 
+def _object_modified_timestamp(row: dict) -> float | None:
+    """Return the remote object update time for deterministic local source ordering."""
+    metadata = row.get("metadata", {})
+    metadata = metadata if isinstance(metadata, dict) else {}
+    candidates = (
+        row.get("updated_at"),
+        metadata.get("lastModified"),
+        metadata.get("last_modified"),
+        row.get("created_at"),
+    )
+    for value in candidates:
+        text = str(value or "").strip()
+        if not text:
+            continue
+        try:
+            return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            continue
+    return None
+
+
 def _list_objects(prefix: str) -> list[dict]:
     last_error: Exception | None = None
     rows: list[Any] = []
@@ -463,6 +484,14 @@ def sync_prefix_from_cloud(
                 raise RuntimeError("Supabase could not retrieve the portal data file.") from exc
             if not target.is_file() or target.read_bytes() != data:
                 target.write_bytes(data)
+        modified_timestamp = _object_modified_timestamp(row)
+        if modified_timestamp is not None:
+            try:
+                os.utime(target, (modified_timestamp, modified_timestamp))
+            except OSError:
+                # Source ordering can safely fall back to the local write time
+                # on filesystems that do not support setting timestamps.
+                pass
         next_manifest[remote_path] = fingerprint
         paths.append(target)
 

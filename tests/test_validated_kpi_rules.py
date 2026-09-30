@@ -46,6 +46,8 @@ class AssemblyValidatedRulesTest(unittest.TestCase):
                 "TestTime": "2026-09-01 08:00", "TestOperation": "Audio-Testing",
                 "Fault Phenomenon": "No sound", "DutyType": "Assembly Process", "model": "M1",
                 "Fault reason": "FPY reason", "RepaireRemark": "FPY remark",
+                "BadMachLocation": "Speaker connector",
+                "ItemCode": "SPK-42",
             }
             self.write_book(defect_path, "Detail", pd.DataFrame([event]))
             self.write_book(repair_path, "QueryData", pd.DataFrame([{
@@ -59,6 +61,8 @@ class AssemblyValidatedRulesTest(unittest.TestCase):
             record = result["defects"].iloc[0]
             self.assertEqual(record["FaultReason"], "Speaker cable")
             self.assertEqual(record["RepairRemark"], "Cable reseated")
+            self.assertEqual(record["BadMachLocation"], "Speaker connector")
+            self.assertEqual(record["ItemCode"], "SPK-42")
             self.assertEqual(result["functional_pcbs"], 1)
 
     def test_period_deduplication_classification_and_final_responsibility(self) -> None:
@@ -198,6 +202,8 @@ class AssemblyValidatedRulesTest(unittest.TestCase):
         self.assertTrue(assembly_kpi_v2.ASSEMBLY_KPI_RULE_VERSION)
         self.assertIn("Camera-auxiliary-tester", assembly_kpi_v2.FUNCTIONAL_OPERATIONS)
         self.assertIn("CCT_sensor_Calibration", assembly_kpi_v2.FUNCTIONAL_OPERATIONS)
+        self.assertIn("Order-Linking", assembly_kpi_v2.FUNCTIONAL_OPERATIONS)
+        self.assertIn("Photosensor_calibration_Dark", assembly_kpi_v2.FUNCTIONAL_OPERATIONS)
         self.assertIn("Glue_dispensing", assembly_kpi_v2.APPEARANCE_OPERATIONS)
         self.assertIn("PCB-Assembly", assembly_kpi_v2.APPEARANCE_OPERATIONS)
 
@@ -244,6 +250,94 @@ class AssemblyValidatedRulesTest(unittest.TestCase):
             )
             self.assertEqual(result["smt_duty_pcbs"], 1)
             self.assertEqual(result["smt_duty_ppm"], 10_000)
+
+    def test_refreshed_fpy_snapshot_removes_obsolete_events_only_on_covered_dates(self) -> None:
+        """A corrected MES day must replace stale events without losing other history."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+
+            def detail_row(pcb: str, timestamp: str, phenomenon: str) -> dict:
+                return {
+                    "PCB": pcb,
+                    "BadMachEntryTime": timestamp,
+                    "TestTime": timestamp,
+                    "TestOperation": "Audio-Testing",
+                    "Fault Phenomenon": phenomenon,
+                    "DutyType": "SMT Process",
+                    "model": "M1",
+                }
+
+            original = root / "original.xlsx"
+            self.write_book(
+                original,
+                "Detail",
+                pd.DataFrame(
+                    [
+                        detail_row("HISTORIC", "2026-09-20 08:00", "Historic defect"),
+                        detail_row("STALE", "2026-09-25 08:00", "Removed by MES refresh"),
+                        detail_row("CURRENT", "2026-09-25 09:00", "Still confirmed"),
+                    ]
+                ),
+            )
+            refreshed = root / "refreshed.xlsx"
+            self.write_book(
+                refreshed,
+                "Detail",
+                pd.DataFrame([detail_row("CURRENT", "2026-09-25 09:00", "Still confirmed")]),
+            )
+
+            combined = assembly_kpi_v2.combine_fpy_defects([original, refreshed])
+
+            self.assertEqual(set(combined["PCBNormalized"]), {"historic", "current"})
+            self.assertEqual(set(combined["DefectDate"].dt.date), {date(2026, 9, 20), date(2026, 9, 25)})
+
+    def test_refreshed_smt_snapshot_removes_obsolete_events_only_on_covered_dates(self) -> None:
+        """A corrected SMT Detail export replaces stale rows only for its MES dates."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+
+            def write_smt_export(path: Path, rows: list[dict]) -> None:
+                summary = pd.DataFrame([{
+                    "OnceDamage": len(rows), "2TimesDamage": 0, "3TimesDamage": 0,
+                    "4TimesDamage": 0, "5TimesDamage": 0, "6TimesDamage": 0,
+                }])
+                with pd.ExcelWriter(path, engine="openpyxl") as writer:
+                    pd.DataFrame(rows).to_excel(writer, sheet_name="Detail", index=False)
+                    summary.to_excel(writer, sheet_name="BadMachine", index=False)
+
+            def detail_row(pcb: str, timestamp: str, phenomenon: str) -> dict:
+                return {
+                    "PCB": pcb,
+                    "model": "M1",
+                    "BadMachEntryTime": timestamp,
+                    "TestTime": timestamp,
+                    "TestOperation": "Download",
+                    "Fault Phenomenon": phenomenon,
+                }
+
+            original = root / "original-smt.xlsx"
+            write_smt_export(
+                original,
+                [
+                    detail_row("HISTORIC", "2026-09-20 08:00", "Historic defect"),
+                    detail_row("STALE", "2026-09-25 08:00", "Removed by MES refresh"),
+                    detail_row("CURRENT", "2026-09-25 09:00", "Still confirmed"),
+                ],
+            )
+            refreshed = root / "refreshed-smt.xlsx"
+            write_smt_export(refreshed, [detail_row("CURRENT", "2026-09-25 09:00", "Still confirmed")])
+
+            combined, audit = smt_quality_dashboard.consolidate_defect_sources(
+                (
+                    (str(refreshed), refreshed.stat().st_size, 200),
+                    (str(original), original.stat().st_size, 100),
+                ),
+                smt_quality_dashboard.SMT_FAILURE_RULE_VERSION,
+            )
+
+            self.assertEqual(set(combined["PCB"]), {"HISTORIC", "CURRENT"})
+            self.assertEqual(set(combined["KPIDate"].dt.date), {date(2026, 9, 20), date(2026, 9, 25)})
+            self.assertEqual(audit["SnapshotRowsReplaced"], 2)
 
     def test_partial_repair_upload_keeps_prior_event_classifications(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -13,6 +13,7 @@ from io import BytesIO
 from numbers import Number
 from pathlib import Path
 from time import perf_counter
+from zoneinfo import ZoneInfo
 
 from tools.supabase_store import (
     DATABASE_OBJECT,
@@ -31,6 +32,8 @@ from tools.supabase_store import (
 )
 from tools.trend_rules import analysis_period_days, requested_trend_grain, trend_grain_labels
 from tools import assembly_kpi_v2
+from tools.kpi_slide import build_kpi_panel_chart
+from tools.auth_session import COOKIE_NAME, SESSION_SECONDS, issue_token, revoke_token, verify_token
 from tools.historical_inspection_archive import apply_archive as apply_historical_inspection_archive
 from tools.inspection_store import (
     create_inspection_tables,
@@ -39,7 +42,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.61"
+APP_VERSION = "v0.5.80"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -94,14 +97,33 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
-    ("v0.5.61", "Aligned Home KPI choices with the SMT and Assembly KPI pages, including Assembly SMT duty and appearance, and removed OQC/FQC from Home."),
-    ("v0.5.60", "Added the shared Quick selection presets beside the Home analysis period."),
-    ("v0.5.59", "Lowered Home chart target labels so they remain fully visible within the white chart area."),
-    ("v0.5.58", "Moved Home KPI target values into the upper-right white chart area."),
-    ("v0.5.57", "Increased contrast between the selected and unselected Home chart date ranges, with clearer drag handles."),
-    ("v0.5.56", "Restored the Home range-selection bar without duplicate plot lines, moved targets above the chart, and padded the zero baseline so markers stay visible."),
-    ("v0.5.55", "Removed the duplicate Plotly range-slider chart from Home trends; date ticks now adapt to long periods and the main chart supports drag-to-zoom."),
-    ("v0.5.54", "Added SMT and Assembly Home KPI charts with independent selectors and a horizontally scrollable detail table; audited SMT station retest differences without inflating ModelData input."),
+    ("v0.5.80", "Rebuilt Home around selectable SMT and Assembly KPI trends, full-period details and quick date presets."),
+    ("v0.5.79", "Added hover balloons to Home model trend points with defect PCB count, FPY input and daily PPM."),
+    ("v0.5.78", "Added scrollable SMT Process NG and Assembly Function Mando daily model trends to Home, ordered by the latest FPY input."),
+    ("v0.5.77", "Added Model, BadMachLocation and ItemCode cross-filter cards to SMT and Assembly Quality Dashboards."),
+    ("v0.5.76", "Kept login through browser refresh, restored the last subtab and analysis selections, retained temporary comparison uploads, and opened Monthly KPI Review on the current month."),
+    ("v0.5.75", "Accepted SMT FPY summaries with extra OrgDisplay line input from retests while preserving ModelData as the KPI denominator and auditing the difference."),
+    ("v0.5.74", "Added a shared SMT and Assembly Model Comparison page with KPI, defect breakdown and formatted Excel reporting; expanded Assembly dashboard defect analysis."),
+    ("v0.5.73", "Removed the unnecessary Assembly SMT duty defect breakdown table from SMT KPI Track."),
+    ("v0.5.72", "Fixed a missing pandas import in the relocated OQC/FQC inspection history on Data Upload."),
+    ("v0.5.71", "Moved SMT OQC and Assembly OQC/FQC manual entry and inspection history from KPI Track into each area's Data Upload page."),
+    ("v0.5.54", "Classified Assembly Photosensor_calibration_Dark and Order-Linking defects as functional, aligning the MES functional-analysis scope."),
+    ("v0.5.55", "Made refreshed Assembly FPY exports replace obsolete defects only on the MES dates covered by the upload, preserving all other historical data."),
+    ("v0.5.56", "Extended MES date-level FPY reconciliation to SMT, so refreshed exports remove obsolete events only within their covered dates."),
+    ("v0.5.57", "Invalidated the prepared Assembly KPI source cache when MES consolidation rules change, applying refreshed defect snapshots immediately."),
+    ("v0.5.58", "Added a copy-ready four-panel SMT KPI slide with one selectable analysis period and presentation-standard styling."),
+    ("v0.5.59", "Refined the SMT KPI slide with weekly rollups plus latest-week input days, and removed its non-chart header for a cleaner PowerPoint copy."),
+    ("v0.5.60", "Moved the SMT KPI Slide into Smart Report's Weekly KPI Review, where it now mirrors the table's two weekly summaries and visible daily columns."),
+    ("v0.5.70", "Reduced the on-screen presentation-chart preview while keeping its PNG and PowerPoint export dimensions unchanged."),
+    ("v0.5.69", "Embedded the 16.17 cm × 8.17 cm physical dimensions in PowerPoint SVG exports so PowerPoint inserts them at the intended size."),
+    ("v0.5.68", "Added a black outer frame to PowerPoint chart exports and simplified the inner axes to the bottom baseline only."),
+    ("v0.5.67", "Kept the 100% ceiling while allowing presentation-chart labels, markers and lines to render into the top margin without clipping."),
+    ("v0.5.66", "Prevented presentation pass-rate labels at 99.80% or above from clipping against the fixed 100% ceiling."),
+    ("v0.5.65", "Made presentation pass-rate scales automatic with a fixed 100% ceiling and a compact lower bound based on the period minimum."),
+    ("v0.5.64", "Expanded the presentation chart plot area, restored end-point labels with added headroom, and removed horizontal grid lines."),
+    ("v0.5.63", "Sized the PowerPoint SVG export to a 16.17 cm × 8.17 cm chart slot, so it can be inserted without shrinking."),
+    ("v0.5.62", "Added 4K PNG copy and vector SVG download for presentation charts, with larger labels and axes for slide readability."),
+    ("v0.5.61", "Replaced the combined SMT KPI slide with four individual copy-ready charts, improving label spacing and keeping 100% values inside each plot."),
     ("v0.5.53", "Classified Assembly CCT_sensor_Calibration failures as functional, including their Mando records in the Function Mando KPI."),
     ("v0.5.52", "Restored the single Analysis period date field and constrained its Streamlit container to the visible control width."),
     ("v0.5.51", "Freed manual SMT and Assembly OQC/FQC inspection dates from the uploaded production period, defaulting to the latest available day."),
@@ -1190,6 +1212,23 @@ def apply_global_css() -> None:
         div[data-testid="stPlotlyChart"] .modebar-btn.jovi-copy-chart-button:hover {
             color: #0B1F3A !important;
         }
+        div[data-testid="stPlotlyChart"] .modebar-btn.jovi-download-svg-button {
+            align-items: center !important;
+            color: #52647A !important;
+            cursor: pointer !important;
+            display: inline-flex !important;
+            font-family: Arial, sans-serif !important;
+            font-size: 0.63rem !important;
+            font-weight: 900 !important;
+            height: 1.65rem !important;
+            justify-content: center !important;
+            letter-spacing: 0.02em !important;
+            line-height: 1 !important;
+            width: 2rem !important;
+        }
+        div[data-testid="stPlotlyChart"] .modebar-btn.jovi-download-svg-button:hover {
+            color: #0B1F3A !important;
+        }
         div[data-testid="stHorizontalBlock"] > div {
             min-width: 0 !important;
         }
@@ -1644,6 +1683,37 @@ def apply_global_css() -> None:
         div[class*="st-key-home_overview_assembly"] { border-top:4px solid #6532C8 !important; }
         div[class*="st-key-home_open_smt_kpi"] button { background:#0D7A45 !important; border-color:#0D7A45 !important; }
         div[class*="st-key-home_open_assembly_kpi"] button { background:#6532C8 !important; border-color:#6532C8 !important; }
+        .home-model-heading { display:flex;align-items:end;justify-content:space-between;gap:1rem;margin:.65rem 0 .55rem; }
+        .home-model-heading h2 { color:#102D5B;font-size:1.3rem;line-height:1.1;margin:0 0 .2rem; }
+        .home-model-heading p,.home-model-count { color:#607895;font-size:.76rem;margin:0; }
+        .home-model-count { font-weight:800;white-space:nowrap; }
+        .home-model-row { display:grid;grid-template-columns:minmax(145px,18%) minmax(0,1fr) minmax(0,1fr);gap:0;background:#fff;border:1px solid #D3DDED;border-left:5px solid var(--row-color);border-radius:.72rem;margin:0 0 .5rem;min-height:148px;box-sizing:border-box; }
+        .home-model-row:hover,.home-model-row:focus-within { position:relative;z-index:2; }
+        .home-model-id { padding:.85rem .9rem;min-width:0; }
+        .home-model-id strong { color:#102D5B;display:block;font-size:1.08rem;overflow-wrap:anywhere; }
+        .home-model-id small { color:#7085A0;display:block;font-size:.68rem;margin:.24rem 0 .55rem; }
+        .home-model-badge { background:var(--badge-bg);border-radius:99px;color:var(--badge-color);display:inline-block;font-size:.67rem;font-weight:850;padding:.35rem .55rem; }
+        .home-model-chart { border-left:1px solid #E0E7F2;min-width:0;padding:.75rem .8rem .45rem; }
+        .home-model-chart-head { align-items:baseline;display:flex;gap:.5rem;justify-content:space-between;min-height:1.55rem; }
+        .home-model-chart-head b { color:#18365E;font-size:.78rem; }
+        .home-model-chart-head strong { color:var(--value-color);font-size:1.02rem;white-space:nowrap; }
+        .home-model-chart-note { color:#7789A0;font-size:.64rem;margin-top:-.1rem; }
+        .home-model-svg { display:block;height:96px;width:100%;overflow:visible; }
+        .home-model-point { cursor:help;outline:none; }
+        .home-model-point .home-model-tooltip { opacity:0;pointer-events:none;transition:opacity .12s ease; }
+        .home-model-point:hover .home-model-tooltip,
+        .home-model-point:focus .home-model-tooltip { opacity:1; }
+        .home-model-point:focus .home-model-dot { stroke:#0B2D5A;stroke-width:2.5; }
+        .home-model-empty { color:#8393A8;display:flex;align-items:center;font-size:.72rem;height:82px; }
+        @media (max-width:900px) {
+            .home-model-row { grid-template-columns:1fr 1fr; }
+            .home-model-id { grid-column:1 / -1;padding:.7rem .8rem; }
+            .home-model-chart:nth-child(2) { border-left:0; }
+        }
+        @media (max-width:600px) {
+            .home-model-row { grid-template-columns:1fr; }
+            .home-model-chart { border-left:0;border-top:1px solid #E0E7F2; }
+        }
         .weekly-review-period { color:#526781; font-size:.82rem; font-weight:850; margin:.15rem 0 .55rem; }
         .jovi-copy-kpi-table { align-items:center; background:#FFF; border:1px solid #C9D7E7; border-radius:.45rem; box-shadow:0 2px 6px rgba(20,48,86,.10); color:#173A67; cursor:pointer; display:flex; font-size:.76rem; font-weight:850; gap:.35rem; margin:0 0 .38rem auto; padding:.38rem .62rem; }
         .jovi-copy-kpi-table:hover { background:#F2F7FD; border-color:#2F80ED; }
@@ -1941,6 +2011,27 @@ def credentials_are_valid(username: str, password: str) -> bool:
     return username_matches and password_matches
 
 
+def render_auth_cookie(token: str = "") -> None:
+    """Write the signed browser cookie without exposing the password to JavaScript."""
+    value = f"{COOKIE_NAME}={token}; Path=/; SameSite=Lax"
+    value += f"; Max-Age={SESSION_SECONDS if token else 0}"
+    st.html(
+        "<script>document.cookie = " + json.dumps(value)
+        + " + (location.protocol === 'https:' ? '; Secure' : '');</script>",
+        unsafe_allow_javascript=True,
+    )
+
+
+def restore_authentication() -> None:
+    if st.session_state.get("authenticated"):
+        return
+    token = st.context.cookies.get(COOKIE_NAME)
+    if verify_token(token, LOGIN_USERNAME, LOGIN_PASSWORD_SHA256):
+        st.session_state["authenticated"] = True
+        st.session_state["authenticated_user"] = LOGIN_USERNAME
+        st.session_state["auth_cookie_token"] = token
+
+
 def login_page() -> None:
     apply_login_css()
     hero_column, form_column = st.columns([1.15, 0.85], gap="large")
@@ -1997,6 +2088,8 @@ def login_page() -> None:
                 if credentials_are_valid(username, password):
                     st.session_state["authenticated"] = True
                     st.session_state["authenticated_user"] = LOGIN_USERNAME
+                    st.session_state["auth_cookie_token"] = issue_token(LOGIN_USERNAME, LOGIN_PASSWORD_SHA256)
+                    st.session_state.pop("auth_logout_pending", None)
                     st.session_state.pop("login_error", None)
                     st.rerun()
                 else:
@@ -2017,7 +2110,9 @@ def login_page() -> None:
 
 
 def logout() -> None:
+    revoke_token(st.session_state.get("auth_cookie_token") or st.context.cookies.get(COOKIE_NAME))
     st.session_state.clear()
+    st.session_state["auth_logout_pending"] = True
     st.query_params.clear()
     st.rerun()
 
@@ -2055,6 +2150,8 @@ def sync_navigation_from_query() -> None:
 
     st.session_state.module = module
     st.session_state.tab = tab
+    if tab:
+        st.session_state[f"last_tab_{navigation_key(module)}"] = tab
 
 
 def navigation_key(value: str) -> str:
@@ -2068,12 +2165,16 @@ def set_navigation(module: str, tab: str = "") -> None:
         module = "Home"
     available_tabs = MODULES[module]["tabs"]
     if available_tabs:
-        tab = tab if tab in available_tabs else available_tabs[0]
+        remembered_tab = st.session_state.get(f"last_tab_{navigation_key(module)}")
+        if tab not in available_tabs:
+            tab = remembered_tab if remembered_tab in available_tabs else available_tabs[0]
     else:
         tab = ""
 
     st.session_state.module = module
     st.session_state.tab = tab
+    if tab:
+        st.session_state[f"last_tab_{navigation_key(module)}"] = tab
     query_values = {"module": module}
     if tab:
         query_values["tab"] = tab
@@ -2107,7 +2208,7 @@ def top_navigation() -> None:
                     type="primary" if st.session_state.module == module else "secondary",
                     use_container_width=True,
                     on_click=set_navigation,
-                    args=(module, cfg["tabs"][0] if cfg["tabs"] else ""),
+                    args=(module, ""),
                 )
         with columns[-1]:
             with st.popover("More", use_container_width=True):
@@ -2473,7 +2574,7 @@ def analysis_period_control(
     if range_key not in st.session_state:
         st.session_state[range_key] = initial_range
 
-    with st.container(key=f"analysis_period_{navigation_key(key)}", width="stretch"):
+    with st.container(key=f"analysis_period_{navigation_key(key)}", width=455 if show_presets else 270):
         if show_presets:
             preset_col, range_col = st.columns([0.48, 0.82], gap="small", width=455)
             with preset_col:
@@ -2481,6 +2582,7 @@ def analysis_period_control(
                     "Quick selection",
                     ANALYSIS_PERIOD_OPTIONS,
                     key=preset_key,
+                    persist_state="session",
                     on_change=_apply_period_preset,
                     args=(preset_key, range_key, remembered_range_key, minimum_date, maximum_date),
                     width=160,
@@ -2489,14 +2591,16 @@ def analysis_period_control(
                 selected_period = st.date_input(
                     "Analysis period", min_value=minimum_date, max_value=maximum_date,
                     format="DD/MM/YYYY", key=range_key,
+                    persist_state="session",
                     on_change=_remember_period_range, args=(range_key, remembered_range_key), width=270,
                 )
         else:
             selected_period = st.date_input(
                 "Analysis period", min_value=minimum_date, max_value=maximum_date,
                 format="DD/MM/YYYY", key=range_key,
+                persist_state="session",
                 on_change=_remember_period_range, args=(range_key, remembered_range_key),
-                width="stretch",
+                width=270,
             )
 
     if isinstance(selected_period, (tuple, list)) and len(selected_period) >= 2:
@@ -3471,10 +3575,12 @@ def save_smt_oqc_inspection(
     sync_quality_database_to_cloud()
 
 
-def load_smt_oqc_inspections(start_date: date, end_date: date):
+def load_smt_oqc_inspections(start_date: date | None = None, end_date: date | None = None):
     import pandas as pd
 
     init_quality_store()
+    start_date = start_date or date.min
+    end_date = end_date or date.max
     with sqlite3.connect(QUALITY_DB_PATH) as conn:
         frame = pd.read_sql_query(
             """
@@ -3559,10 +3665,12 @@ def save_assembly_oqc_fqc_inspection(
     sync_quality_database_to_cloud()
 
 
-def load_assembly_oqc_fqc_inspections(start_date: date, end_date: date):
+def load_assembly_oqc_fqc_inspections(start_date: date | None = None, end_date: date | None = None):
     import pandas as pd
 
     init_quality_store()
+    start_date = start_date or date.min
+    end_date = end_date or date.max
     with sqlite3.connect(QUALITY_DB_PATH) as conn:
         frame = pd.read_sql_query(
             """
@@ -4469,13 +4577,22 @@ PLOTLY_CONFIG = {
     "toImageButtonOptions": {
         "format": "png",
         "filename": "jovi-quality-chart",
-        "scale": 3,
+        # The clipboard action uses Plotly's native PNG export. Fixing the
+        # output dimensions makes every copied chart 4K, independent of the
+        # browser window or the Streamlit column where it is displayed.
+        "width": 1920,
+        "height": 1080,
+        "scale": 2,
     },
 }
 
 
-def show_chart(fig) -> None:
-    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+def show_chart(fig, image_filename: str | None = None) -> None:
+    config = dict(PLOTLY_CONFIG)
+    config["toImageButtonOptions"] = dict(PLOTLY_CONFIG["toImageButtonOptions"])
+    if image_filename:
+        config["toImageButtonOptions"]["filename"] = image_filename
+    st.plotly_chart(fig, use_container_width=True, config=config)
 
 
 def install_chart_copy_controls() -> None:
@@ -4488,9 +4605,10 @@ def install_chart_copy_controls() -> None:
             const parentWindow = window.parent;
             const parentDocument = parentWindow.document;
             const buttonClass = "jovi-copy-chart-button";
+            const svgButtonClass = "jovi-download-svg-button";
             const nativeSelector = '.modebar-btn[data-title*="Download plot as" i]';
 
-            parentDocument.querySelectorAll(`.${buttonClass}`).forEach((button) => button.remove());
+            parentDocument.querySelectorAll(`.${buttonClass}, .${svgButtonClass}`).forEach((button) => button.remove());
 
             const setButtonState = (button, symbol, title, delay = 1800) => {
                 const originalSymbol = button.dataset.originalSymbol || "⧉";
@@ -4516,6 +4634,38 @@ def install_chart_copy_controls() -> None:
                 await parentWindow.navigator.clipboard.write([
                     new parentWindow.ClipboardItem({"image/png": pngBlob})
                 ]);
+            };
+
+            const addPowerPointFrame = async (href, width, height) => {
+                const response = await parentWindow.fetch(href);
+                const svg = await response.text();
+                const svgDocument = new parentWindow.DOMParser().parseFromString(svg, "image/svg+xml");
+                const svgElement = svgDocument.documentElement;
+                if (!svgElement || svgElement.localName !== "svg") {
+                    throw new Error("Invalid SVG export");
+                }
+                // PowerPoint respects physical SVG units. Keep the larger
+                // viewBox for sharp vector content, while making the inserted
+                // object exactly 16.17 cm × 8.17 cm, including its frame.
+                svgElement.setAttribute("width", "16.17cm");
+                svgElement.setAttribute("height", "8.17cm");
+                // The half-pixel inset keeps the full one-pixel stroke within
+                // the SVG canvas, so the physical dimensions above include
+                // the complete external frame in PowerPoint.
+                const frame = svgDocument.createElementNS("http://www.w3.org/2000/svg", "rect");
+                frame.setAttribute("x", "0.5");
+                frame.setAttribute("y", "0.5");
+                frame.setAttribute("width", String(width - 1));
+                frame.setAttribute("height", String(height - 1));
+                frame.setAttribute("fill", "none");
+                frame.setAttribute("stroke", "#000000");
+                frame.setAttribute("stroke-width", "1");
+                frame.setAttribute("vector-effect", "non-scaling-stroke");
+                svgElement.appendChild(frame);
+                const framedSvg = new parentWindow.XMLSerializer().serializeToString(svgDocument);
+                return parentWindow.URL.createObjectURL(
+                    new parentWindow.Blob([framedSvg], {type: "image/svg+xml;charset=utf-8"})
+                );
             };
 
             const addCopyButton = (chartContainer) => {
@@ -4582,7 +4732,59 @@ def install_chart_copy_controls() -> None:
                         capture();
                     }
                 });
+
+                const svgButton = parentDocument.createElement("a");
+                svgButton.className = `modebar-btn ${svgButtonClass}`;
+                svgButton.textContent = "PPT";
+                svgButton.dataset.originalSymbol = "PPT";
+                svgButton.dataset.originalTitle = "Download vector SVG sized 16.17 cm × 8.17 cm for PowerPoint";
+                svgButton.setAttribute("data-title", svgButton.dataset.originalTitle);
+                svgButton.setAttribute("aria-label", svgButton.dataset.originalTitle);
+                svgButton.setAttribute("role", "button");
+                svgButton.setAttribute("tabindex", "0");
+                const downloadSvg = async () => {
+                    const graphDiv = chartContainer.querySelector(".js-plotly-plot");
+                    if (!graphDiv || !parentWindow.Plotly?.toImage) {
+                        setButtonState(svgButton, "!", "SVG export is unavailable");
+                        return;
+                    }
+                    try {
+                        const svgWidth = 916;
+                        const svgHeight = 463;
+                        const href = await parentWindow.Plotly.toImage(graphDiv, {
+                            format: "svg",
+                            // These canvas values provide enough drawing room;
+                            // addPowerPointFrame writes the final physical size.
+                            width: svgWidth,
+                            height: svgHeight,
+                            scale: 1,
+                        });
+                        const framedHref = await addPowerPointFrame(href, svgWidth, svgHeight);
+                        const link = parentDocument.createElement("a");
+                        link.href = framedHref;
+                        link.download = "jovi-quality-chart-powerpoint.svg";
+                        parentDocument.body.appendChild(link);
+                        link.click();
+                        link.remove();
+                        parentWindow.setTimeout(() => parentWindow.URL.revokeObjectURL(framedHref), 1000);
+                        setButtonState(svgButton, "✓", "PowerPoint SVG downloaded");
+                    } catch (_error) {
+                        setButtonState(svgButton, "!", "Unable to export SVG");
+                    }
+                };
+                svgButton.addEventListener("click", (event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    downloadSvg();
+                });
+                svgButton.addEventListener("keydown", (event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        downloadSvg();
+                    }
+                });
                 nativeButton.insertAdjacentElement("afterend", copyButton);
+                copyButton.insertAdjacentElement("afterend", svgButton);
             };
 
             const scan = () => {
@@ -4909,6 +5111,7 @@ def assembly_quality_dashboard(color: str) -> None:
         horizontal=True,
         label_visibility="collapsed",
         key="assembly_dashboard_section",
+        persist_state="session",
     )
     use_local_store = store_status["ready"]
     uploaded_defects = None
@@ -5230,9 +5433,9 @@ def assembly_quality_dashboard(color: str) -> None:
 
     if active_section == "Details":
         raw = analysis["raw"].copy()
-        selected_model = st.selectbox("Model", ["All", *sorted(raw["Model"].dropna().unique())])
-        selected_line = st.selectbox("Line", ["All", *sorted(raw["Line"].dropna().unique())])
-        selected_type = st.selectbox("Record type", ["All", "Confirmed defects", "Excluded retest", "ManDo only"])
+        selected_model = st.selectbox("Model", ["All", *sorted(raw["Model"].dropna().unique())], key="assembly_detail_model", persist_state="session")
+        selected_line = st.selectbox("Line", ["All", *sorted(raw["Line"].dropna().unique())], key="assembly_detail_line", persist_state="session")
+        selected_type = st.selectbox("Record type", ["All", "Confirmed defects", "Excluded retest", "ManDo only"], key="assembly_detail_type", persist_state="session")
         view = raw
         if selected_model != "All":
             view = view[view["Model"] == selected_model]
@@ -5362,12 +5565,14 @@ def smart_report_period_selector(reference_date: date) -> tuple[str, date, date,
         default="Daily",
         selection_mode="single",
         key="smart_report_type",
+        persist_state="session",
         label_visibility="collapsed",
     ) or "Daily"
     selected = st.date_input(
         "Reference date",
         value=reference_date,
         key="smart_report_reference_date",
+        persist_state="session",
         label_visibility="collapsed",
     )
     if report_type == "Daily":
@@ -5579,6 +5784,7 @@ def smart_report_area_panel(area: str, color: str, candidates: list[dict], perio
             default=default_labels,
             max_selections=3,
             key=f"smart_report_selection_{area}_{period_key}",
+            persist_state="session",
         )
         st.caption("Suggestions are ranked by affected PCB count. Select the defects that are operationally relevant.")
     selected = [by_label[label] for label in labels if label in selected_labels]
@@ -5589,6 +5795,7 @@ def smart_report_area_panel(area: str, color: str, candidates: list[dict], perio
                 "Defect being edited",
                 labels,
                 key=f"smart_report_edit_{area}_{period_key}",
+                persist_state="session",
             )
             item = by_label[selected_label]
             action = smart_report_action_defaults(actions, item)
@@ -5696,6 +5903,7 @@ def defect_action_report_page() -> None:
             default="All",
             selection_mode="single",
             key="smart_report_area_filter",
+            persist_state="session",
             label_visibility="collapsed",
         ) or "All"
     with action_column:
@@ -5984,6 +6192,73 @@ def kpi_review_table(
     install_kpi_table_copy_controls()
 
 
+def weekly_smt_kpi_slide_panels(
+    directory: tuple[dict, ...],
+    previous_label: str,
+    current_label: str,
+    previous_totals: dict[str, float | None],
+    totals: dict[str, float | None],
+    daily: dict[str, dict[date, float | None]],
+    visible_days: list[date],
+    previous_exceptions: dict[str, str],
+    total_exceptions: dict[str, str],
+    daily_exceptions: dict[str, dict[date, str]],
+):
+    """Build the SMT PowerPoint slide from the exact Weekly KPI Review values."""
+    import pandas as pd
+
+    # The Functional trend follows the SMT production-input calendar. It is the
+    # common timeline for all four charts, so weekends without input never
+    # appear only because a manual OQC record happened to exist there.
+    daily_days = [day for day in visible_days if day in daily.get("smt_function", {})]
+
+    def frame_for(source: str) -> pd.DataFrame:
+        rows = [
+            {
+                "Period": previous_label,
+                "Value": previous_totals.get(source),
+                "IsException": bool(previous_exceptions.get(source)),
+            },
+            {
+                "Period": current_label,
+                "Value": totals.get(source),
+                "IsException": bool(total_exceptions.get(source)),
+            },
+        ]
+        for day in daily_days:
+            rows.append(
+                {
+                    "Period": day.strftime("%d-%b"),
+                    "Value": daily.get(source, {}).get(day),
+                    "IsException": bool(daily_exceptions.get(source, {}).get(day)),
+                }
+            )
+        return pd.DataFrame(rows)
+
+    targets = {item["source"]: item["target"] for item in directory}
+    panels = [
+        ("Functional Pass Rate", "smt_function", "percent"),
+        ("SMT Process NG Rate (PPM)", "smt_process", "ppm"),
+        ("Assembly SMT Process Duty NG Rate (PPM)", "smt_assembly_duty", "ppm"),
+        ("SMT OQC Pass Rate", "smt_oqc", "percent"),
+    ]
+    slide_panels = []
+    for title, source, value_type in panels:
+        frame = frame_for(source)
+        slide_panels.append(
+            {
+                "title": title,
+                "frame": frame,
+                "x_column": "Period",
+                "y_column": "Value",
+                "value_type": value_type,
+                "target": targets[source],
+                "exceptions": frame.loc[frame["IsException"]],
+            }
+        )
+    return slide_panels
+
+
 def kpi_review_email(
     period_label: str,
     period_name: str,
@@ -6028,7 +6303,7 @@ def weekly_kpi_review_page() -> None:
     default_week_end = date.today() - timedelta(days=date.today().weekday() + 1)
     controls, visibility_column, action_column = st.columns([1.1, 1.55, 0.75])
     with controls:
-        week_end = st.date_input("Week ending", value=default_week_end, key="weekly_kpi_week_end", help="Select the Sunday that closes the report week.")
+        week_end = st.date_input("Week ending", value=default_week_end, key="weekly_kpi_week_end", persist_state="session", help="Select the Sunday that closes the report week.")
     start_date = week_end - timedelta(days=6)
     days = [start_date + timedelta(days=offset) for offset in range(7)]
     week_label = f"WK{week_end.isocalendar().week:02d} · {start_date.strftime('%d/%m')} – {week_end.strftime('%d/%m/%Y')}"
@@ -6039,6 +6314,7 @@ def weekly_kpi_review_page() -> None:
             default=[],
             format_func=lambda value: value.strftime("%d-%b"),
             key=f"weekly_kpi_hidden_days_{week_end.isoformat()}",
+            persist_state="session",
             help="The selected columns are removed only from the displayed and copied table. Weekly KPI calculations remain unchanged.",
         )
     visible_days = [day for day in days if day not in hidden_days]
@@ -6097,6 +6373,36 @@ def weekly_kpi_review_page() -> None:
         visible_days,
         daily_exceptions,
     )
+    with st.expander("SMT KPI Graphs · PowerPoint", expanded=False):
+        st.caption(
+            "Cada gráfico usa os mesmos acumulados WK e os mesmos dias visíveis da tabela acima. "
+            "Use PPT para baixar o SVG vetorial já dimensionado para 16,17 cm × 8,17 cm no PowerPoint; "
+            "use ⧉ para copiar um PNG 4K."
+        )
+        previous_label = f"WK{previous_end.isocalendar().week:02d}"
+        current_label = f"WK{week_end.isocalendar().week:02d}"
+        panels = weekly_smt_kpi_slide_panels(
+            directory,
+            previous_label,
+            current_label,
+            previous_totals,
+            totals,
+            daily,
+            visible_days,
+            previous_total_exceptions,
+            total_exceptions,
+            daily_exceptions,
+        )
+        chart_tabs = st.tabs([panel["title"] for panel in panels])
+        for chart_tab, panel in zip(chart_tabs, panels):
+            with chart_tab:
+                show_chart(
+                    build_kpi_panel_chart(panel),
+                    image_filename=(
+                        f"quality_smt_{panel['title'].lower().replace(' ', '_').replace('(', '').replace(')', '')}_"
+                        f"{previous_start.strftime('%Y%m%d')}_{week_end.strftime('%Y%m%d')}"
+                    ),
+                )
     if hidden_days:
         st.caption(
             "Hidden from this table and its copied image: "
@@ -6130,8 +6436,8 @@ def weekly_kpi_review_page() -> None:
 
 def monthly_kpi_review_page() -> None:
     st.markdown("<div class='smart-report-title'>Monthly KPI Review</div><div class='smart-report-subtitle'>Independent SMT or Assembly monthly review, with the same KPI status, problem and action-plan structure used in the weekly report.</div>", unsafe_allow_html=True)
-    today = date.today()
-    default_month = (today.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
+    today = datetime.now(ZoneInfo("America/Manaus")).date()
+    default_month = today.strftime("%Y-%m")
     controls, area_control, _ = st.columns([0.6, 0.6, 1.8], gap="small")
     with controls:
         with st.container(key="monthly_kpi_start_month_control"):
@@ -6139,10 +6445,11 @@ def monthly_kpi_review_page() -> None:
                 "Start date",
                 value=default_month,
                 key="monthly_kpi_start_month",
+                persist_state="session",
                 max_chars=7,
             ).strip()
     with area_control:
-        area = st.segmented_control("Area", ["SMT", "Assembly"], default="SMT", selection_mode="single", key="monthly_kpi_area") or "SMT"
+        area = st.segmented_control("Area", ["SMT", "Assembly"], default="SMT", selection_mode="single", key="monthly_kpi_area", persist_state="session") or "SMT"
     try:
         start_date = datetime.strptime(selected_month, "%Y-%m").date().replace(day=1)
     except ValueError:
@@ -6335,6 +6642,92 @@ def _home_detail_table(frames: dict[str, object], models: list[str], grain: str,
     parts.append("</tbody></table></div>")
     st.markdown("".join(parts), unsafe_allow_html=True)
     st.caption(f"{len(period_keys)} {grain.lower()} in the selected period · scroll the table horizontally to view every column.")
+
+
+def home_model_performance(smt_context: dict, assembly_context: dict, smt_target: float, assembly_target: float) -> None:
+    """Show every model with FPY input, newest production first."""
+    from tools.home_model_performance import (
+        assembly_model_daily, mini_trend_svg, recent_models, smt_model_daily,
+    )
+    import pandas as pd
+
+    smt_daily = (
+        smt_model_daily(smt_context["analysis"])
+        if smt_context.get("ready") and "analysis" in smt_context
+        else pd.DataFrame(columns=["Model", "Date", "Input", "PPM", "Status"])
+    )
+    assembly_daily = (
+        assembly_model_daily(assembly_context["metrics"])
+        if assembly_context.get("ready") and "metrics" in assembly_context
+        else pd.DataFrame(columns=["Model", "Date", "Input", "PPM", "Status"])
+    )
+    ranking = recent_models(smt_daily, assembly_daily)
+    st.markdown(
+        '<div class="home-model-heading"><div><h2>Model performance</h2>'
+        '<p>Up to 10 recent days with daily FPY input per model · newest input first</p></div>'
+        f'<div class="home-model-count">{len(ranking)} models</div></div>',
+        unsafe_allow_html=True,
+    )
+    if not ranking:
+        st.info("No models have FPY input in the selected period.")
+        return
+
+    def panel(model_rows, title: str, target: float, color: str) -> tuple[str, str | None]:
+        latest = model_rows.iloc[-1] if not model_rows.empty else None
+        actual = float(latest["PPM"]) if latest is not None and latest["Status"] == "Valid" else None
+        state = kpi_target_state(actual, target, "max")
+        value_color = "#087A47" if state == "on-target" else "#CB2424" if state else "#657B98"
+        value = f"{fmt_ppm(actual)} PPM" if actual is not None else "N/A"
+        if latest is None:
+            note = "No daily FPY input in the selected period"
+        else:
+            day = pd.Timestamp(latest["Date"]).strftime("%d/%m")
+            note = (
+                f"{day} · Target ≤ {fmt_ppm(target)} PPM"
+                if latest["Status"] == "Valid"
+                else f"{day} · {latest['Status']}"
+            )
+        html = (
+            f'<div class="home-model-chart" style="--value-color:{value_color}">'
+            f'<div class="home-model-chart-head"><b>{escape(title)}</b><strong>{escape(value)}</strong></div>'
+            f'<div class="home-model-chart-note">{escape(note)}</div>'
+            f'{mini_trend_svg(model_rows, target, color)}</div>'
+        )
+        return html, state
+
+    html_rows = []
+    for item in ranking:
+        model = str(item["Model"])
+        smt_rows = smt_daily[smt_daily["Model"].eq(model)]
+        assembly_rows = assembly_daily[assembly_daily["Model"].eq(model)]
+        smt_panel, smt_state = panel(smt_rows, "SMT · Process NG PPM", smt_target, "#087A8C")
+        assembly_panel, assembly_state = panel(
+            assembly_rows, "Assembly · Function Mando PPM", assembly_target, "#6532C8"
+        )
+        states = (smt_state, assembly_state)
+        attention_count = states.count("below-target")
+        if attention_count:
+            badge = "2 KPIs need attention" if attention_count == 2 else "1 KPI needs attention"
+            badge_bg, badge_color, row_color = "#FDEBEC", "#C52329", "#D63A3A"
+        elif states.count("on-target") == 2:
+            badge = "Both on target"
+            badge_bg, badge_color, row_color = "#E6F6EC", "#087A47", "#0B7A4B"
+        elif states.count("on-target") == 1:
+            badge = "1 KPI on target"
+            badge_bg, badge_color, row_color = "#EAF2FC", "#2768C7", "#2D70DF"
+        else:
+            badge = "Awaiting KPI data"
+            badge_bg, badge_color, row_color = "#EEF2F7", "#61758F", "#8A9AB0"
+        latest_label = pd.Timestamp(item["LatestInput"]).strftime("%d/%m/%Y")
+        html_rows.append(
+            f'<div class="home-model-row" style="--row-color:{row_color};'
+            f'--badge-bg:{badge_bg};--badge-color:{badge_color}">'
+            f'<div class="home-model-id"><strong>{escape(model)}</strong>'
+            f'<small>Latest FPY input · {latest_label}</small>'
+            f'<span class="home-model-badge">{escape(badge)}</span></div>'
+            f'{smt_panel}{assembly_panel}</div>'
+        )
+    st.markdown("".join(html_rows), unsafe_allow_html=True)
 
 
 def home_page() -> None:
@@ -6801,8 +7194,10 @@ def prepare_assembly_kpi_sources_cached(
     input_signatures: tuple[tuple[str, int, int], ...],
     defect_signatures: tuple[tuple[str, int, int], ...],
     repair_signatures: tuple[tuple[str, int, int], ...],
+    rule_version: str,
 ) -> tuple:
     """Read the source workbooks only once for every report period sharing the same uploads."""
+    _ = rule_version  # Cache key: defect consolidation and classification rules affect prepared data.
     input_paths = [Path(signature[0]) for signature in input_signatures]
     defect_paths = [Path(signature[0]) for signature in defect_signatures]
     repair_paths = [Path(signature[0]) for signature in repair_signatures]
@@ -6823,7 +7218,7 @@ def calculate_assembly_kpi_metrics_cached(
     import pandas as pd
 
     inputs, defects = prepare_assembly_kpi_sources_cached(
-        input_signatures, defect_signatures, repair_signatures
+        input_signatures, defect_signatures, repair_signatures, rule_version
     )
     result = assembly_kpi_v2.calculate_from_prepared(
         inputs,
@@ -7150,94 +7545,6 @@ def smt_kpi_track_page(color: str) -> None:
     if not function_exceptions.empty or not process_exceptions.empty or not assembly_duty_exceptions.empty:
         st.caption("A red × marks a daily period where the available input is lower than the defects required by that KPI. The daily KPI is not calculated; a valid larger-period aggregate remains available.")
 
-    st.markdown("### Manual SMT OQC input")
-    with st.form("smt_oqc_input_form", clear_on_submit=True):
-        manual_oqc_default_date = max(end_date, date.today())
-        form_columns = st.columns(5)
-        with form_columns[0]:
-            oqc_date = st.date_input(
-                "Inspection date",
-                value=manual_oqc_default_date,
-                key="smt_oqc_inspection_date",
-            )
-        with form_columns[1]:
-            oqc_model = st.text_input("Model (optional)", key="smt_oqc_model")
-        with form_columns[2]:
-            inspected_qty = st.number_input("Inspected", min_value=0, value=0, step=1, key="smt_oqc_inspected")
-        with form_columns[3]:
-            ok_qty = st.number_input("OK", min_value=0, value=0, step=1, key="smt_oqc_ok")
-        with form_columns[4]:
-            ng_qty = st.number_input("NG", min_value=0, value=0, step=1, key="smt_oqc_ng")
-        oqc_notes = st.text_input("Notes (optional)", key="smt_oqc_notes")
-        st.caption("Use 0 inspected, 0 OK and 0 NG to register a day with no OQC sampling.")
-        oqc_submit = st.form_submit_button("Save OQC inspection", use_container_width=True)
-    if oqc_submit:
-        try:
-            save_smt_oqc_inspection(
-                oqc_date,
-                oqc_model,
-                int(inspected_qty),
-                int(ok_qty),
-                int(ng_qty),
-                oqc_notes,
-            )
-        except ValueError as exc:
-            st.error(str(exc))
-        else:
-            st.success("SMT OQC no-sampling record saved." if int(inspected_qty) == 0 else "SMT OQC inspection saved.")
-            st.rerun()
-
-    st.markdown("### OQC inspection history")
-    if oqc_records.empty:
-        st.info(f"No OQC inspection records were entered for {period_note}.")
-    else:
-        oqc_view = oqc_records.copy()
-        oqc_view["InspectionDate"] = oqc_view["InspectionDate"].dt.strftime("%d/%m/%Y")
-        oqc_view["CreatedAt"] = pd.to_datetime(oqc_view["CreatedAt"], errors="coerce").dt.strftime("%d/%m/%y %H:%M")
-        oqc_view["PassRatePct"] = (
-            pd.to_numeric(oqc_view["PassRate"], errors="coerce").astype("float64") * 100
-        ).round(2)
-        oqc_view["Sampling"] = oqc_view["Inspected"].map(lambda value: "No sampling" if int(value) == 0 else "Sampled")
-        styled_table(
-            oqc_view[["ID", "InspectionDate", "Model", "Sampling", "Inspected", "OK", "NG", "PassRatePct", "Notes", "CreatedAt"]],
-            table_class="inspection-history-table",
-        )
-        st.download_button(
-            "Download OQC history CSV",
-            data=oqc_view.to_csv(index=False).encode("utf-8-sig"),
-            file_name="smt_oqc_inspection_history.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
-        with st.expander("Delete an OQC inspection record"):
-            st.caption("Select the incorrect manual record, then confirm its deletion. This action cannot be undone.")
-            oqc_delete_options = {
-                int(row.ID): (
-                    f"ID {int(row.ID)} · {row.InspectionDate} · "
-                    f"{row.Model or 'No model'} · {int(row.Inspected)} inspected"
-                )
-                for row in oqc_view.itertuples(index=False)
-            }
-            oqc_delete_id = st.selectbox(
-                "OQC record to delete",
-                options=list(oqc_delete_options),
-                format_func=lambda record_id: oqc_delete_options[record_id],
-                key="smt_oqc_delete_id",
-            )
-            if st.button("Delete selected OQC record", type="secondary", key="smt_oqc_delete_button"):
-                try:
-                    delete_smt_oqc_inspection(oqc_delete_id)
-                except ValueError as exc:
-                    st.error(str(exc))
-                else:
-                    st.success("SMT OQC inspection record deleted.")
-                    st.rerun()
-
-    if assembly_kpi and not assembly_kpi["breakdown"].empty:
-        st.markdown("### Assembly SMT duty defect breakdown")
-        styled_table(assembly_kpi["breakdown"])
-
-
 def assembly_kpi_track_page(color: str) -> None:
     import pandas as pd
 
@@ -7493,114 +7800,6 @@ def assembly_kpi_track_page(color: str) -> None:
     if not function_exceptions.empty or not appearance_exceptions.empty or not mando_exceptions.empty:
         st.caption("A red × marks a daily period where the available input is lower than the defects required by that KPI. The daily KPI is not calculated; a valid larger-period aggregate remains available.")
 
-    st.markdown("### Manual Assembly OQC and FQC input")
-    with st.form("assembly_oqc_fqc_input_form", clear_on_submit=True):
-        manual_inspection_default_date = max(end_date, date.today())
-        header_columns = st.columns(2)
-        with header_columns[0]:
-            inspection_date = st.date_input(
-                "Inspection date",
-                value=manual_inspection_default_date,
-                key="assembly_oqc_fqc_inspection_date",
-            )
-        with header_columns[1]:
-            inspection_model = st.text_input("Model (optional)", key="assembly_oqc_fqc_model")
-        oqc_column, fqc_column = st.columns(2)
-        with oqc_column:
-            st.markdown("#### OQC")
-            oqc_inspected_input = st.number_input("OQC inspected", min_value=0, value=0, step=1, key="assembly_oqc_inspected")
-            oqc_ok_input = st.number_input("OQC OK", min_value=0, value=0, step=1, key="assembly_oqc_ok")
-            oqc_ng_input = st.number_input("OQC NG", min_value=0, value=0, step=1, key="assembly_oqc_ng")
-        with fqc_column:
-            st.markdown("#### FQC")
-            fqc_inspected_input = st.number_input("FQC inspected", min_value=0, value=0, step=1, key="assembly_fqc_inspected")
-            fqc_ok_input = st.number_input("FQC OK", min_value=0, value=0, step=1, key="assembly_fqc_ok")
-            fqc_ng_input = st.number_input("FQC NG", min_value=0, value=0, step=1, key="assembly_fqc_ng")
-        inspection_notes = st.text_input("Notes (optional)", key="assembly_oqc_fqc_notes")
-        st.caption("For an unsampled stage, enter 0 inspected, 0 OK and 0 NG. OQC and FQC can be recorded independently.")
-        oqc_fqc_submit = st.form_submit_button("Save Assembly OQC and FQC inspection", use_container_width=True)
-    if oqc_fqc_submit:
-        try:
-            save_assembly_oqc_fqc_inspection(
-                inspection_date,
-                inspection_model,
-                int(oqc_inspected_input),
-                int(oqc_ok_input),
-                int(oqc_ng_input),
-                int(fqc_inspected_input),
-                int(fqc_ok_input),
-                int(fqc_ng_input),
-                inspection_notes,
-            )
-        except ValueError as exc:
-            st.error(str(exc))
-        else:
-            unsampled_stages = [
-                stage
-                for stage, inspected in (("OQC", oqc_inspected_input), ("FQC", fqc_inspected_input))
-                if int(inspected) == 0
-            ]
-            suffix = f" No sampling recorded for {', '.join(unsampled_stages)}." if unsampled_stages else ""
-            st.success(f"Assembly OQC and FQC inspection saved.{suffix}")
-            st.rerun()
-
-    st.markdown("### Assembly OQC and FQC inspection history")
-    if oqc_fqc_records.empty:
-        st.info(f"No Assembly OQC or FQC inspection records were entered for {period_note}.")
-    else:
-        oqc_fqc_view = oqc_fqc_records.copy()
-        oqc_fqc_view["InspectionDate"] = oqc_fqc_view["InspectionDate"].dt.strftime("%d/%m/%Y")
-        oqc_fqc_view["CreatedAt"] = pd.to_datetime(oqc_fqc_view["CreatedAt"], errors="coerce").dt.strftime("%d/%m/%y %H:%M")
-        for source_column, output_column in [
-            ("OQCPassRate", "OQCPassRatePct"),
-            ("FQCPassRate", "FQCPassRatePct"),
-            ("CombinedPassRate", "OQCxFQCPassRatePct"),
-        ]:
-            oqc_fqc_view[output_column] = (
-                pd.to_numeric(oqc_fqc_view[source_column], errors="coerce").astype("float64") * 100
-            ).round(2)
-        oqc_fqc_view["OQCSampling"] = oqc_fqc_view["OQCInspected"].map(lambda value: "No sampling" if int(value) == 0 else "Sampled")
-        oqc_fqc_view["FQCSampling"] = oqc_fqc_view["FQCInspected"].map(lambda value: "No sampling" if int(value) == 0 else "Sampled")
-        visible_columns = [
-            "ID", "InspectionDate", "Model",
-            "OQCSampling", "OQCInspected", "OQCOK", "OQCNG", "OQCPassRatePct",
-            "FQCSampling", "FQCInspected", "FQCOK", "FQCNG", "FQCPassRatePct", "OQCxFQCPassRatePct",
-            "Notes", "CreatedAt",
-        ]
-        styled_table(
-            oqc_fqc_view[visible_columns],
-            table_class="inspection-history-table assembly-inspection-history-table",
-        )
-        st.download_button(
-            "Download Assembly OQC and FQC history CSV",
-            data=oqc_fqc_view.to_csv(index=False).encode("utf-8-sig"),
-            file_name="assembly_oqc_fqc_inspection_history.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
-        with st.expander("Delete an Assembly OQC/FQC inspection record"):
-            st.caption("Select the incorrect manual record, then confirm its deletion. This action cannot be undone.")
-            assembly_delete_options = {
-                int(row.ID): (
-                    f"ID {int(row.ID)} · {row.InspectionDate} · "
-                    f"{row.Model or 'No model'} · OQC {int(row.OQCInspected)} · FQC {int(row.FQCInspected)}"
-                )
-                for row in oqc_fqc_view.itertuples(index=False)
-            }
-            assembly_delete_id = st.selectbox(
-                "Assembly OQC/FQC record to delete",
-                options=list(assembly_delete_options),
-                format_func=lambda record_id: assembly_delete_options[record_id],
-                key="assembly_oqc_fqc_delete_id",
-            )
-            if st.button("Delete selected Assembly OQC/FQC record", type="secondary", key="assembly_oqc_fqc_delete_button"):
-                try:
-                    delete_assembly_oqc_fqc_inspection(assembly_delete_id)
-                except ValueError as exc:
-                    st.error(str(exc))
-                else:
-                    st.success("Assembly OQC/FQC inspection record deleted.")
-                    st.rerun()
 
 
 def _dashboard_defect_key(frame, pcb_column: str = "PCB"):
@@ -7934,26 +8133,32 @@ def smt_dashboard_driver_detail(confirmed):
 
 
 SMT_DEFECT_DIMENSIONS = (
+    ("Model", "Model", "Product model", "#2259B8"),
     ("Functional vs appearance", "FailureType", "Failure classification", "#2677D8"),
     ("TestOperation", "Operation", "Station where the failure was recorded", "#6532C8"),
     ("Fault Phenomenon", "Phenomenon", "Observed symptom", "#0C936C"),
     ("Fault reason", "FaultReason", "Recorded cause", "#D97706"),
+    ("BadMachLocation", "Location", "Recorded defect location", "#B45309"),
     ("RepaireRemark", "RepairRemark", "Repair conclusion", "#C54B80"),
     ("DutyType", "DutyType", "Assigned responsibility", "#1E7191"),
+    ("ItemCode", "ItemCode", "Recorded defective item", "#4F46A5"),
 )
 
 ASSEMBLY_DEFECT_DIMENSIONS = (
+    ("Model", "Model", "Product model", "#2259B8"),
     ("Functional vs appearance", "FailureType", "Failure classification", "#2677D8"),
     ("TestOperation", "TestOperation", "Station where the failure was recorded", "#6532C8"),
     ("Fault Phenomenon", "Phenomenon", "Observed symptom", "#0C936C"),
     ("Fault reason", "FaultReason", "Recorded cause", "#D97706"),
+    ("BadMachLocation", "BadMachLocation", "Recorded defect location", "#B45309"),
     ("RepaireRemark", "RepairRemark", "Repair conclusion", "#C54B80"),
     ("DutyType", "DutyType", "Assigned responsibility", "#1E7191"),
+    ("ItemCode", "ItemCode", "Recorded defective item", "#4F46A5"),
 )
 
 
 def _smt_breakdown_source(confirmed):
-    """Normalize the six MES fields once, keeping one row per confirmed record."""
+    """Normalize MES breakdown fields once, keeping one row per confirmed record."""
     source = confirmed.copy()
     for _, column, _, _ in SMT_DEFECT_DIMENSIONS:
         if column not in source:
@@ -7983,7 +8188,7 @@ def _select_smt_breakdown_category(column: str, category: str) -> None:
 
 
 def render_smt_defect_dimension_cards(confirmed):
-    """Render six cross-filtering cards and return records matching all selections."""
+    """Render cross-filtering cards and return records matching all selections."""
     source = _smt_breakdown_source(confirmed)
     selections = {}
     for _, column, _, _ in SMT_DEFECT_DIMENSIONS:
@@ -8009,10 +8214,12 @@ def render_smt_defect_dimension_cards(confirmed):
     css.append('</style>')
     st.markdown(''.join(css), unsafe_allow_html=True)
 
-    for start in (0, 3):
+    for start in range(0, len(SMT_DEFECT_DIMENSIONS), 3):
         columns = st.columns(3, gap="medium")
         for offset, slot in enumerate(columns):
             index = start + offset
+            if index >= len(SMT_DEFECT_DIMENSIONS):
+                break
             title, column, subtitle, accent = SMT_DEFECT_DIMENSIONS[index]
             with slot:
                 with st.container(key=f"smt_dimension_{index}"):
@@ -8075,7 +8282,7 @@ def _select_assembly_breakdown_category(column: str, category: str) -> None:
 
 
 def render_assembly_defect_dimension_cards(confirmed):
-    """Show the same clickable, scrolling six-card breakdown for Assembly."""
+    """Show the same clickable, scrolling breakdown for Assembly."""
     source = confirmed.copy()
     selections = {}
     for _, column, _, _ in ASSEMBLY_DEFECT_DIMENSIONS:
@@ -8106,10 +8313,12 @@ def render_assembly_defect_dimension_cards(confirmed):
             'padding:16px 17px 12px;min-height:332px;box-shadow:0 2px 7px rgba(19,48,91,.04)}</style>',
             unsafe_allow_html=True,
         )
-    for start in (0, 3):
+    for start in range(0, len(ASSEMBLY_DEFECT_DIMENSIONS), 3):
         slots = st.columns(3, gap="medium")
         for offset, slot in enumerate(slots):
             index = start + offset
+            if index >= len(ASSEMBLY_DEFECT_DIMENSIONS):
+                break
             title, column, subtitle, accent = ASSEMBLY_DEFECT_DIMENSIONS[index]
             with slot:
                 with st.container(key=f"assembly_dimension_{index}"):
@@ -8436,6 +8645,7 @@ def smt_model_comparison_page(color: str) -> None:
             choice = st.selectbox(
                 f"Model {index + 1}" + (" · optional" if index == 2 else ""),
                 ["Select a model", *model_options], key=f"smt_compare_model_{index + 1}",
+                persist_state="session",
             )
             if choice != "Select a model":
                 selected.append(choice)
@@ -8639,15 +8849,16 @@ def smt_quality_dashboard_v2(color: str) -> None:
                 "Model",
                 model_options,
                 key="smt_quality_v2_models",
+                persist_state="session",
                 placeholder="All models",
                 help="Select one or more models. With no selection, all models are included.",
             )
         with failure_column:
-            failure_type = st.selectbox("Failure type", failure_options, key="smt_quality_v2_failure_type")
+            failure_type = st.selectbox("Failure type", failure_options, key="smt_quality_v2_failure_type", persist_state="session")
         with duty_column:
-            duty_type = st.selectbox("DutyType", duty_options, key="smt_quality_v2_duty_type")
+            duty_type = st.selectbox("DutyType", duty_options, key="smt_quality_v2_duty_type", persist_state="session")
         with station_column:
-            station = st.selectbox("Process / Station", station_options, key="smt_quality_v2_station")
+            station = st.selectbox("Process / Station", station_options, key="smt_quality_v2_station", persist_state="session")
 
     model_filter = selected_models or "All"
     view = _build_smt_dashboard_view(analysis, model_filter, station, failure_type, duty_type)
@@ -8714,7 +8925,7 @@ def smt_quality_dashboard_v2(color: str) -> None:
         )
         detail_columns = [
             "PCB", "Model", "KPIDate", "Operation", "FailureType", "Phenomenon",
-            "FaultReason", "RepairRemark", "DutyType",
+            "FaultReason", "Location", "RepairRemark", "DutyType", "ItemCode",
         ]
         details = breakdown_detail[
             [column for column in detail_columns if column in breakdown_detail.columns]
@@ -9121,6 +9332,7 @@ def assembly_model_comparison_page(color: str) -> None:
             choice = st.selectbox(
                 f"Model {index + 1}" + (" · optional" if index == 2 else ""),
                 ["Select a model", *model_options], key=f"assembly_compare_model_{index + 1}",
+                persist_state="session",
             )
             if choice != "Select a model":
                 selected.append(choice)
@@ -9335,6 +9547,7 @@ def model_comparison_page(color: str) -> None:
             choice = st.selectbox(
                 f"Model {index + 1}" + (" · optional" if index == 2 else ""),
                 ["Select a model", *model_options], key=f"model_compare_model_{index + 1}",
+                persist_state="session",
             )
             if choice != "Select a model":
                 selected.append(choice)
@@ -9538,6 +9751,151 @@ def _assembly_upload_section_v2(store_status: dict) -> None:
     render_assembly_source_manager()
 
 
+
+def _smt_oqc_data_management() -> None:
+    """Manual SMT OQC entry and record history, managed from Data Upload."""
+    import pandas as pd
+
+    st.markdown("### Manual SMT OQC input")
+    with st.form("smt_oqc_input_form", clear_on_submit=True):
+        form_columns = st.columns(5)
+        with form_columns[0]:
+            oqc_date = st.date_input("Inspection date", value=date.today(), key="smt_oqc_inspection_date")
+        with form_columns[1]:
+            oqc_model = st.text_input("Model (optional)", key="smt_oqc_model")
+        with form_columns[2]:
+            inspected_qty = st.number_input("Inspected", min_value=0, value=0, step=1, key="smt_oqc_inspected")
+        with form_columns[3]:
+            ok_qty = st.number_input("OK", min_value=0, value=0, step=1, key="smt_oqc_ok")
+        with form_columns[4]:
+            ng_qty = st.number_input("NG", min_value=0, value=0, step=1, key="smt_oqc_ng")
+        oqc_notes = st.text_input("Notes (optional)", key="smt_oqc_notes")
+        st.caption("Use 0 inspected, 0 OK and 0 NG to register a day with no OQC sampling.")
+        oqc_submit = st.form_submit_button("Save OQC inspection", use_container_width=True)
+    if oqc_submit:
+        try:
+            save_smt_oqc_inspection(oqc_date, oqc_model, int(inspected_qty), int(ok_qty), int(ng_qty), oqc_notes)
+        except ValueError as exc:
+            st.error(str(exc))
+        else:
+            st.success("SMT OQC no-sampling record saved." if int(inspected_qty) == 0 else "SMT OQC inspection saved.")
+            st.rerun()
+
+    oqc_records = load_smt_oqc_inspections()
+    st.markdown("### OQC inspection history")
+    if oqc_records.empty:
+        st.info("No SMT OQC inspection records have been entered yet.")
+        return
+    oqc_view = oqc_records.copy()
+    oqc_view["InspectionDate"] = oqc_view["InspectionDate"].dt.strftime("%d/%m/%Y")
+    oqc_view["CreatedAt"] = pd.to_datetime(oqc_view["CreatedAt"], errors="coerce").dt.strftime("%d/%m/%y %H:%M")
+    oqc_view["PassRatePct"] = (pd.to_numeric(oqc_view["PassRate"], errors="coerce").astype("float64") * 100).round(2)
+    oqc_view["Sampling"] = oqc_view["Inspected"].map(lambda value: "No sampling" if int(value) == 0 else "Sampled")
+    styled_table(
+        oqc_view[["ID", "InspectionDate", "Model", "Sampling", "Inspected", "OK", "NG", "PassRatePct", "Notes", "CreatedAt"]],
+        table_class="inspection-history-table",
+    )
+    st.download_button(
+        "Download OQC history CSV",
+        data=oqc_view.to_csv(index=False).encode("utf-8-sig"),
+        file_name="smt_oqc_inspection_history.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
+    with st.expander("Delete an OQC inspection record"):
+        st.caption("Select the incorrect manual record, then confirm its deletion. This action cannot be undone.")
+        delete_options = {
+            int(row.ID): f"ID {int(row.ID)} · {row.InspectionDate} · {row.Model or 'No model'} · {int(row.Inspected)} inspected"
+            for row in oqc_view.itertuples(index=False)
+        }
+        record_id = st.selectbox("OQC record to delete", options=list(delete_options), format_func=lambda value: delete_options[value], key="smt_oqc_delete_id")
+        if st.button("Delete selected OQC record", type="secondary", key="smt_oqc_delete_button"):
+            try:
+                delete_smt_oqc_inspection(record_id)
+            except ValueError as exc:
+                st.error(str(exc))
+            else:
+                st.success("SMT OQC inspection record deleted.")
+                st.rerun()
+
+
+def _assembly_oqc_fqc_data_management() -> None:
+    """Manual Assembly OQC/FQC entry and record history, managed from Data Upload."""
+    import pandas as pd
+
+    st.markdown("### Manual Assembly OQC and FQC input")
+    with st.form("assembly_oqc_fqc_input_form", clear_on_submit=True):
+        header_columns = st.columns(2)
+        with header_columns[0]:
+            inspection_date = st.date_input("Inspection date", value=date.today(), key="assembly_oqc_fqc_inspection_date")
+        with header_columns[1]:
+            inspection_model = st.text_input("Model (optional)", key="assembly_oqc_fqc_model")
+        oqc_column, fqc_column = st.columns(2)
+        with oqc_column:
+            st.markdown("#### OQC")
+            oqc_inspected_input = st.number_input("OQC inspected", min_value=0, value=0, step=1, key="assembly_oqc_inspected")
+            oqc_ok_input = st.number_input("OQC OK", min_value=0, value=0, step=1, key="assembly_oqc_ok")
+            oqc_ng_input = st.number_input("OQC NG", min_value=0, value=0, step=1, key="assembly_oqc_ng")
+        with fqc_column:
+            st.markdown("#### FQC")
+            fqc_inspected_input = st.number_input("FQC inspected", min_value=0, value=0, step=1, key="assembly_fqc_inspected")
+            fqc_ok_input = st.number_input("FQC OK", min_value=0, value=0, step=1, key="assembly_fqc_ok")
+            fqc_ng_input = st.number_input("FQC NG", min_value=0, value=0, step=1, key="assembly_fqc_ng")
+        inspection_notes = st.text_input("Notes (optional)", key="assembly_oqc_fqc_notes")
+        st.caption("For an unsampled stage, enter 0 inspected, 0 OK and 0 NG. OQC and FQC can be recorded independently.")
+        submit = st.form_submit_button("Save Assembly OQC and FQC inspection", use_container_width=True)
+    if submit:
+        try:
+            save_assembly_oqc_fqc_inspection(
+                inspection_date, inspection_model, int(oqc_inspected_input), int(oqc_ok_input), int(oqc_ng_input),
+                int(fqc_inspected_input), int(fqc_ok_input), int(fqc_ng_input), inspection_notes,
+            )
+        except ValueError as exc:
+            st.error(str(exc))
+        else:
+            unsampled_stages = [stage for stage, inspected in (("OQC", oqc_inspected_input), ("FQC", fqc_inspected_input)) if int(inspected) == 0]
+            suffix = f" No sampling recorded for {', '.join(unsampled_stages)}." if unsampled_stages else ""
+            st.success(f"Assembly OQC and FQC inspection saved.{suffix}")
+            st.rerun()
+
+    records = load_assembly_oqc_fqc_inspections()
+    st.markdown("### Assembly OQC and FQC inspection history")
+    if records.empty:
+        st.info("No Assembly OQC or FQC inspection records have been entered yet.")
+        return
+    view = records.copy()
+    view["InspectionDate"] = view["InspectionDate"].dt.strftime("%d/%m/%Y")
+    view["CreatedAt"] = pd.to_datetime(view["CreatedAt"], errors="coerce").dt.strftime("%d/%m/%y %H:%M")
+    for source, output in [("OQCPassRate", "OQCPassRatePct"), ("FQCPassRate", "FQCPassRatePct"), ("CombinedPassRate", "OQCxFQCPassRatePct")]:
+        view[output] = (pd.to_numeric(view[source], errors="coerce").astype("float64") * 100).round(2)
+    view["OQCSampling"] = view["OQCInspected"].map(lambda value: "No sampling" if int(value) == 0 else "Sampled")
+    view["FQCSampling"] = view["FQCInspected"].map(lambda value: "No sampling" if int(value) == 0 else "Sampled")
+    visible = ["ID", "InspectionDate", "Model", "OQCSampling", "OQCInspected", "OQCOK", "OQCNG", "OQCPassRatePct", "FQCSampling", "FQCInspected", "FQCOK", "FQCNG", "FQCPassRatePct", "OQCxFQCPassRatePct", "Notes", "CreatedAt"]
+    styled_table(view[visible], table_class="inspection-history-table assembly-inspection-history-table")
+    st.download_button(
+        "Download Assembly OQC and FQC history CSV",
+        data=view.to_csv(index=False).encode("utf-8-sig"),
+        file_name="assembly_oqc_fqc_inspection_history.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
+    with st.expander("Delete an Assembly OQC/FQC inspection record"):
+        st.caption("Select the incorrect manual record, then confirm its deletion. This action cannot be undone.")
+        delete_options = {
+            int(row.ID): f"ID {int(row.ID)} · {row.InspectionDate} · {row.Model or 'No model'} · OQC {int(row.OQCInspected)} · FQC {int(row.FQCInspected)}"
+            for row in view.itertuples(index=False)
+        }
+        record_id = st.selectbox("Assembly OQC/FQC record to delete", options=list(delete_options), format_func=lambda value: delete_options[value], key="assembly_oqc_fqc_delete_id")
+        if st.button("Delete selected Assembly OQC/FQC record", type="secondary", key="assembly_oqc_fqc_delete_button"):
+            try:
+                delete_assembly_oqc_fqc_inspection(record_id)
+            except ValueError as exc:
+                st.error(str(exc))
+            else:
+                st.success("Assembly OQC/FQC inspection record deleted.")
+                st.rerun()
+
+
 def data_upload_page(module: str, color: str) -> None:
     """Central upload workspace for the three validated MES source groups."""
     st.markdown(
@@ -9554,10 +9912,14 @@ def data_upload_page(module: str, color: str) -> None:
 
         importlib.reload(smt_quality_dashboard)
         smt_quality_dashboard._upload_section(color)
+        st.divider()
+        _smt_oqc_data_management()
         return
     if module == "Assembly":
         st.markdown("### Upload Data")
         _assembly_upload_section_v2(assembly_store_status())
+        st.divider()
+        _assembly_oqc_fqc_data_management()
 
 
 def assembly_quality_dashboard_v2(color: str) -> None:
@@ -9624,18 +9986,18 @@ def assembly_quality_dashboard_v2(color: str) -> None:
     with filter_panel:
         filter_columns = st.columns(4)
         with filter_columns[0]:
-            model = st.selectbox("Model", model_options, key="assembly_quality_v2_model")
+            model = st.selectbox("Model", model_options, key="assembly_quality_v2_model", persist_state="session")
         with filter_columns[1]:
             station = st.selectbox(
-                "Process / Station", station_options, key="assembly_quality_v2_station"
+                "Process / Station", station_options, key="assembly_quality_v2_station", persist_state="session"
             )
         with filter_columns[2]:
             failure_type = st.selectbox(
-                "Failure type", failure_options, key="assembly_quality_v2_failure"
+                "Failure type", failure_options, key="assembly_quality_v2_failure", persist_state="session"
             )
         with filter_columns[3]:
             duty_category = st.selectbox(
-                "DutyType", duty_options, key="assembly_quality_v2_duty"
+                "DutyType", duty_options, key="assembly_quality_v2_duty", persist_state="session"
             )
 
     view = _build_assembly_dashboard_view(
@@ -9695,7 +10057,7 @@ def assembly_quality_dashboard_v2(color: str) -> None:
         )
         detail_columns = [
             "PCB", "Model", "DefectDate", "TestOperation", "FailureType", "Phenomenon",
-            "FaultReason", "RepairRemark", "DutyType",
+            "FaultReason", "BadMachLocation", "RepairRemark", "DutyType", "ItemCode",
         ]
         details = breakdown_detail[
             [column for column in detail_columns if column in breakdown_detail.columns]
@@ -10257,9 +10619,16 @@ def render_page() -> None:
 
 
 init_state()
+if st.session_state.get("auth_logout_pending"):
+    render_auth_cookie()
+    login_page()
+    st.stop()
+restore_authentication()
 if not st.session_state.get("authenticated", False):
     login_page()
     st.stop()
+if (token := st.session_state.get("auth_cookie_token")) and st.context.cookies.get(COOKIE_NAME) != token:
+    render_auth_cookie(token)
 
 sync_navigation_from_query()
 apply_global_css()

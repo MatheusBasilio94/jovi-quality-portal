@@ -22,8 +22,8 @@ from tools.trend_rules import requested_trend_grain
 from tools.smt_fpy_sources import read_detail, validate_pair, active_pairs
 
 
-TOOL_VERSION = "v2.0.0"
-SMT_FAILURE_RULE_VERSION = "mes-fpy-authoritative-entry-date-2026-09-17.1"
+TOOL_VERSION = "v2.0.1"
+SMT_FAILURE_RULE_VERSION = "mes-fpy-authoritative-entry-date-2026-09-28.2"
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 SMT_STORE_DIR = PROJECT_DIR / "data_store" / "smt"
 SMT_INPUT_DIR = SMT_STORE_DIR / "fpy" / "input"
@@ -251,12 +251,22 @@ def read_summary_input_bytes(data: bytes, filename: str) -> tuple[pd.DataFrame, 
         raise RuntimeError(f"{filename}: the new FPY flow accepts daily input files only.")
     if model.duplicated(["Model", "BeginDate", "EndDateExclusive"]).any():
         raise RuntimeError(f"{filename}: ModelData contains duplicate model rows for the same day.")
+    keys = ["Model", "BeginDate", "EndDateExclusive"]
+    model_totals = model.set_index(keys)[["Input", "BadMachine"]].sort_index()
+    org_totals = org.groupby(keys)[["Input", "BadMachine"]].sum().sort_index()
+    if not model_totals.index.equals(org_totals.index):
+        raise RuntimeError(f"{filename}: ModelData and OrgDisplay have different models or dates.")
+    input_difference = org_totals["Input"] - model_totals["Input"]
+    bad_difference = org_totals["BadMachine"] - model_totals["BadMachine"]
+    if input_difference.lt(0).any() or bad_difference.ne(0).any():
+        raise RuntimeError(
+            f"{filename}: ModelData and OrgDisplay do not reconcile by model and day "
+            "(OrgDisplay has less input or different BadMachine counts)."
+        )
     model_input = int(model["Input"].sum())
     org_input = int(org["Input"].sum())
     model_bad = int(model["BadMachine"].sum())
     org_bad = int(org["BadMachine"].sum())
-    # OrgDisplay counts station activity and can include retests. ModelData is
-    # the source for per-model FPY input; preserve discrepancies for audit.
     audit = {
         "SourceFile": filename,
         "ModelRows": model_audit["valid_rows"],
@@ -268,6 +278,7 @@ def read_summary_input_bytes(data: bytes, filename: str) -> tuple[pd.DataFrame, 
         "OrgInputDifference": org_input - model_input,
         "OrgBadMachineDifference": org_bad - model_bad,
         "OrgReconciles": model_input == org_input and model_bad == org_bad,
+        "OrgExcessInput": int(input_difference.sum()),
         "BadGreaterThanInputRows": model_audit["bad_greater_than_input"],
         "InvalidRows": model_audit["raw_rows"] - model_audit["valid_rows"] + org_audit["raw_rows"] - org_audit["valid_rows"],
     }
@@ -401,19 +412,34 @@ def consolidate_defect_sources(
     defect_signatures: tuple[tuple[str, int, int], ...],
     failure_rule_version: str,
 ) -> tuple[pd.DataFrame, dict]:
-    """Combine cumulative and incremental defect files, keeping the most recent duplicate."""
-    frames = []
+    """Combine SMT FPY snapshots while reconciling the dates they cover.
+
+    A later MES Detail export is authoritative for each ``BadMachEntryTime``
+    date it contains. It replaces older events from those dates, including
+    events that no longer exist in the corrected export. Dates outside the
+    new file stay intact, so partial uploads remain incremental.
+    """
+    active = pd.DataFrame()
     audits = []
-    for signature in defect_signatures:
+    snapshot_rows_replaced = 0
+    # Stored filenames start with a content hash, so alphabetical directory
+    # order is not upload order. Process oldest to newest using the persisted
+    # modification marker before applying date-level replacement.
+    for signature in sorted(defect_signatures, key=lambda value: (value[2], value[0])):
         frame, audit = read_defect_path_cached(*signature, failure_rule_version)
         source = frame.copy()
         source["SourceModified"] = signature[2]
-        frames.append(source)
+        if not active.empty:
+            covered_dates = source["KPIDate"].dropna().unique()
+            replaced = active["KPIDate"].isin(covered_dates)
+            snapshot_rows_replaced += int(replaced.sum())
+            active = active.loc[~replaced].copy()
+        active = pd.concat([active, source], ignore_index=True)
         audits.append(audit)
-    if not frames:
+    if active.empty:
         raise RuntimeError("No SMT defect files are available.")
 
-    combined = pd.concat(frames, ignore_index=True).sort_values("SourceModified")
+    combined = active.sort_values("SourceModified")
     merge_keys = ["PCB", "TestTime", "Operation", "Phenomenon"]
     duplicate_rows = int(combined.duplicated(merge_keys, keep="last").sum())
     combined = combined.drop_duplicates(merge_keys, keep="last").reset_index(drop=True)
@@ -421,6 +447,7 @@ def consolidate_defect_sources(
     audit = {key: int(sum(int(item.get(key, 0)) for item in audits)) for key in audit_keys}
     audit["SourceFiles"] = len(defect_signatures)
     audit["DuplicateRowsRemoved"] = duplicate_rows
+    audit["SnapshotRowsReplaced"] = snapshot_rows_replaced
     return combined.drop(columns=["SourceModified"]), audit
 
 
@@ -1225,7 +1252,7 @@ def bar_chart(frame: pd.DataFrame, category: str, value: str, title: str, color:
 def _upload_section(color: str) -> None:
     status = smt_store_status()
     st.markdown("### Upload Data")
-    st.caption("Carregue inputs FPY diariamente. Defeitos FPY e reparo aceitam arquivos de qualquer período; o histórico é preservado e apenas eventos repetidos são atualizados.")
+    st.caption("Carregue inputs FPY diariamente. Defeitos FPY e reparo aceitam arquivos de qualquer período; uma exportação MES atualizada substitui apenas os eventos das datas que ela cobre e preserva o restante do histórico.")
     columns = st.columns(4)
     with columns[0]:
         metric_card("FPY Input", fmt_int(status["inputs"]), "Arquivos diários", color)
@@ -1256,11 +1283,7 @@ def _upload_section(color: str) -> None:
             for uploaded in uploaded_inputs or []:
                 _, _, audit = read_summary_input_bytes(uploaded.getvalue(), uploaded.name)
                 result = persist_smt_source(uploaded, "input")
-                if not audit["OrgReconciles"]:
-                    result["message"] += (
-                        f" ModelData input {audit['Input']:,}; OrgDisplay input {audit['OrgInput']:,}. "
-                        "ModelData was used for model KPI calculations; the station difference remains in the audit."
-                    )
+                result["OrgExcessInput"] = audit["OrgExcessInput"]
                 results.append(result)
             if uploaded_defect:
                 read_detail(uploaded_defect.getvalue(), uploaded_defect.name)
@@ -1275,12 +1298,19 @@ def _upload_section(color: str) -> None:
             st.success("Arquivos de SMT processados.")
             st.rerun()
     if "smt_last_import_results" in st.session_state:
+        imported = st.session_state["smt_last_import_results"]
         st.dataframe(
-            pd.DataFrame(st.session_state["smt_last_import_results"]),
+            pd.DataFrame(imported),
             use_container_width=True,
             hide_index=True,
             height="content",
         )
+        excess = sum(int(item.get("OrgExcessInput", 0)) for item in imported)
+        if excess:
+            st.warning(
+                f"OrgDisplay registra {excess} inputs adicionais por linha. "
+                "Os KPIs usam apenas o input consolidado de ModelData; confira no MES se os adicionais são retestes."
+            )
     render_smt_source_manager()
     st.info(
         "Os três grupos ficam armazenados separadamente por área e tipo de fonte. "
@@ -1292,7 +1322,7 @@ def render_smt_quality_dashboard(color: str) -> None:
     init_smt_store()
     st.markdown(f"<h1 class='section-title' style='color:{color};'>SMT · Quality Dashboard</h1>", unsafe_allow_html=True)
     sections = ["Overview", "Failure Types", "Models", "Defects / Pareto", "Process", "Excluded MES rules / Repeats", "Data Quality", "Upload Data", "Details", "About"]
-    active_section = st.radio("SMT dashboard section", sections, horizontal=True, label_visibility="collapsed", key="smt_quality_dashboard_section")
+    active_section = st.radio("SMT dashboard section", sections, horizontal=True, label_visibility="collapsed", key="smt_quality_dashboard_section", persist_state="session")
     if active_section == "Upload Data":
         _upload_section(color)
         return
@@ -1307,9 +1337,9 @@ def render_smt_quality_dashboard(color: str) -> None:
 
     date_columns = st.columns(2)
     with date_columns[0]:
-        start_date = st.date_input("Start date", value=minimum_date.date(), min_value=minimum_date.date(), max_value=maximum_date.date(), key="smt_quality_start")
+        start_date = st.date_input("Start date", value=minimum_date.date(), min_value=minimum_date.date(), max_value=maximum_date.date(), key="smt_quality_start", persist_state="session")
     with date_columns[1]:
-        end_date = st.date_input("End date", value=maximum_date.date(), min_value=minimum_date.date(), max_value=maximum_date.date(), key="smt_quality_end")
+        end_date = st.date_input("End date", value=maximum_date.date(), min_value=minimum_date.date(), max_value=maximum_date.date(), key="smt_quality_end", persist_state="session")
     if end_date < start_date:
         st.error("End date must be on or after start date.")
         return
@@ -1521,11 +1551,12 @@ def render_smt_quality_dashboard(color: str) -> None:
     if active_section == "Details":
         raw = analysis["raw"].copy()
         model_options = ["All", *sorted(raw["Model"].dropna().unique())]
-        selected_model = st.selectbox("Model", model_options, key="smt_detail_model")
+        selected_model = st.selectbox("Model", model_options, key="smt_detail_model", persist_state="session")
         record_type = st.selectbox(
             "Record type",
             ["All", "Confirmed", "Functional Failure", "Appearance Failure", "Unclassified Station", "Excluded MES rule", "Without input coverage"],
             key="smt_detail_type",
+            persist_state="session",
         )
         view = raw
         if selected_model != "All":
@@ -1553,6 +1584,7 @@ def render_smt_quality_dashboard(color: str) -> None:
                 options=range(1, page_count + 1),
                 format_func=lambda page: f"Page {page} of {page_count}",
                 key=f"smt_detail_page_{selected_model}_{record_type}",
+                persist_state="session",
             )
         else:
             page_number = 1

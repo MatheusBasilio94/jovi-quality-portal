@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+from tools.retained_upload import retain_upload
 
 
 PCB_ALIASES = ["pcb no", "pcb no.", "pcb number", "pcb sn", "sn"]
@@ -226,12 +227,15 @@ def render_smt_quality_dashboard(color: str) -> None:
         "PCB No. is the unique serial identifier. The period is filtered first; repeated serials are then counted only once inside that selected period.</p></div>",
         unsafe_allow_html=True,
     )
-    uploaded = st.file_uploader(
+    selected_upload = st.file_uploader(
         "SMT input file",
         type=["xlsx", "xls", "csv"],
         key="smt_input_upload",
         help="Required columns: PCB No. and Operate Time. PN is optional and is used for model breakdown.",
     )
+    uploaded = retain_upload(selected_upload, "smt_input_retained")
+    if selected_upload is None and uploaded is not None:
+        st.caption(f"Using retained file: {uploaded.name}")
     if uploaded is None:
         st.info("Upload the SMT input file to calculate the real daily input without estimating or distributing totals.")
         return
@@ -252,9 +256,10 @@ def render_smt_quality_dashboard(color: str) -> None:
             min_value=minimum_time.date(),
             max_value=maximum_time.date(),
             key="smt_input_start_date",
+            persist_state="session",
         )
     with date_columns[1]:
-        start_clock = st.time_input("Start time", value=minimum_time.time(), key="smt_input_start_time")
+        start_clock = st.time_input("Start time", value=minimum_time.time(), key="smt_input_start_time", persist_state="session")
     with date_columns[2]:
         end_date = st.date_input(
             "End date",
@@ -262,9 +267,10 @@ def render_smt_quality_dashboard(color: str) -> None:
             min_value=minimum_time.date(),
             max_value=maximum_time.date(),
             key="smt_input_end_date",
+            persist_state="session",
         )
     with date_columns[3]:
-        end_clock = st.time_input("End time", value=maximum_time.time(), key="smt_input_end_time")
+        end_clock = st.time_input("End time", value=maximum_time.time(), key="smt_input_end_time", persist_state="session")
 
     selected_start = pd.Timestamp(datetime.combine(start_date, start_clock))
     selected_end = pd.Timestamp(datetime.combine(end_date, end_clock))

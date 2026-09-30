@@ -83,6 +83,16 @@ class SupabaseStoreTests(unittest.TestCase):
         self.assertEqual([row["name"] for row in rows], ["input.xls"])
         self.assertEqual(store.list_calls, 3)
 
+    def test_remote_modified_timestamp_prefers_the_object_update_time(self):
+        timestamp = supabase_store._object_modified_timestamp(
+            {
+                "updated_at": "2026-09-28T08:00:01.123456Z",
+                "metadata": {"lastModified": "2026-09-28T07:00:00Z"},
+            }
+        )
+        self.assertIsNotNone(timestamp)
+        self.assertAlmostEqual(timestamp, 1790582401.123456, places=5)
+
 
 if __name__ == "__main__":
     unittest.main()
