@@ -255,8 +255,8 @@ def read_summary_input_bytes(data: bytes, filename: str) -> tuple[pd.DataFrame, 
     org_input = int(org["Input"].sum())
     model_bad = int(model["BadMachine"].sum())
     org_bad = int(org["BadMachine"].sum())
-    if model_input != org_input or model_bad != org_bad:
-        raise RuntimeError(f"{filename}: ModelData and OrgDisplay totals do not reconcile.")
+    # OrgDisplay counts station activity and can include retests. ModelData is
+    # the source for per-model FPY input; preserve discrepancies for audit.
     audit = {
         "SourceFile": filename,
         "ModelRows": model_audit["valid_rows"],
@@ -265,6 +265,8 @@ def read_summary_input_bytes(data: bytes, filename: str) -> tuple[pd.DataFrame, 
         "BadMachine": model_bad,
         "OrgInput": org_input,
         "OrgBadMachine": org_bad,
+        "OrgInputDifference": org_input - model_input,
+        "OrgBadMachineDifference": org_bad - model_bad,
         "OrgReconciles": model_input == org_input and model_bad == org_bad,
         "BadGreaterThanInputRows": model_audit["bad_greater_than_input"],
         "InvalidRows": model_audit["raw_rows"] - model_audit["valid_rows"] + org_audit["raw_rows"] - org_audit["valid_rows"],
@@ -1252,8 +1254,14 @@ def _upload_section(color: str) -> None:
         results = []
         try:
             for uploaded in uploaded_inputs or []:
-                read_summary_input_bytes(uploaded.getvalue(), uploaded.name)
-                results.append(persist_smt_source(uploaded, "input"))
+                _, _, audit = read_summary_input_bytes(uploaded.getvalue(), uploaded.name)
+                result = persist_smt_source(uploaded, "input")
+                if not audit["OrgReconciles"]:
+                    result["message"] += (
+                        f" ModelData input {audit['Input']:,}; OrgDisplay input {audit['OrgInput']:,}. "
+                        "ModelData was used for model KPI calculations; the station difference remains in the audit."
+                    )
+                results.append(result)
             if uploaded_defect:
                 read_detail(uploaded_defect.getvalue(), uploaded_defect.name)
                 results.append(persist_smt_source(uploaded_defect, "defects"))

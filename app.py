@@ -39,7 +39,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.53"
+APP_VERSION = "v0.5.61"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -94,6 +94,14 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.61", "Aligned Home KPI choices with the SMT and Assembly KPI pages, including Assembly SMT duty and appearance, and removed OQC/FQC from Home."),
+    ("v0.5.60", "Added the shared Quick selection presets beside the Home analysis period."),
+    ("v0.5.59", "Lowered Home chart target labels so they remain fully visible within the white chart area."),
+    ("v0.5.58", "Moved Home KPI target values into the upper-right white chart area."),
+    ("v0.5.57", "Increased contrast between the selected and unselected Home chart date ranges, with clearer drag handles."),
+    ("v0.5.56", "Restored the Home range-selection bar without duplicate plot lines, moved targets above the chart, and padded the zero baseline so markers stay visible."),
+    ("v0.5.55", "Removed the duplicate Plotly range-slider chart from Home trends; date ticks now adapt to long periods and the main chart supports drag-to-zoom."),
+    ("v0.5.54", "Added SMT and Assembly Home KPI charts with independent selectors and a horizontally scrollable detail table; audited SMT station retest differences without inflating ModelData input."),
     ("v0.5.53", "Classified Assembly CCT_sensor_Calibration failures as functional, including their Mando records in the Function Mando KPI."),
     ("v0.5.52", "Restored the single Analysis period date field and constrained its Streamlit container to the visible control width."),
     ("v0.5.51", "Freed manual SMT and Assembly OQC/FQC inspection dates from the uploaded production period, defaulting to the latest available day."),
@@ -1571,6 +1579,28 @@ def apply_global_css() -> None:
         [data-testid="stMainBlockContainer"]:has(.home-overview-head) { padding-top:.5rem !important; padding-bottom:.5rem !important; }
         [data-testid="stMainBlockContainer"]:has(.home-overview-head) > [data-testid="stVerticalBlock"] { gap:.75rem !important; }
         .home-overview-head h1 { color:#081f45; font-size:1.72rem; letter-spacing:-.045em; line-height:1.05; margin:0; padding:0 !important; }
+        .home-trend-heading {border-left:4px solid var(--home-area);padding:.1rem 0 .2rem .75rem;margin:.4rem 0 .15rem;min-height:2.7rem;}
+        .home-trend-heading strong {display:block;color:#102d5b;font-size:1rem;line-height:1.25;}
+        .home-trend-heading small {display:block;color:#7187a1;font-size:.7rem;margin-top:.12rem;}
+        [data-testid="stMainBlockContainer"]:has(.home-overview-head) .rangeslider-slidebox {fill:#AFCFFF !important;fill-opacity:.72 !important;}
+        [data-testid="stMainBlockContainer"]:has(.home-overview-head) .rangeslider-mask-min,
+        [data-testid="stMainBlockContainer"]:has(.home-overview-head) .rangeslider-mask-max {fill:#D7E0ED !important;fill-opacity:.82 !important;}
+        [data-testid="stMainBlockContainer"]:has(.home-overview-head) .rangeslider-handle-min,
+        [data-testid="stMainBlockContainer"]:has(.home-overview-head) .rangeslider-handle-max {fill:#FFFFFF !important;stroke:#3469B3 !important;stroke-width:1.5px !important;}
+        .home-detail-scroll {max-width:100%;overflow-x:auto;overflow-y:auto;border:1px solid #d5e2f0;border-radius:.5rem;background:#fff;max-height:460px;}
+        .home-detail-table {border-collapse:separate;border-spacing:0;width:max-content;min-width:100%;font-size:.72rem;color:#17375f;}
+        .home-detail-table th,.home-detail-table td {box-sizing:border-box;border-bottom:1px solid #e5edf6;padding:.48rem .55rem;text-align:left;white-space:nowrap;min-width:148px;}
+        .home-detail-table thead th {background:#123f81;color:#fff;font-weight:800;position:sticky;top:0;z-index:2;min-width:150px;}
+        .home-detail-table .sticky-model {position:sticky;left:0;z-index:3;min-width:175px;width:175px;background:#f8fbff;font-weight:800;}
+        .home-detail-table .sticky-kpi {position:sticky;left:175px;z-index:3;min-width:210px;width:210px;background:#f8fbff;box-shadow:4px 0 8px rgba(17,56,103,.12);}
+        .home-detail-table thead .sticky-model,.home-detail-table thead .sticky-kpi {background:#123f81;z-index:4;color:#fff;}
+        .home-detail-table tbody tr:nth-child(even) td {background:#f8fbff;}
+        .home-detail-table td strong {display:block;color:#0c724a;}
+        .home-detail-table td small {display:block;color:#6b819d;font-size:.66rem;}
+        .home-detail-table td.on-target {background:#eaf8f0 !important;}
+        .home-detail-table td.below-target {background:#fff0ef !important;}
+        .home-detail-table td.below-target strong {color:#bc2a2a;}
+        .home-detail-table td.empty {color:#8294aa;}
         .home-area-shell { background:#fff; border:1px solid #dbe6f2; border-top:5px solid var(--area-color); border-radius:.85rem; box-shadow:0 7px 19px rgba(16,42,78,.07); margin:.15rem 0 .7rem; overflow:hidden; padding:1rem; }
         .home-area-heading { align-items:center; display:flex; gap:.65rem; justify-content:space-between; margin:0 0 .55rem; }
         .home-area-heading h2 { color:#102747; font-size:1.2rem; letter-spacing:-.025em; margin:0; }
@@ -6180,287 +6210,238 @@ def smart_report_page() -> None:
         defect_action_report_page()
 
 
-def home_overview_kpi(
-    label: str,
-    value: str,
-    note: str,
-    color: str,
-    *,
-    actual_value: float | None = None,
-    target_value: float | None = None,
-    target_direction: str | None = None,
-) -> None:
-    """Render one compact Home KPI tile, adding status only for configured targets."""
-    state = kpi_target_state(actual_value, target_value, target_direction)
-    target_status = ""
-    target_icon = ""
-    card_style = ""
-    value_style = ""
-    if state is not None:
-        target_label = fmt_ppm(target_value) + " PPM" if target_direction == "max" else fmt_kpi_pct(target_value)
-        status_label = "Below target" if state == "below-target" else "On target"
-        target_status = f'<div class="target-state {state}">{status_label} · {escape(target_label)}</div>'
-        icon = "!" if state == "below-target" else "✓"
-        target_icon = f'<div class="kpi-target-icon {state}" aria-label="{escape(status_label)}">{icon}</div>'
-        if state == "below-target":
-            card_style = "background:#FFE8E8 !important;border:1px solid #F39A9A !important;border-left:4px solid #DC2626 !important;"
-            value_style = "color:#B91C1C !important;"
-        else:
-            card_style = "background:#E8FAEF !important;border:1px solid #86D5A6 !important;border-left:4px solid #0D7A45 !important;"
-            value_style = "color:#08703B !important;"
-    card_class = (" kpi-target-below" if state == "below-target" else " kpi-target-on") if state is not None else ""
-    st.markdown(
-        f'<div class="home-overview-kpi{card_class}" style="--kpi-color:{color};{card_style}">'
-        f'<div class="label">{escape(label)}</div>'
-        f'<div class="value" style="{value_style}">{escape(value)}</div>'
-        f'<div class="note">{escape(note)}</div>{target_status}{target_icon}'
-        '<div class="spark"></div></div>',
-        unsafe_allow_html=True,
+def _home_kpi_chart(frame, area: str, kpi: str, grain: str, models: list[str], target: dict | None) -> None:
+    import plotly.graph_objects as go
+    import pandas as pd
+
+    if frame.empty or frame["Value"].notna().sum() == 0:
+        st.info(f"No {area} {kpi} result is available for the selected models and time scale.")
+        return
+    colors = ("#087A8C", "#6532C8", "#D65B55", "#D3981F", "#1C6CC8", "#7F9A39")
+    fig = go.Figure()
+    for index, model in enumerate(models):
+        data = frame.loc[frame["Model"].eq(model)].sort_values("PeriodDate")
+        if data.empty or data["Value"].notna().sum() == 0:
+            continue
+        x = pd.to_datetime(data["PeriodDate"])
+        hover = [
+            f"<b>{escape(model)} · {escape(label)}</b><br>{escape(kpi)}: "
+            + (f"{value * 100:.2f}%" if "Pass Rate" in kpi else f"{value:,.0f} PPM")
+            + f"<br>Defect PCBs: {int(ng)} · Input: {int(count):,}"
+            if pd.notna(value) else f"<b>{escape(model)} · {escape(label)}</b><br>{escape(status)}"
+            for label, value, ng, count, status in zip(data["Period"], data["Value"], data["DefectPCBs"], data["Input"], data["Status"])
+        ]
+        fig.add_trace(go.Scatter(
+            x=x, y=data["Value"] * (100 if "Pass Rate" in kpi else 1),
+            name=model, mode="lines+markers", line=dict(color=colors[index % len(colors)], width=2.5),
+            marker=dict(size=7), text=hover, hovertemplate="%{text}<extra></extra>",
+            connectgaps=False,
+        ))
+    if target:
+        threshold = target["target"] * (100 if "Pass Rate" in kpi else 1)
+        fig.add_hline(y=threshold, line_color="#E56B2F", line_dash="dash", line_width=1.6)
+    periods = frame[["PeriodDate", "Period"]].drop_duplicates().sort_values("PeriodDate")
+    # Keep Plotly's draggable range handles, but place the range-slider preview
+    # y-axis below every valid KPI value so it remains a clean selection bar.
+    range_bar = dict(visible=len(periods) > 6, thickness=0.075,
+                     bgcolor="#EEF3FA", bordercolor="#8EADD8", borderwidth=1,
+                     yaxis=dict(range=[-2, -1], rangemode="fixed"))
+    if grain == "Days":
+        xaxis = dict(type="date", tickformat="%d/%m", nticks=12, showgrid=False,
+                     rangeslider=range_bar)
+    else:
+        tick_step = max(1, math.ceil(len(periods) / 12))
+        visible_ticks = periods.iloc[::tick_step]
+        if not visible_ticks.empty and visible_ticks.index[-1] != periods.index[-1]:
+            visible_ticks = pd.concat([visible_ticks, periods.tail(1)])
+        xaxis = dict(tickmode="array", tickvals=pd.to_datetime(visible_ticks["PeriodDate"]),
+                     ticktext=visible_ticks["Period"], tickangle=0, showgrid=False,
+                     rangeslider=range_bar)
+    fig.update_layout(
+        height=min(580, 330 + max(0, len(models) - 4) * 18),
+        margin=dict(l=38, r=24, t=35, b=18), dragmode="zoom",
+        paper_bgcolor="#FFFFFF", plot_bgcolor="#FFFFFF", hovermode="x unified",
+        legend=dict(orientation="h", y=1.16, x=0.25, font=dict(size=11)),
+        font=dict(family="Arial", color="#17375F", size=11),
+        yaxis=dict(title="%" if "Pass Rate" in kpi else "PPM",
+                   gridcolor="#E6ECF4", zeroline=False),
+        xaxis=xaxis,
     )
+    if target:
+        target_value = f"{threshold:,.2f}%" if "Pass Rate" in kpi else f"{threshold:,.0f} PPM"
+        direction = "≥" if target["direction"] == "min" else "≤"
+        fig.add_annotation(
+            x=1, y=1, xref="paper", yref="paper", xanchor="right", yanchor="top", yshift=24,
+            text=f"<b>Target {direction} {escape(target_value)}</b>", showarrow=False,
+            font=dict(color="#C95823", size=12), align="right",
+        )
+    if "Pass Rate" in kpi:
+        fig.update_yaxes(ticksuffix="%", range=[max(-1, min(float(frame["Value"].min() * 100) - 2, 95)), 101])
+    else:
+        upper_value = max(float(frame["Value"].max()), float(threshold) if target else 0, 1)
+        padding = max(upper_value * 0.04, 0.02)
+        fig.update_yaxes(range=[-padding, upper_value + padding])
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False}, key=f"home_{area.lower()}_{kpi.lower().replace(' ', '_')}_chart")
+    if len(periods) > 6:
+        st.caption("Drag the handles below the chart to change the visible period; double-click the chart to reset.")
 
 
-def home_area_heading(title: str, subtitle: str, color: str, status: str, attention: bool = False) -> None:
-    status_class = " attention" if attention else ""
-    st.markdown(
-        f"""
-        <div class="home-area-heading" style="--area-color:{color};--area-soft:{color}18;">
-            <div><h2>{escape(title)}</h2><small>{escape(subtitle)}</small></div>
-            <div class="home-area-status{status_class}">{escape(status)}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+def _home_detail_table(frames: dict[str, object], models: list[str], grain: str, targets: dict) -> None:
+    import pandas as pd
+    from tools.home_analysis import KPI_TARGETS
+
+    combined = pd.concat([frame for frame in frames.values() if not frame.empty], ignore_index=True) if any(not frame.empty for frame in frames.values()) else pd.DataFrame()
+    if combined.empty:
+        st.info("No model detail is available for the selected period.")
+        return
+    periods = combined[["PeriodDate", "Period"]].drop_duplicates().sort_values("PeriodDate")
+    period_keys = list(periods["PeriodDate"])
+    period_labels = list(periods["Period"])
+    search_col, _, export_col = st.columns([1.1, 2, 0.8], gap="small")
+    with search_col:
+        search = st.text_input("Search model", key="home_detail_search", placeholder="Search model...", label_visibility="collapsed").strip().casefold()
+    export = combined.copy()
+    export["PeriodDate"] = pd.to_datetime(export["PeriodDate"]).dt.strftime("%Y-%m-%d")
+    with export_col:
+        st.download_button("↓  Export detail", export.to_csv(index=False).encode("utf-8-sig"),
+                           file_name="jovi-home-kpi-detail.csv", mime="text/csv", key="home_detail_export", width="stretch")
+    parts = ["<div class='home-detail-scroll'><table class='home-detail-table'><thead><tr>",
+             "<th class='sticky-model'>Model</th><th class='sticky-kpi'>Area / KPI</th>"]
+    for label in period_labels:
+        parts.append(f"<th>{escape(str(label))}</th>")
+    parts.append("</tr></thead><tbody>")
+    for area, frame in frames.items():
+        if frame.empty:
+            continue
+        kpi = str(frame["KPI"].iloc[0])
+        target = targets.get(KPI_TARGETS.get((area, kpi)))
+        lookup = {(row.Model, row.PeriodDate): row for row in frame.itertuples(index=False)}
+        for model in models:
+            if search and search not in model.casefold():
+                continue
+            parts.append("<tr>")
+            parts.append(f"<th class='sticky-model'>{escape(model)}</th><th class='sticky-kpi'>{escape(area)} · {escape(kpi)}</th>")
+            for period in period_keys:
+                row = lookup.get((model, period))
+                if row is None or pd.isna(row.Value):
+                    note = escape(str(row.Status)) if row is not None and row.Status != "No data" else "—"
+                    parts.append(f"<td class='empty'><span>{note}</span></td>")
+                    continue
+                label = f"{row.Value * 100:.2f}%" if "Pass Rate" in kpi else f"{row.Value:,.0f} PPM"
+                note = f"{int(row.DefectPCBs)} NG / {int(row.Input):,} input"
+                cell_class = kpi_target_state(row.Value, target["target"], target["direction"]) if target else "plain"
+                parts.append(f"<td class='{cell_class}'><strong>{escape(label)}</strong><small>{escape(note)}</small></td>")
+            parts.append("</tr>")
+    parts.append("</tbody></table></div>")
+    st.markdown("".join(parts), unsafe_allow_html=True)
+    st.caption(f"{len(period_keys)} {grain.lower()} in the selected period · scroll the table horizontally to view every column.")
 
 
 def home_page() -> None:
-    """Render the Home as a compact, independent SMT and Assembly triage view."""
+    """Shared filters, independent SMT/Assembly KPI charts, and full-period details."""
+    import pandas as pd
     from tools import smt_quality_dashboard
+    from tools.home_analysis import KPI_OPTIONS, KPI_TARGETS, build_home_kpi_rows
 
-    smt_context: dict = {"ready": False, "error": "Awaiting SMT FPY input and defect files."}
-    assembly_context: dict = {"ready": False, "error": "Awaiting Assembly input, FPY defects and repair files."}
-    bounds: list[tuple[date, date]] = []
-
-    try:
-        smt_inputs, smt_defects = smt_quality_dashboard.stored_smt_sources()
-        if smt_inputs and smt_defects:
-            smt_signatures = tuple(smt_quality_dashboard.path_signature(path) for path in smt_inputs)
-            smt_minimum, smt_maximum = smt_quality_dashboard.input_bounds(smt_signatures)
-            smt_context.update(
-                ready=True,
-                inputs=smt_inputs,
-                defects=smt_defects,
-                input_signatures=smt_signatures,
-                minimum=smt_minimum.date(),
-                maximum=smt_maximum.date(),
-            )
-            bounds.append((smt_minimum.date(), smt_maximum.date()))
-    except Exception as exc:
-        smt_context["error"] = str(exc)
-
-    try:
-        assembly_sources = stored_assembly_sources_v2()
-        if all(assembly_sources[source] for source in ("input", "defects", "repair")):
-            assembly_minimum, assembly_maximum = assembly_input_bounds(assembly_sources["input"])
-            assembly_context.update(
-                ready=True,
-                minimum=assembly_minimum,
-                maximum=assembly_maximum,
-            )
-            bounds.append((assembly_minimum, assembly_maximum))
-    except Exception as exc:
-        assembly_context["error"] = str(exc)
-
-    st.markdown(
-        "<div class='home-overview-head'><h1>Quality Overview</h1></div>",
-        unsafe_allow_html=True,
-    )
-
-    if bounds:
-        shared_start = max(start for start, _ in bounds)
-        shared_end = min(end for _, end in bounds)
-        if shared_end < shared_start:
-            shared_start = min(start for start, _ in bounds)
-            shared_end = max(end for _, end in bounds)
-            st.info("The available SMT and Assembly source periods do not overlap. Each panel shows the selected range when its data is available.")
-        start_date, end_date = analysis_period_control(
-            "home_overview_period",
-            shared_start,
-            shared_end,
-            default_start=shared_start,
-            default_end=shared_end,
-        )
-    else:
-        start_date = end_date = date.today()
-        st.info("Upload the validated source files in Data Upload to populate the Home overview.")
-
-    configured_targets = {item["source"]: item for item in configured_kpi_directory()}
-    smt_function_target = configured_targets["smt_function"]["target"]
-    smt_process_target = configured_targets["smt_process"]["target"]
-    smt_oqc_target = configured_targets["smt_oqc"]["target"]
-    assembly_function_target = configured_targets["assembly_function"]["target"]
-    assembly_mando_target = configured_targets["assembly_mando"]["target"]
-    assembly_oqc_fqc_target = configured_targets["assembly_oqc_fqc"]["target"]
-
-    if smt_context["ready"]:
+    st.markdown("<div class='home-overview-head'><h1>Quality Overview</h1></div>", unsafe_allow_html=True)
+    st.caption("Compare model performance in SMT and Assembly on the same time scale.")
+    smt_inputs, smt_defects = smt_quality_dashboard.stored_smt_sources()
+    assembly_sources = stored_assembly_sources_v2()
+    smt_ready = bool(smt_inputs and smt_defects)
+    assembly_ready = all(assembly_sources[source] for source in ("input", "defects", "repair"))
+    if not smt_ready and not assembly_ready:
+        st.info("Upload validated SMT or Assembly FPY source files in Data Upload to populate the Home analysis.")
+        return
+    bounds = []
+    if smt_ready:
+        smt_signatures = tuple(smt_quality_dashboard.path_signature(path) for path in smt_inputs)
+        low, high = smt_quality_dashboard.input_bounds(smt_signatures)
+        bounds.append((low.date(), high.date()))
+    if assembly_ready:
+        low, high = assembly_input_bounds(assembly_sources["input"])
+        bounds.append((low, high))
+    minimum = min(value[0] for value in bounds)
+    maximum = max(value[1] for value in bounds)
+    period_col, model_col, scale_col, action_col = st.columns([1.8, 1.2, 0.9, 0.65], gap="medium")
+    with period_col:
+        start_date, end_date = analysis_period_control("home_trends_period", minimum, maximum,
+                                                       default_start=minimum, default_end=maximum)
+    analyses = {}
+    if smt_ready:
         try:
-            smt_analysis = smt_quality_dashboard.analyze_smt_quality_paths(
-                smt_context["input_signatures"],
-                tuple(smt_quality_dashboard.path_signature(path) for path in smt_context["defects"]),
-                start_date.isoformat(),
-                end_date.isoformat(),
-                smt_quality_dashboard.SMT_FAILURE_RULE_VERSION,
-            )
-            totals = smt_analysis["totals"]
-            oqc = load_smt_oqc_inspections(start_date, end_date)
-            oqc_inspected = int(oqc["Inspected"].sum()) if not oqc.empty else 0
-            oqc_rate = int(oqc["OK"].sum()) / oqc_inspected if oqc_inspected else None
-            smt_context.update(
-                totals=totals,
-                oqc_rate=oqc_rate,
-                attention=any(
-                    state == "below-target"
-                    for state in (
-                        kpi_target_state(
-                            totals.get("FunctionPassRate") if totals.get("FunctionPassStatus") == "Valid" else None,
-                            smt_function_target,
-                            "min",
-                        ),
-                        kpi_target_state(
-                            totals.get("SMTProcessNGRatePPM") if totals.get("SMTProcessStatus") == "Valid" else None,
-                            smt_process_target,
-                            "max",
-                        ),
-                        kpi_target_state(oqc_rate, smt_oqc_target, "min"),
-                    )
-                ),
+            analyses["SMT"] = smt_quality_dashboard.analyze_smt_quality_paths(
+                smt_signatures,
+                tuple(smt_quality_dashboard.path_signature(path) for path in smt_defects),
+                start_date.isoformat(), end_date.isoformat(), smt_quality_dashboard.SMT_FAILURE_RULE_VERSION,
             )
         except Exception as exc:
-            smt_context.update(ready=False, error=str(exc))
-
-    if assembly_context["ready"]:
+            st.warning(f"SMT source data could not be analyzed: {exc}")
+    if assembly_ready:
         try:
-            assembly_metrics = calculate_assembly_kpi_metrics(start_date, end_date)
-            oqc_fqc = load_assembly_oqc_fqc_inspections(start_date, end_date)
-            oqc_inspected = int(oqc_fqc["OQCInspected"].sum()) if not oqc_fqc.empty else 0
-            fqc_inspected = int(oqc_fqc["FQCInspected"].sum()) if not oqc_fqc.empty else 0
-            oqc_rate = int(oqc_fqc["OQCOK"].sum()) / oqc_inspected if oqc_inspected else None
-            fqc_rate = int(oqc_fqc["FQCOK"].sum()) / fqc_inspected if fqc_inspected else None
-            oqc_fqc_rate = oqc_rate * fqc_rate if oqc_rate is not None and fqc_rate is not None else None
-            assembly_context.update(
-                metrics=assembly_metrics,
-                oqc_fqc_rate=oqc_fqc_rate,
-                attention=any(
-                    state == "below-target"
-                    for state in (
-                        kpi_target_state(assembly_metrics.get("function_pass_rate"), assembly_function_target, "min"),
-                        kpi_target_state(assembly_metrics.get("function_mando_ppm"), assembly_mando_target, "max"),
-                        kpi_target_state(oqc_fqc_rate, assembly_oqc_fqc_target, "min"),
-                    )
-                ),
-            )
+            analyses["Assembly"] = calculate_assembly_kpi_metrics(start_date, end_date)
         except Exception as exc:
-            assembly_context.update(ready=False, error=str(exc))
-
-    smt_column, assembly_column = st.columns(2, gap="medium")
-    with smt_column:
-        with st.container(border=True, key="home_overview_smt"):
-            home_area_heading("SMT", "Surface Mount Technology", "#0D7A45", "Attention" if smt_context.get("attention") else "Stable", bool(smt_context.get("attention")))
-            if smt_context["ready"]:
-                totals = smt_context["totals"]
-                function_valid = totals.get("FunctionPassStatus") == "Valid"
-                process_valid = totals.get("SMTProcessStatus") == "Valid"
-                cards = st.columns(4, gap="small")
-                with cards[0]:
-                    home_overview_kpi("Input", fmt_int(totals.get("Produced", 0)), "Boards in selected period", "#0D7A45")
-                with cards[1]:
-                    home_overview_kpi(
-                        "Functional Pass Rate",
-                        fmt_kpi_pct(totals.get("FunctionPassRate")) if function_valid else "N/A",
-                        "Functional failure result",
-                        "#0D7A45",
-                        actual_value=totals.get("FunctionPassRate") if function_valid else None,
-                        target_value=smt_function_target,
-                        target_direction="min",
-                    )
-                with cards[2]:
-                    home_overview_kpi(
-                        "Process NG PPM",
-                        f"{fmt_ppm(totals.get('SMTProcessNGRatePPM'))} PPM" if process_valid else "N/A",
-                        "Functional + appearance",
-                        "#0D7A45",
-                        actual_value=totals.get("SMTProcessNGRatePPM") if process_valid else None,
-                        target_value=smt_process_target,
-                        target_direction="max",
-                    )
-                with cards[3]:
-                    home_overview_kpi(
-                        "OQC Pass Rate",
-                        fmt_kpi_pct(smt_context.get("oqc_rate")),
-                        "Awaiting manual input" if smt_context.get("oqc_rate") is None else "Manual inspection result",
-                        "#64748B",
-                        actual_value=smt_context.get("oqc_rate"),
-                        target_value=smt_oqc_target,
-                        target_direction="min",
-                    )
+            st.warning(f"Assembly source data could not be analyzed: {exc}")
+    if not analyses:
+        return
+    latest = {}
+    volume = {}
+    if "SMT" in analyses:
+        for row in analyses["SMT"]["selected_input"].itertuples(index=False):
+            latest[row.Model] = max(latest.get(row.Model, pd.Timestamp.min), pd.Timestamp(row.BeginDate))
+            volume[row.Model] = volume.get(row.Model, 0) + int(row.Input)
+    if "Assembly" in analyses:
+        for row in analyses["Assembly"]["inputs"].itertuples(index=False):
+            latest[row.Model] = max(latest.get(row.Model, pd.Timestamp.min), pd.Timestamp(row.Date))
+            volume[row.Model] = volume.get(row.Model, 0) + int(row.Input)
+    options = sorted(latest, key=lambda model: (-latest[model].value, -volume[model], model))
+    with model_col:
+        models = st.multiselect("Models", options, default=options[:3], key="home_trends_models",
+                                placeholder="Select models")
+    with scale_col:
+        grain = st.segmented_control("Time scale", ["Days", "Weeks", "Months"], default="Weeks",
+                                     key="home_trends_scale") or "Weeks"
+    with action_col:
+        st.markdown("<div style='height:1.85rem'></div>", unsafe_allow_html=True)
+        st.button("Update view", key="home_trends_update", type="primary", width="stretch")
+    if not models:
+        st.info("Select at least one model to display its KPI trends.")
+        return
+    targets = {item["source"]: item for item in configured_kpi_directory()}
+    frames = {}
+    for area in ("SMT", "Assembly"):
+        if area not in analyses:
+            continue
+        with st.container(border=True, key=f"home_trends_{area.lower()}"):
+            left, right = st.columns([2.2, 1], gap="medium")
+            with right:
+                kpi = st.selectbox(f"{area} KPI", KPI_OPTIONS[area],
+                                   index=1 if area == "SMT" else 2,
+                                   key=f"home_trends_{area.lower()}_kpi")
+                target_source = KPI_TARGETS.get((area, kpi))
+                target = targets.get(target_source)
+            with left:
+                st.markdown(
+                    f"<div class='home-trend-heading' style='--home-area:{'#0D7A45' if area == 'SMT' else '#6532C8'}'>"
+                    f"<strong>{escape(area)} · {escape(kpi)}</strong>"
+                    f"<small>{escape(grain)} trend by model · selected period</small></div>",
+                    unsafe_allow_html=True,
+                )
+            if area == "SMT" and kpi != "Assembly SMT Process Duty NG Rate (PPM)":
+                analysis = analyses[area]
+                source_input, source_defects = analysis["selected_input"], analysis["covered_raw"]
             else:
-                cards = st.columns(4, gap="small")
-                for card, label in zip(cards, ("Input", "Functional Pass Rate", "Process NG PPM", "OQC Pass Rate")):
-                    with card:
-                        home_overview_kpi(label, "N/A", "Awaiting validated source data", "#64748B")
-            actions = st.columns(2, gap="small")
-            with actions[0]:
-                st.button("KPI Track", key="home_open_smt_kpi", width="stretch", type="primary", on_click=set_navigation, args=("SMT", "KPI Track"))
-            with actions[1]:
-                st.button("Quality Dashboard", key="home_open_smt_dashboard", width="stretch", on_click=set_navigation, args=("SMT", "Quality Dashboard"))
+                analysis = analyses.get("Assembly")
+                if analysis is None:
+                    st.info("Assembly FPY input, defect, and repair data are required for this KPI.")
+                    continue
+                source_input, source_defects = analysis["inputs"], analysis["defects"]
+            frame = build_home_kpi_rows(area, kpi, grain, models, start_date, end_date,
+                                        source_input, source_defects)
+            frames[area] = frame
+            _home_kpi_chart(frame, area, kpi, grain, models, target)
+    st.markdown("### Selected KPI details · full analysis period")
+    _home_detail_table(frames, models, grain, targets)
 
-    with assembly_column:
-        with st.container(border=True, key="home_overview_assembly"):
-            home_area_heading("Assembly", "Final Assembly & Test", "#6532C8", "Attention" if assembly_context.get("attention") else "Stable", bool(assembly_context.get("attention")))
-            if assembly_context["ready"]:
-                metrics = assembly_context["metrics"]
-                cards = st.columns(4, gap="small")
-                with cards[0]:
-                    home_overview_kpi("Input", fmt_int(metrics.get("produced", 0)), "Boards in selected period", "#6532C8")
-                with cards[1]:
-                    home_overview_kpi(
-                        "Functional Pass Rate",
-                        fmt_kpi_pct(metrics.get("function_pass_rate")),
-                        "Functional failure result",
-                        "#6532C8",
-                        actual_value=metrics.get("function_pass_rate"),
-                        target_value=assembly_function_target,
-                        target_direction="min",
-                    )
-                with cards[2]:
-                    home_overview_kpi(
-                        "Function Mando PPM",
-                        f"{fmt_ppm(metrics.get('function_mando_ppm'))} PPM" if metrics.get("function_mando_ppm") is not None else "N/A",
-                        "Functional Mando result",
-                        "#6532C8",
-                        actual_value=metrics.get("function_mando_ppm"),
-                        target_value=assembly_mando_target,
-                        target_direction="max",
-                    )
-                with cards[3]:
-                    home_overview_kpi(
-                        "OQC / FQC Pass Rate",
-                        fmt_kpi_pct(assembly_context.get("oqc_fqc_rate")),
-                        "Awaiting manual input" if assembly_context.get("oqc_fqc_rate") is None else "Manual inspection result",
-                        "#64748B",
-                        actual_value=assembly_context.get("oqc_fqc_rate"),
-                        target_value=assembly_oqc_fqc_target,
-                        target_direction="min",
-                    )
-            else:
-                cards = st.columns(4, gap="small")
-                for card, label in zip(cards, ("Input", "Functional Pass Rate", "Function Mando PPM", "OQC / FQC Pass Rate")):
-                    with card:
-                        home_overview_kpi(label, "N/A", "Awaiting validated source data", "#64748B")
-            actions = st.columns(2, gap="small")
-            with actions[0]:
-                st.button("KPI Track", key="home_open_assembly_kpi", width="stretch", type="primary", on_click=set_navigation, args=("Assembly", "KPI Track"))
-            with actions[1]:
-                st.button("Quality Dashboard", key="home_open_assembly_dashboard", width="stretch", on_click=set_navigation, args=("Assembly", "Quality Dashboard"))
 
 def overview_page(module: str, color: str) -> None:
     status = "Normal" if module != "Assembly" else "Attention"
