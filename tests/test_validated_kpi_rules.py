@@ -46,6 +46,8 @@ class AssemblyValidatedRulesTest(unittest.TestCase):
                 "TestTime": "2026-09-01 08:00", "TestOperation": "Audio-Testing",
                 "Fault Phenomenon": "No sound", "DutyType": "Assembly Process", "model": "M1",
                 "Fault reason": "FPY reason", "RepaireRemark": "FPY remark",
+                "BadMachLocation": "Speaker connector",
+                "ItemCode": "SPK-42",
             }
             self.write_book(defect_path, "Detail", pd.DataFrame([event]))
             self.write_book(repair_path, "QueryData", pd.DataFrame([{
@@ -59,6 +61,8 @@ class AssemblyValidatedRulesTest(unittest.TestCase):
             record = result["defects"].iloc[0]
             self.assertEqual(record["FaultReason"], "Speaker cable")
             self.assertEqual(record["RepairRemark"], "Cable reseated")
+            self.assertEqual(record["BadMachLocation"], "Speaker connector")
+            self.assertEqual(record["ItemCode"], "SPK-42")
             self.assertEqual(result["functional_pcbs"], 1)
 
     def test_period_deduplication_classification_and_final_responsibility(self) -> None:
