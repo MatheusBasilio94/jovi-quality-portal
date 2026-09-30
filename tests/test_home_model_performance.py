@@ -1,4 +1,5 @@
 import unittest
+from xml.etree import ElementTree
 
 import pandas as pd
 
@@ -91,6 +92,21 @@ class HomeModelPerformanceTests(unittest.TestCase):
             {"Date": "2026-09-30", "PPM": 150},
         ])
         self.assertNotIn("<polyline", mini_trend_svg(daily, 5000, "#087A8C"))
+
+    def test_hover_balloon_shows_defect_pcbs_and_fpy_input_per_point(self):
+        daily = pd.DataFrame([
+            {"Date": "2026-09-28", "PPM": 0, "Defects": 0, "Input": 20},
+            {"Date": "2026-09-29", "PPM": 25_000, "Defects": 1, "Input": 40},
+        ])
+        svg = mini_trend_svg(daily, 5000, "#087A8C")
+        root = ElementTree.fromstring(svg)
+        points = [node for node in root.iter() if node.attrib.get("class") == "home-model-point"]
+        self.assertEqual(len(points), 2)
+        self.assertIn("0 defect PCBs; 20 input PCBs", points[0].attrib["aria-label"])
+        self.assertIn("1 defect PCBs; 40 input PCBs", points[1].attrib["aria-label"])
+        self.assertIn("Defect PCBs: 1", svg)
+        self.assertIn("Input: 40 PCBs", svg)
+        self.assertIn("25,000 PPM", svg)
 
 
 if __name__ == "__main__":
