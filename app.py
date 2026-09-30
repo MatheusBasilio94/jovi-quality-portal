@@ -42,7 +42,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.76"
+APP_VERSION = "v0.5.77"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -97,6 +97,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.77", "Added Model, BadMachLocation and ItemCode cross-filter cards to SMT and Assembly Quality Dashboards."),
     ("v0.5.76", "Kept login through browser refresh, restored the last subtab and analysis selections, retained temporary comparison uploads, and opened Monthly KPI Review on the current month."),
     ("v0.5.75", "Accepted SMT FPY summaries with extra OrgDisplay line input from retests while preserving ModelData as the KPI denominator and auditing the difference."),
     ("v0.5.74", "Added a shared SMT and Assembly Model Comparison page with KPI, defect breakdown and formatted Excel reporting; expanded Assembly dashboard defect analysis."),
@@ -8039,26 +8040,32 @@ def smt_dashboard_driver_detail(confirmed):
 
 
 SMT_DEFECT_DIMENSIONS = (
+    ("Model", "Model", "Product model", "#2259B8"),
     ("Functional vs appearance", "FailureType", "Failure classification", "#2677D8"),
     ("TestOperation", "Operation", "Station where the failure was recorded", "#6532C8"),
     ("Fault Phenomenon", "Phenomenon", "Observed symptom", "#0C936C"),
     ("Fault reason", "FaultReason", "Recorded cause", "#D97706"),
+    ("BadMachLocation", "Location", "Recorded defect location", "#B45309"),
     ("RepaireRemark", "RepairRemark", "Repair conclusion", "#C54B80"),
     ("DutyType", "DutyType", "Assigned responsibility", "#1E7191"),
+    ("ItemCode", "ItemCode", "Recorded defective item", "#4F46A5"),
 )
 
 ASSEMBLY_DEFECT_DIMENSIONS = (
+    ("Model", "Model", "Product model", "#2259B8"),
     ("Functional vs appearance", "FailureType", "Failure classification", "#2677D8"),
     ("TestOperation", "TestOperation", "Station where the failure was recorded", "#6532C8"),
     ("Fault Phenomenon", "Phenomenon", "Observed symptom", "#0C936C"),
     ("Fault reason", "FaultReason", "Recorded cause", "#D97706"),
+    ("BadMachLocation", "BadMachLocation", "Recorded defect location", "#B45309"),
     ("RepaireRemark", "RepairRemark", "Repair conclusion", "#C54B80"),
     ("DutyType", "DutyType", "Assigned responsibility", "#1E7191"),
+    ("ItemCode", "ItemCode", "Recorded defective item", "#4F46A5"),
 )
 
 
 def _smt_breakdown_source(confirmed):
-    """Normalize the six MES fields once, keeping one row per confirmed record."""
+    """Normalize MES breakdown fields once, keeping one row per confirmed record."""
     source = confirmed.copy()
     for _, column, _, _ in SMT_DEFECT_DIMENSIONS:
         if column not in source:
@@ -8088,7 +8095,7 @@ def _select_smt_breakdown_category(column: str, category: str) -> None:
 
 
 def render_smt_defect_dimension_cards(confirmed):
-    """Render six cross-filtering cards and return records matching all selections."""
+    """Render cross-filtering cards and return records matching all selections."""
     source = _smt_breakdown_source(confirmed)
     selections = {}
     for _, column, _, _ in SMT_DEFECT_DIMENSIONS:
@@ -8114,10 +8121,12 @@ def render_smt_defect_dimension_cards(confirmed):
     css.append('</style>')
     st.markdown(''.join(css), unsafe_allow_html=True)
 
-    for start in (0, 3):
+    for start in range(0, len(SMT_DEFECT_DIMENSIONS), 3):
         columns = st.columns(3, gap="medium")
         for offset, slot in enumerate(columns):
             index = start + offset
+            if index >= len(SMT_DEFECT_DIMENSIONS):
+                break
             title, column, subtitle, accent = SMT_DEFECT_DIMENSIONS[index]
             with slot:
                 with st.container(key=f"smt_dimension_{index}"):
@@ -8180,7 +8189,7 @@ def _select_assembly_breakdown_category(column: str, category: str) -> None:
 
 
 def render_assembly_defect_dimension_cards(confirmed):
-    """Show the same clickable, scrolling six-card breakdown for Assembly."""
+    """Show the same clickable, scrolling breakdown for Assembly."""
     source = confirmed.copy()
     selections = {}
     for _, column, _, _ in ASSEMBLY_DEFECT_DIMENSIONS:
@@ -8211,10 +8220,12 @@ def render_assembly_defect_dimension_cards(confirmed):
             'padding:16px 17px 12px;min-height:332px;box-shadow:0 2px 7px rgba(19,48,91,.04)}</style>',
             unsafe_allow_html=True,
         )
-    for start in (0, 3):
+    for start in range(0, len(ASSEMBLY_DEFECT_DIMENSIONS), 3):
         slots = st.columns(3, gap="medium")
         for offset, slot in enumerate(slots):
             index = start + offset
+            if index >= len(ASSEMBLY_DEFECT_DIMENSIONS):
+                break
             title, column, subtitle, accent = ASSEMBLY_DEFECT_DIMENSIONS[index]
             with slot:
                 with st.container(key=f"assembly_dimension_{index}"):
@@ -8821,7 +8832,7 @@ def smt_quality_dashboard_v2(color: str) -> None:
         )
         detail_columns = [
             "PCB", "Model", "KPIDate", "Operation", "FailureType", "Phenomenon",
-            "FaultReason", "RepairRemark", "DutyType",
+            "FaultReason", "Location", "RepairRemark", "DutyType", "ItemCode",
         ]
         details = breakdown_detail[
             [column for column in detail_columns if column in breakdown_detail.columns]
@@ -9953,7 +9964,7 @@ def assembly_quality_dashboard_v2(color: str) -> None:
         )
         detail_columns = [
             "PCB", "Model", "DefectDate", "TestOperation", "FailureType", "Phenomenon",
-            "FaultReason", "RepairRemark", "DutyType",
+            "FaultReason", "BadMachLocation", "RepairRemark", "DutyType", "ItemCode",
         ]
         details = breakdown_detail[
             [column for column in detail_columns if column in breakdown_detail.columns]

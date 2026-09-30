@@ -11,7 +11,7 @@ import pandas as pd
 
 # Bump whenever a validated Assembly classification or responsibility rule
 # changes.  It is part of the dashboard cache key in app.py.
-ASSEMBLY_KPI_RULE_VERSION = "mes-operation-map-2026-09-28.3"
+ASSEMBLY_KPI_RULE_VERSION = "mes-operation-map-2026-09-28.4"
 
 
 FUNCTIONAL_OPERATIONS = (
@@ -179,6 +179,8 @@ def read_fpy_defects(source) -> pd.DataFrame:
     result["Phenomenon"] = _text(result["Fault Phenomenon"])
     result["FPYFaultReason"] = _optional_text(result, "Fault reason", "FaultReason")
     result["FPYRepairRemark"] = _optional_text(result, "RepaireRemark", "RepairRemark")
+    result["BadMachLocation"] = _optional_text(result, "BadMachLocation", "Bad Mach Location")
+    result["ItemCode"] = _optional_text(result, "ItemCode", "Item Code")
     result["Model"] = _text(result["model"]) if "model" in result else ""
     result["FPYDutyType"] = _text(result["DutyType"])
     result = result[result["DefectDate"].notna() & result["PCBNormalized"].ne("")].copy()
