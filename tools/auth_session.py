@@ -8,7 +8,7 @@ import time
 from functools import lru_cache
 
 
-COOKIE_NAME = "jovi_quality_auth_v1"
+COOKIE_NAME = "jovi_quality_auth_v2"
 SESSION_SECONDS = 30 * 24 * 60 * 60
 _revoked: dict[str, int] = {}
 

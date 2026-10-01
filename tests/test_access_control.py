@@ -43,7 +43,7 @@ class AccessControlTests(unittest.TestCase):
             require_admin_access({"authenticated": False, "auth_role": "admin"})
 
     def test_distinct_account_names_are_required(self):
-        with patch.dict("os.environ", {"JOVI_LOGIN_USERNAME": "jovi", "JOVI_VIEWER_USERNAME": "JOVI"}):
+        with patch.dict("os.environ", {"JOVI_ADMIN_USERNAME": "jovi", "JOVI_STANDARD_USERNAME": "JOVI"}):
             with self.assertRaises(ValueError):
                 configured_accounts()
 

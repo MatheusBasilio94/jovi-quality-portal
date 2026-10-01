@@ -48,7 +48,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.87"
+APP_VERSION = "v0.5.88"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 PORTAL_ACCOUNTS = configured_accounts()
@@ -100,6 +100,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.88", "Set Matheus as administrator and jovi as the standard read-only user; invalidated previous browser sessions after the role change."),
     ("v0.5.87", "Added administrator and read-only viewer accounts; data uploads, deletions and saved settings require administrator access."),
     ("v0.5.86", "Added Assembly PowerPoint KPI graphs below the SMT graphs in Weekly KPI Review, using the same weekly values, visible days and vector export."),
     ("v0.5.85", "Removed the excess gap above Assembly defect breakdown cards by rendering their styles in one block."),
@@ -2032,7 +2033,8 @@ def render_auth_cookie(token: str = "") -> None:
     value += f"; Max-Age={SESSION_SECONDS if token else 0}"
     st.html(
         "<script>document.cookie = " + json.dumps(value)
-        + " + (location.protocol === 'https:' ? '; Secure' : '');</script>",
+        + " + (location.protocol === 'https:' ? '; Secure' : '');"
+        + "document.cookie = 'jovi_quality_auth_v1=; Path=/; SameSite=Lax; Max-Age=0';</script>",
         unsafe_allow_javascript=True,
     )
 

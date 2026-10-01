@@ -30,18 +30,18 @@ def _credential_setting(name: str, default: str) -> str:
 
 def configured_accounts() -> tuple[Account, Account]:
     admin = Account(
-        _credential_setting("JOVI_LOGIN_USERNAME", "jovi"),
+        _credential_setting("JOVI_ADMIN_USERNAME", "Matheus"),
         _credential_setting(
-            "JOVI_LOGIN_PASSWORD_SHA256",
-            "e8b9691c6aeb52ca6182e60467d9b8df33a22b58ebf2c3a73144a6f6e58da68e",
+            "JOVI_ADMIN_PASSWORD_SHA256",
+            "fff270f88cbf18be77a4e78871e0a4c6930927355159f3c84b967fd634da40b9",
         ).lower(),
         "admin",
     )
     viewer = Account(
-        _credential_setting("JOVI_VIEWER_USERNAME", "jovi_viewer"),
+        _credential_setting("JOVI_STANDARD_USERNAME", "jovi"),
         _credential_setting(
-            "JOVI_VIEWER_PASSWORD_SHA256",
-            "6e4a906bea9013557d765b5208510052f127a761d511217bda71326a02818359",
+            "JOVI_STANDARD_PASSWORD_SHA256",
+            "e8b9691c6aeb52ca6182e60467d9b8df33a22b58ebf2c3a73144a6f6e58da68e",
         ).lower(),
         "viewer",
     )
