@@ -1,0 +1,21 @@
+[theme]
+base = "light"
+primaryColor = "#1D5FBF"
+backgroundColor = "#F1F5FB"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#071B38"
+linkColor = "#1D5FBF"
+borderColor = "#C9D8EC"
+codeBackgroundColor = "#EEF4FB"
+dataframeHeaderBackgroundColor = "#E8EFF8"
+
+# A saved dark preference must not replace the portal's light visual system.
+[theme.dark]
+primaryColor = "#1D5FBF"
+backgroundColor = "#F1F5FB"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#071B38"
+linkColor = "#1D5FBF"
+borderColor = "#C9D8EC"
+codeBackgroundColor = "#EEF4FB"
+dataframeHeaderBackgroundColor = "#E8EFF8"

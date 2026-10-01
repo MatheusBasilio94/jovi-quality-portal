@@ -42,7 +42,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.80"
+APP_VERSION = "v0.5.81"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -97,6 +97,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.81", "Kept the portal's light colors consistent across browser and Streamlit theme preferences."),
     ("v0.5.80", "Rebuilt Home around selectable SMT and Assembly KPI trends, full-period details and quick date presets."),
     ("v0.5.79", "Added hover balloons to Home model trend points with defect PCB count, FPY input and daily PPM."),
     ("v0.5.78", "Added scrollable SMT Process NG and Assembly Function Mando daily model trends to Home, ordered by the latest FPY input."),
@@ -284,6 +285,10 @@ def apply_global_css() -> None:
             --border: #C9D8EC;
             --card: #FFFFFF;
             --bg: #F1F5FB;
+        }
+
+        html, body, .stApp {
+            color-scheme: light !important;
         }
 
         html, body, [class*="css"] {
