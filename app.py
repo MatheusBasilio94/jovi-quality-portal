@@ -42,7 +42,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.82"
+APP_VERSION = "v0.5.83"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -97,6 +97,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.83", "Aligned Assembly Quality Dashboard with SMT by keeping the defect breakdown and matching PCB details and removing the additional charts and analysis sections."),
     ("v0.5.82", "Standardized SMT and Assembly KPI Track to one chart per row and moved both data-detail sections below the charts."),
     ("v0.5.81", "Kept the portal's light colors consistent across browser and Streamlit theme preferences."),
     ("v0.5.80", "Rebuilt Home around selectable SMT and Assembly KPI trends, full-period details and quick date presets."),
@@ -9931,9 +9932,6 @@ def data_upload_page(module: str, color: str) -> None:
 
 
 def assembly_quality_dashboard_v2(color: str) -> None:
-    import pandas as pd
-    from tools import dashboard_charts
-
     page_started = perf_counter()
     source_started = perf_counter()
     if not st.session_state.get("assembly_auto_import_checked", False):
@@ -10011,7 +10009,6 @@ def assembly_quality_dashboard_v2(color: str) -> None:
     view = _build_assembly_dashboard_view(
         analysis, rules, model, station, failure_type, duty_category
     )
-    grain_label = analysis["trend_settings"]["label"]
 
     total_classified = view["functional_pcbs"] + view["appearance_pcbs"]
     functional_share = (
@@ -10079,200 +10076,6 @@ def assembly_quality_dashboard_v2(color: str) -> None:
                 data=details.to_csv(index=False).encode("utf-8-sig"),
                 file_name="assembly_breakdown_selection.csv", mime="text/csv",
                 width="stretch", key="assembly_breakdown_download",
-            )
-
-    st.markdown("<div class='dashboard-kpi-chart-gap'></div>", unsafe_allow_html=True)
-    left, right = st.columns(2)
-    with left:
-        show_chart(
-            dashboard_charts.ppm_trend_chart(
-                view["trend"],
-                f"Confirmed PPM vs Function Mando PPM · {grain_label}",
-                [
-                    ("ConfirmedPPM", "Confirmed PPM", color),
-                    ("MandoPPM", "Function Mando PPM", "#C2410C"),
-                ],
-                target_value=3_600,
-                exception_mask=view["trend"]["PPMChartStatus"].ne("Valid"),
-                exception_count_column="PPMChartDefects",
-                exception_count_label="Relevant NG PCBs",
-                exception_status_column="PPMChartStatus",
-            )
-        )
-    with right:
-        show_chart(
-            dashboard_charts.failure_donut_chart(
-                view["functional_pcbs"], view["appearance_pcbs"]
-            )
-        )
-
-    left, right = st.columns(2)
-    with left:
-        show_chart(
-            dashboard_charts.pareto_chart(
-                view["pareto"], "Phenomenon", "NGPCBs", "Top defects · Pareto", color
-            )
-        )
-    with right:
-        show_chart(
-            dashboard_charts.model_ppm_input_chart(
-                view["models"], "Worst models by PPM and input", color
-            )
-        )
-
-    left, right = st.columns(2)
-    with left:
-        show_chart(
-            dashboard_charts.ranked_bar_chart(
-                view["duty_summary"],
-                "DutyCategory",
-                "PPM",
-                "DutyType / failure origin",
-                color,
-                value_suffix="",
-            )
-        )
-    with right:
-        st.markdown("#### Action priority")
-        if view["priority"].empty:
-            st.info("No confirmed defects match the selected filters.")
-        else:
-            action_priority_cards(
-                view["priority"],
-                defect_column="Phenomenon",
-                station_column="TestOperation",
-                model_column="Model",
-            )
-
-    st.markdown("#### SMT-origin failures")
-    left, right = st.columns(2)
-    with left:
-        show_chart(
-            dashboard_charts.ppm_trend_chart(
-                view["trend"],
-                f"Assembly defects of SMT origin · {grain_label}",
-                [("SMTOriginPPM", "SMT-origin PPM", "#0D7A45")],
-                target_value=700,
-                exception_mask=view["trend"]["SMTOriginStatus"].ne("Valid"),
-                exception_count_column="SMTOriginPCBs",
-                exception_count_label="SMT-origin NG PCBs",
-                exception_status_column="SMTOriginStatus",
-            )
-        )
-    with right:
-        show_chart(
-            dashboard_charts.ranked_bar_chart(
-                view["smt_pareto"],
-                "Phenomenon",
-                "NGPCBs",
-                "Top SMT-origin defect causes",
-                "#0D7A45",
-            )
-        )
-
-    st.markdown("#### Data quality")
-    data_quality = st.columns(4)
-    with data_quality[0]:
-        smt_kpi_card(
-            "Classification coverage",
-            fmt_kpi_pct(view["classification_rate"]),
-            f"{fmt_int(len(view['unclassified_operations']))} unclassified stations",
-            "#0D7A45",
-        )
-    with data_quality[1]:
-        smt_kpi_card("FPY-authoritative records", fmt_int(len(view["confirmed"])), "No secondary defect exclusions", "#1D5FBF")
-    with data_quality[2]:
-        smt_kpi_card("Exceptions", fmt_int(view["exceptions"]), "Blocked input or PPM periods", "#DC2626")
-    with data_quality[3]:
-        pending = view["confirmed"].get("ResponsibilityPending", pd.Series(False, index=view["confirmed"].index))
-        smt_kpi_card("Pending responsibility", fmt_int(int(pending.fillna(False).sum())), "Excluded only from responsibility KPIs", "#64748B")
-
-    with st.expander("Functional, appearance, model and station analysis"):
-        left, right = st.columns(2)
-        functional_pareto = (
-            view["confirmed"][view["confirmed"]["FailureType"].eq("Functional Failure")]
-            .groupby("Phenomenon", as_index=False)
-            .agg(NGPCBs=("_DefectKey", "nunique"))
-            .sort_values("NGPCBs", ascending=False)
-        )
-        appearance_pareto = (
-            view["confirmed"][view["confirmed"]["FailureType"].eq("Appearance Failure")]
-            .groupby("Phenomenon", as_index=False)
-            .agg(NGPCBs=("_DefectKey", "nunique"))
-            .sort_values("NGPCBs", ascending=False)
-        )
-        with left:
-            show_chart(
-                dashboard_charts.pareto_chart(
-                    functional_pareto, "Phenomenon", "NGPCBs", "Functional failure Pareto", color
-                )
-            )
-        with right:
-            show_chart(
-                dashboard_charts.pareto_chart(
-                    appearance_pareto, "Phenomenon", "NGPCBs", "Appearance failure Pareto", "#1D5FBF"
-                )
-            )
-        left, right = st.columns(2)
-        with left:
-            if not view["heatmap"].empty:
-                show_chart(
-                    dashboard_charts.heatmap_chart(
-                        view["heatmap"], "Model × station PPM heatmap", color_scale="Purples"
-                    )
-                )
-            else:
-                st.info("The model × station heatmap needs confirmed defects in the selected scope.")
-        with right:
-            show_chart(
-                dashboard_charts.ranked_bar_chart(
-                    view["line_summary"], "Line", "NGPCBs", "Confirmed NG PCBs by line", color
-                )
-            )
-
-    with st.expander("Assembly failure classification rules"):
-        st.caption("Validated fixed MES operation groups. Changes require a new KPI validation.")
-        left, right = st.columns(2)
-        with left:
-            st.markdown("**Functional Failure**")
-            st.write(list(assembly_kpi_v2.FUNCTIONAL_OPERATIONS))
-        with right:
-            st.markdown("**Appearance Failure**")
-            st.write(list(assembly_kpi_v2.APPEARANCE_OPERATIONS))
-        st.info("Aging-Software-Testing remains outside both KPI classifications.")
-
-    with st.expander("Filtered detail, audit and export"):
-        visible_columns = [
-            "PCB", "TestTime", "Model", "TestOperation", "FailureType", "Phenomenon",
-            rules["mando_column"], "Maintenance",
-        ]
-        detail = view["confirmed"][
-            [column for column in visible_columns if column in view["confirmed"].columns]
-        ].copy()
-        st.caption(f"{fmt_int(len(detail))} confirmed records match the global filters.")
-        if not detail.empty:
-            styled_table(
-                detail,
-                max_rows=50,
-                table_class="compact-dashboard-table",
-            )
-        st.download_button(
-            "Download filtered Assembly detail CSV",
-            data=detail.to_csv(index=False).encode("utf-8-sig"),
-            file_name="assembly_quality_filtered_detail.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
-        if not analysis["production_input_audit"].empty:
-            audit_columns = [
-                "Model", "ProductionStart", "ProductionEnd", "Produced", "InputStatus", "InputDecision"
-            ]
-            styled_table(
-                analysis["production_input_audit"][
-                    [column for column in audit_columns if column in analysis["production_input_audit"].columns]
-                ],
-                max_rows=50,
-                table_class="compact-dashboard-table",
             )
 
     record_dashboard_performance(
