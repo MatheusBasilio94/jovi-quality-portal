@@ -42,7 +42,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.84"
+APP_VERSION = "v0.5.85"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -97,6 +97,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.85", "Removed the excess gap above Assembly defect breakdown cards by rendering their styles in one block."),
     ("v0.5.84", "Reduced shared page, navigation and filter spacing across the portal while preserving the existing navigation button styling."),
     ("v0.5.83", "Aligned Assembly Quality Dashboard with SMT by keeping the defect breakdown and matching PCB details and removing the additional charts and analysis sections."),
     ("v0.5.82", "Standardized SMT and Assembly KPI Track to one chart per row and moved both data-detail sections below the charts."),
@@ -8305,7 +8306,7 @@ def render_assembly_defect_dimension_cards(confirmed):
         source[column] = source[column].replace({"": "Not specified", "nan": "Not specified"})
         selections[column] = st.session_state.get(f"assembly_breakdown_{column}", "All")
 
-    st.markdown("""<style>
+    css = ["""<style>
     .assembly-dimension-title{color:#102D5B;font-size:1.04rem;font-weight:800;line-height:1.25}
     .assembly-dimension-subtitle{color:#6680A6;font-size:.73rem;margin:5px 0 14px;min-height:29px}
     .assembly-dimension-track{height:5px;border-radius:6px;background:#EDF2F9;margin:0 8px 8px;overflow:hidden}
@@ -8318,14 +8319,15 @@ def render_assembly_defect_dimension_cards(confirmed):
     div[class*="st-key-assembly_breakdown_clear"]{max-width:245px}
     div[class*="st-key-assembly_breakdown_clear"] button{min-height:40px;background:linear-gradient(135deg,#2F80ED,#1D5FBF)!important;border:1px solid #4B8DEF!important;border-radius:.55rem!important;color:#F8FBFF!important;font-weight:750}
     div[class*="st-key-assembly_breakdown_clear"] button p{color:#F8FBFF!important}
-    </style>""", unsafe_allow_html=True)
+    """]
     for index, (_, _, _, accent) in enumerate(ASSEMBLY_DEFECT_DIMENSIONS):
-        st.markdown(
-            f'<style>div[class*="st-key-assembly_dimension_{index}"]{{background:#fff;'
+        css.append(
+            f'div[class*="st-key-assembly_dimension_{index}"]{{background:#fff;'
             f'border:1px solid #CFDBEE;border-top:3px solid {accent};border-radius:13px;'
-            'padding:16px 17px 12px;min-height:332px;box-shadow:0 2px 7px rgba(19,48,91,.04)}</style>',
-            unsafe_allow_html=True,
+            'padding:16px 17px 12px;min-height:332px;box-shadow:0 2px 7px rgba(19,48,91,.04)}',
         )
+    css.append('</style>')
+    st.markdown(''.join(css), unsafe_allow_html=True)
     for start in range(0, len(ASSEMBLY_DEFECT_DIMENSIONS), 3):
         slots = st.columns(3, gap="medium")
         for offset, slot in enumerate(slots):
