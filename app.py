@@ -42,7 +42,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.83"
+APP_VERSION = "v0.5.84"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -97,6 +97,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.84", "Reduced shared page, navigation and filter spacing across the portal while preserving the existing navigation button styling."),
     ("v0.5.83", "Aligned Assembly Quality Dashboard with SMT by keeping the defect breakdown and matching PCB details and removing the additional charts and analysis sections."),
     ("v0.5.82", "Standardized SMT and Assembly KPI Track to one chart per row and moved both data-detail sections below the charts."),
     ("v0.5.81", "Kept the portal's light colors consistent across browser and Streamlit theme preferences."),
@@ -311,7 +312,10 @@ def apply_global_css() -> None:
 
         [data-testid="stMainBlockContainer"] {
             max-width: none !important;
-            padding: 0.8rem 1.35rem 0.8rem 1.35rem !important;
+            padding: 0.2rem 1.35rem 0.8rem 1.35rem !important;
+        }
+        [data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"] {
+            gap: 0.65rem !important;
         }
 
         section[data-testid="stSidebar"],
@@ -538,13 +542,13 @@ def apply_global_css() -> None:
 
         .st-key-top_navigation {
             position: sticky;
-            top: 0.5rem;
+            top: 0.25rem;
             z-index: 100;
             background: linear-gradient(105deg, #061A3A 0%, #0B2D61 100%);
             border: 1px solid rgba(96, 165, 250, 0.34);
             border-radius: 0.9rem;
             padding: 0.42rem 0.55rem;
-            margin-bottom: -0.38rem;
+            margin-bottom: -0.5rem;
             box-shadow: 0 12px 28px rgba(4, 20, 48, 0.24);
             backdrop-filter: blur(10px);
         }
@@ -617,7 +621,7 @@ def apply_global_css() -> None:
             gap: 0.7rem;
             min-height: 48px;
             padding: 0.38rem 0.55rem;
-            margin: 0 0 0.62rem 0;
+            margin: 0 0 0.12rem 0;
             background: rgba(255, 255, 255, 0.93);
             border: 1px solid var(--border);
             border-radius: 0.72rem;
@@ -673,7 +677,7 @@ def apply_global_css() -> None:
             background: transparent;
             border: 0;
             padding: 0;
-            margin: 0.25rem 0 0.9rem 0;
+            margin: 0.1rem 0 0.55rem 0;
             box-shadow: none;
         }
         div[class*="st-key-smt_quality_v2_filter_panel"] [data-testid="stSelectbox"] label,
@@ -717,7 +721,7 @@ def apply_global_css() -> None:
         }
         div[class*="st-key-analysis_period_"] {
             max-width: 455px;
-            margin: 0 0 0.45rem 0;
+            margin: 0 0 0.2rem 0;
             width: 100%;
         }
         div[class*="st-key-analysis_period_"] [data-testid="stHorizontalBlock"] {
@@ -1038,7 +1042,7 @@ def apply_global_css() -> None:
         .section-title {
             color: #2563EB !important;
             font-weight: 900;
-            margin: 0.4rem 0 0.9rem 0;
+            margin: 0.15rem 0 0.4rem 0;
         }
         .learning-hero {
             background: #FFFFFF;
