@@ -9,6 +9,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+from tools.access_control import require_admin_access
 from tools.supabase_store import (
     bump_cloud_data_version,
     cloud_store_is_active,
@@ -491,6 +492,7 @@ def safe_filename(name: str) -> str:
 
 
 def persist_smt_source(uploaded, data_type: str) -> dict:
+    require_admin_access(st.session_state)
     require_persistent_store_for_smt_writes()
     directories = {"input": SMT_INPUT_DIR, "defects": SMT_DEFECT_DIR, "repair": SMT_REPAIR_DIR}
     cloud_prefixes = {"input": "smt/fpy/input", "defects": "smt/fpy/detail", "repair": "smt/repair"}
@@ -537,6 +539,7 @@ def smt_source_records() -> list[dict]:
 
 def delete_smt_source(data_type: str, stored_name: str) -> dict:
     """Delete one managed SMT source file without allowing paths outside its data store."""
+    require_admin_access(st.session_state)
     require_persistent_store_for_smt_writes()
     directories = {"input": SMT_INPUT_DIR, "defects": SMT_DEFECT_DIR, "repair": SMT_REPAIR_DIR}
     cloud_prefixes = {"input": "smt/fpy/input", "defects": "smt/fpy/detail", "repair": "smt/repair"}
@@ -1250,6 +1253,7 @@ def bar_chart(frame: pd.DataFrame, category: str, value: str, title: str, color:
 
 
 def _upload_section(color: str) -> None:
+    require_admin_access(st.session_state)
     status = smt_store_status()
     st.markdown("### Upload Data")
     st.caption("Carregue inputs FPY diariamente. Defeitos FPY e reparo aceitam arquivos de qualquer período; uma exportação MES atualizada substitui apenas os eventos das datas que ela cobre e preserva o restante do histórico.")

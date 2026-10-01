@@ -1,5 +1,4 @@
 import base64
-import hmac
 import json
 import math
 import os
@@ -33,7 +32,14 @@ from tools.supabase_store import (
 from tools.trend_rules import analysis_period_days, requested_trend_grain, trend_grain_labels
 from tools import assembly_kpi_v2
 from tools.kpi_slide import build_kpi_panel_chart
-from tools.auth_session import COOKIE_NAME, SESSION_SECONDS, issue_token, revoke_token, verify_token
+from tools.auth_session import COOKIE_NAME, SESSION_SECONDS, issue_token, revoke_token
+from tools.access_control import (
+    account_from_token,
+    authenticate,
+    configured_accounts,
+    is_admin_session,
+    require_admin_access,
+)
 from tools.historical_inspection_archive import apply_archive as apply_historical_inspection_archive
 from tools.inspection_store import (
     create_inspection_tables,
@@ -42,14 +48,11 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.86"
+APP_VERSION = "v0.5.87"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
-LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
-LOGIN_PASSWORD_SHA256 = os.environ.get(
-    "JOVI_LOGIN_PASSWORD_SHA256",
-    "e8b9691c6aeb52ca6182e60467d9b8df33a22b58ebf2c3a73144a6f6e58da68e",
-).strip().lower()
+PORTAL_ACCOUNTS = configured_accounts()
+LOGIN_USERNAME = PORTAL_ACCOUNTS[0].username
 MANAGER = "曹毅"
 BASE_DIR = Path(__file__).resolve().parent
 RULES_PATH = BASE_DIR / "config" / "rules.json"
@@ -97,6 +100,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.87", "Added administrator and read-only viewer accounts; data uploads, deletions and saved settings require administrator access."),
     ("v0.5.86", "Added Assembly PowerPoint KPI graphs below the SMT graphs in Weekly KPI Review, using the same weekly values, visible days and vector export."),
     ("v0.5.85", "Removed the excess gap above Assembly defect breakdown cards by rendering their styles in one block."),
     ("v0.5.84", "Reduced shared page, navigation and filter spacing across the portal while preserving the existing navigation button styling."),
@@ -2015,13 +2019,11 @@ def apply_login_css() -> None:
 
 
 def credentials_are_valid(username: str, password: str) -> bool:
-    password_digest = hashlib.sha256(password.encode("utf-8")).hexdigest()
-    username_matches = hmac.compare_digest(
-        username.strip().casefold(),
-        LOGIN_USERNAME.strip().casefold(),
-    )
-    password_matches = hmac.compare_digest(password_digest, LOGIN_PASSWORD_SHA256)
-    return username_matches and password_matches
+    return authenticate(username, password, PORTAL_ACCOUNTS) is not None
+
+
+def is_admin() -> bool:
+    return is_admin_session(st.session_state)
 
 
 def render_auth_cookie(token: str = "") -> None:
@@ -2037,11 +2039,21 @@ def render_auth_cookie(token: str = "") -> None:
 
 def restore_authentication() -> None:
     if st.session_state.get("authenticated"):
-        return
+        current_user = st.session_state.get("authenticated_user")
+        current_role = st.session_state.get("auth_role")
+        if any(account.username == current_user and account.role == current_role for account in PORTAL_ACCOUNTS):
+            return
+        # Preserve existing administrator sessions across this deployment.
+        if current_user == LOGIN_USERNAME and not current_role:
+            st.session_state["auth_role"] = "admin"
+            return
+        st.session_state["authenticated"] = False
     token = st.context.cookies.get(COOKIE_NAME)
-    if verify_token(token, LOGIN_USERNAME, LOGIN_PASSWORD_SHA256):
+    account = account_from_token(token, PORTAL_ACCOUNTS)
+    if account:
         st.session_state["authenticated"] = True
-        st.session_state["authenticated_user"] = LOGIN_USERNAME
+        st.session_state["authenticated_user"] = account.username
+        st.session_state["auth_role"] = account.role
         st.session_state["auth_cookie_token"] = token
 
 
@@ -2098,10 +2110,12 @@ def login_page() -> None:
                 submitted = st.form_submit_button("Sign in", use_container_width=True)
 
             if submitted:
-                if credentials_are_valid(username, password):
+                account = authenticate(username, password, PORTAL_ACCOUNTS)
+                if account:
                     st.session_state["authenticated"] = True
-                    st.session_state["authenticated_user"] = LOGIN_USERNAME
-                    st.session_state["auth_cookie_token"] = issue_token(LOGIN_USERNAME, LOGIN_PASSWORD_SHA256)
+                    st.session_state["authenticated_user"] = account.username
+                    st.session_state["auth_role"] = account.role
+                    st.session_state["auth_cookie_token"] = issue_token(account.username, account.password_hash)
                     st.session_state.pop("auth_logout_pending", None)
                     st.session_state.pop("login_error", None)
                     st.rerun()
@@ -2146,6 +2160,11 @@ def get_query_value(name: str, default: str = "") -> str:
     return value or default
 
 
+def accessible_tabs(module: str) -> list[str]:
+    tabs = MODULES[module]["tabs"]
+    return tabs if is_admin() else [tab for tab in tabs if tab != "Data Upload"]
+
+
 def sync_navigation_from_query() -> None:
     module = get_query_value("module", st.session_state.module)
     if module not in MODULES:
@@ -2154,7 +2173,7 @@ def sync_navigation_from_query() -> None:
     if module in {"SMT", "Assembly"} and get_query_value("tab") == "Model Comparison":
         module = "Model Comparison"
 
-    tabs = MODULES[module]["tabs"]
+    tabs = accessible_tabs(module)
     tab = get_query_value("tab", st.session_state.tab)
     if tabs and tab not in tabs:
         tab = tabs[0]
@@ -2176,7 +2195,7 @@ def set_navigation(module: str, tab: str = "") -> None:
         module = "Model Comparison"
     if module not in MODULES:
         module = "Home"
-    available_tabs = MODULES[module]["tabs"]
+    available_tabs = accessible_tabs(module)
     if available_tabs:
         remembered_tab = st.session_state.get(f"last_tab_{navigation_key(module)}")
         if tab not in available_tabs:
@@ -2225,7 +2244,8 @@ def top_navigation() -> None:
                 )
         with columns[-1]:
             with st.popover("More", use_container_width=True):
-                st.caption(f"{APP_VERSION} · Signed in as {st.session_state.get('authenticated_user', LOGIN_USERNAME)}")
+                role_label = "Administrator" if is_admin() else "Viewer"
+                st.caption(f"{APP_VERSION} · {role_label} · Signed in as {st.session_state.get('authenticated_user', LOGIN_USERNAME)}")
                 st.button("About", key="top_nav_about", use_container_width=True, on_click=set_navigation, args=("About", ""))
                 if st.button("Sign out", key="top_nav_logout", use_container_width=True):
                     logout()
@@ -2234,7 +2254,7 @@ def top_navigation() -> None:
 def context_navigation() -> None:
     """Show the pages available in the active workspace directly below the primary navigation."""
     module = st.session_state.module
-    tabs = MODULES[module]["tabs"]
+    tabs = accessible_tabs(module)
     if not tabs:
         return
     tab_labels = {
@@ -2397,6 +2417,7 @@ def load_rules() -> dict:
 
 
 def save_rules(rules: dict) -> None:
+    require_admin_access(st.session_state)
     RULES_PATH.parent.mkdir(parents=True, exist_ok=True)
     RULES_PATH.write_text(json.dumps(rules, indent=2, ensure_ascii=False), encoding="utf-8")
 
@@ -3200,7 +3221,8 @@ def init_quality_store() -> tuple[bool, str]:
     cloud_status = cloud_store_status()
     cloud_active = bool(cloud_status["active"])
     initialize_clean_cloud = (
-        bool(cloud_status["configured"])
+        is_admin()
+        and bool(cloud_status["configured"])
         and not cloud_active
         and str(cloud_status["mode"]) == "Supabase awaiting migration"
     )
@@ -3268,12 +3290,13 @@ def init_quality_store() -> tuple[bool, str]:
         weekly_owner_columns = {row[1] for row in conn.execute("PRAGMA table_info(weekly_kpi_owners)")}
         if "target_value" not in weekly_owner_columns:
             conn.execute("ALTER TABLE weekly_kpi_owners ADD COLUMN target_value REAL")
-        historical_archive_applied = apply_historical_inspection_archive(conn)
+        if is_admin():
+            historical_archive_applied = apply_historical_inspection_archive(conn)
     if initialize_clean_cloud:
         upload_local_file(DATABASE_OBJECT, QUALITY_DB_PATH, upsert=True)
         data_version = bump_cloud_data_version("initialize clean Quality Center 2.0 baseline")
         cloud_active = True
-    elif (historical_archive_applied or inspection_schema_migrated) and cloud_active:
+    elif (historical_archive_applied or inspection_schema_migrated) and cloud_active and is_admin():
         upload_local_file(DATABASE_OBJECT, QUALITY_DB_PATH, upsert=True)
         reason = (
             "allow zero-sampling OQC/FQC records"
@@ -3286,6 +3309,7 @@ def init_quality_store() -> tuple[bool, str]:
 
 def require_persistent_store_for_writes() -> None:
     """Prevent writes to the temporary Streamlit disk after Supabase setup starts."""
+    require_admin_access(st.session_state)
     status = cloud_store_status()
     if bool(status["configured"]) and not bool(status["active"]):
         raise RuntimeError(
@@ -3329,6 +3353,7 @@ def sync_assembly_source_cache(cloud_active: bool | None = None, data_version: s
 
 def full_cloud_refresh() -> dict[str, int]:
     """Rebuild the temporary portal cache from every current Supabase object."""
+    require_admin_access(st.session_state)
     if not cloud_store_is_active():
         raise RuntimeError("Supabase persistent storage is not active.")
 
@@ -3849,6 +3874,7 @@ def persist_assembly_source(source, data_type: str, source_method: str) -> dict:
 
 
 def import_assembly_monitored_folder() -> list[dict]:
+    require_admin_access(st.session_state)
     ASSEMBLY_MONITORED_DIR.mkdir(parents=True, exist_ok=True)
     results = []
     for path in sorted(ASSEMBLY_MONITORED_DIR.iterdir()):
@@ -5094,7 +5120,7 @@ def assembly_period_selector(rules: dict, color: str) -> dict:
 
 def assembly_quality_dashboard(color: str) -> None:
     stored_rules = load_rules()
-    if not st.session_state.get("assembly_auto_import_checked", False):
+    if is_admin() and not st.session_state.get("assembly_auto_import_checked", False):
         auto_import_results = import_assembly_monitored_folder()
         st.session_state["assembly_auto_import_checked"] = True
     else:
@@ -5439,7 +5465,7 @@ def assembly_quality_dashboard(color: str) -> None:
                 for item in st.text_area("ManDo keywords", value="\n".join(stored_rules["mando_keywords"])).splitlines()
                 if item.strip()
             ]
-            if st.form_submit_button("Save rules"):
+            if st.form_submit_button("Save rules", disabled=not is_admin()):
                 save_rules(edited)
                 st.success("Rules saved. The dashboard will use the updated rules on rerun.")
                 st.rerun()
@@ -5802,7 +5828,7 @@ def smart_report_area_panel(area: str, color: str, candidates: list[dict], perio
         st.caption("Suggestions are ranked by affected PCB count. Select the defects that are operationally relevant.")
     selected = [by_label[label] for label in labels if label in selected_labels]
     st.markdown(smart_report_area_html(area, color, selected, actions), unsafe_allow_html=True)
-    if candidates:
+    if candidates and is_admin():
         with st.expander("Edit cause, containment, and countermeasure"):
             selected_label = st.selectbox(
                 "Defect being edited",
@@ -6347,41 +6373,42 @@ def weekly_kpi_review_page() -> None:
         if st.button("Refresh weekly review", key="weekly_kpi_refresh", type="primary", use_container_width=True):
             st.toast("Weekly KPI review refreshed from the stored source data.")
     directory = configured_kpi_directory()
-    with st.expander("Edit GBR and Jovi responsible owners"):
-        owner_rows = pd.DataFrame(
-            [
-                {
-                    "Area": item["area"],
-                    "KPI": item["kpi"],
-                    "Target": item["target"] * 100 if item["direction"] == "min" else item["target"],
-                    "Unit": "%" if item["direction"] == "min" else "PPM",
-                    "GBR": item["gbr"],
-                    "Jovi": item["jovi"],
-                    "source": item["source"],
-                    "direction": item["direction"],
-                }
-                for item in directory
-            ]
-        )
-        edited_owners = st.data_editor(
-            owner_rows,
-            key="weekly_kpi_owner_directory",
-            hide_index=True,
-            disabled=["Area", "KPI", "Unit", "source", "direction"],
-            column_config={"source": None, "direction": None, "Target": st.column_config.NumberColumn("Target", min_value=0.0, format="%.2f")},
-            use_container_width=True,
-        )
-        if st.button("Save KPI settings", key="save_weekly_kpi_owners", type="primary"):
-            try:
-                records = edited_owners.rename(columns={"GBR": "gbr", "Jovi": "jovi", "Target": "target"}).to_dict("records")
-                for record in records:
-                    if record["Unit"] == "%":
-                        record["target"] = float(record["target"]) / 100
-                save_weekly_kpi_owners(records)
-                st.success("Targets and responsible owners saved for future KPI reviews.")
-                st.rerun()
-            except Exception as exc:
-                st.error(str(exc))
+    if is_admin():
+        with st.expander("Edit GBR and Jovi responsible owners"):
+            owner_rows = pd.DataFrame(
+                [
+                    {
+                        "Area": item["area"],
+                        "KPI": item["kpi"],
+                        "Target": item["target"] * 100 if item["direction"] == "min" else item["target"],
+                        "Unit": "%" if item["direction"] == "min" else "PPM",
+                        "GBR": item["gbr"],
+                        "Jovi": item["jovi"],
+                        "source": item["source"],
+                        "direction": item["direction"],
+                    }
+                    for item in directory
+                ]
+            )
+            edited_owners = st.data_editor(
+                owner_rows,
+                key="weekly_kpi_owner_directory",
+                hide_index=True,
+                disabled=["Area", "KPI", "Unit", "source", "direction"],
+                column_config={"source": None, "direction": None, "Target": st.column_config.NumberColumn("Target", min_value=0.0, format="%.2f")},
+                use_container_width=True,
+            )
+            if st.button("Save KPI settings", key="save_weekly_kpi_owners", type="primary"):
+                try:
+                    records = edited_owners.rename(columns={"GBR": "gbr", "Jovi": "jovi", "Target": "target"}).to_dict("records")
+                    for record in records:
+                        if record["Unit"] == "%":
+                            record["target"] = float(record["target"]) / 100
+                    save_weekly_kpi_owners(records)
+                    st.success("Targets and responsible owners saved for future KPI reviews.")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(str(exc))
     st.markdown(f"<div class='weekly-review-period'>{escape(week_label)}</div>", unsafe_allow_html=True)
     totals, daily, errors, total_exceptions, daily_exceptions = weekly_kpi_review_data(start_date, week_end)
     previous_start = start_date - timedelta(days=7)
@@ -9928,6 +9955,7 @@ def _assembly_oqc_fqc_data_management() -> None:
 
 def data_upload_page(module: str, color: str) -> None:
     """Central upload workspace for the three validated MES source groups."""
+    require_admin_access(st.session_state)
     st.markdown(
         f"<h1 class='section-title' style='color:{color};'>{module} · Data Upload</h1>",
         unsafe_allow_html=True,
@@ -9955,7 +9983,7 @@ def data_upload_page(module: str, color: str) -> None:
 def assembly_quality_dashboard_v2(color: str) -> None:
     page_started = perf_counter()
     source_started = perf_counter()
-    if not st.session_state.get("assembly_auto_import_checked", False):
+    if is_admin() and not st.session_state.get("assembly_auto_import_checked", False):
         results = import_assembly_monitored_folder()
         st.session_state["assembly_auto_import_checked"] = True
         if any(result["status"] == "imported" for result in results):
@@ -10325,6 +10353,7 @@ def iqc_page() -> None:
 
 
 def render_cloud_storage_panel() -> None:
+    require_admin_access(st.session_state)
     status = cloud_store_status()
     files = [
         path for path in DATA_STORE_DIR.rglob("*")
@@ -10409,8 +10438,9 @@ def about_page() -> None:
         """,
         unsafe_allow_html=True,
     )
-    st.write("")
-    render_cloud_storage_panel()
+    if is_admin():
+        st.write("")
+        render_cloud_storage_panel()
     st.write("")
     render_performance_diagnostics_panel()
     st.write("")
@@ -10439,7 +10469,10 @@ def render_page() -> None:
         elif tab == "BOM Comparison Tool - Assembly":
             bom_tool_assy_page()
         elif tab == "Data Upload":
-            data_upload_page(module, color)
+            if is_admin():
+                data_upload_page(module, color)
+            else:
+                st.error("Administrator access is required for Data Upload.")
     elif module == "IQC":
         iqc_page()
     elif module == "Smart Report":
