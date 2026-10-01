@@ -42,7 +42,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.81"
+APP_VERSION = "v0.5.82"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -97,6 +97,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.82", "Standardized SMT and Assembly KPI Track to one chart per row and moved both data-detail sections below the charts."),
     ("v0.5.81", "Kept the portal's light colors consistent across browser and Streamlit theme preferences."),
     ("v0.5.80", "Rebuilt Home around selectable SMT and Assembly KPI trends, full-period details and quick date presets."),
     ("v0.5.79", "Added hover balloons to Home model trend points with defect PCB count, FPY input and daily PPM."),
@@ -7463,15 +7464,8 @@ def smt_kpi_track_page(color: str) -> None:
         exception_count_label="Classified NG PCBs",
         exception_reason_column="SMTProcessStatus",
     )
-    if len(smt_trend) > 10:
-        show_chart(function_pass_chart)
-        show_chart(process_ng_chart)
-    else:
-        left, right = st.columns(2)
-        with left:
-            show_chart(function_pass_chart)
-        with right:
-            show_chart(process_ng_chart)
+    show_chart(function_pass_chart)
+    show_chart(process_ng_chart)
 
     assembly_trend = assembly_kpi["trend"] if assembly_kpi else pd.DataFrame()
     assembly_duty_exceptions = assembly_trend.loc[
@@ -7509,28 +7503,14 @@ def smt_kpi_track_page(color: str) -> None:
         oqc_trend = pd.DataFrame()
         oqc_chart = None
 
-    lower_trends_are_dense = max(len(assembly_trend), len(oqc_trend)) > 10
-    if lower_trends_are_dense:
-        if assembly_chart is not None:
-            show_chart(assembly_chart)
-        else:
-            st.info("Assembly Duty NG trend will appear when Assembly data is available.")
-        if oqc_chart is not None:
-            show_chart(oqc_chart)
-        else:
-            st.info("SMT OQC Pass Rate trend will appear after the first manual inspection entry.")
+    if assembly_chart is not None:
+        show_chart(assembly_chart)
     else:
-        left, right = st.columns(2)
-        with left:
-            if assembly_chart is not None:
-                show_chart(assembly_chart)
-            else:
-                st.info("Assembly Duty NG trend will appear when Assembly data is available.")
-        with right:
-            if oqc_chart is not None:
-                show_chart(oqc_chart)
-            else:
-                st.info("SMT OQC Pass Rate trend will appear after the first manual inspection entry.")
+        st.info("Assembly Duty NG trend will appear when Assembly data is available.")
+    if oqc_chart is not None:
+        show_chart(oqc_chart)
+    else:
+        st.info("SMT OQC Pass Rate trend will appear after the first manual inspection entry.")
 
     if not process_exceptions.empty:
         st.markdown("### Data consistency exceptions")
@@ -7549,6 +7529,41 @@ def smt_kpi_track_page(color: str) -> None:
 
     if not function_exceptions.empty or not process_exceptions.empty or not assembly_duty_exceptions.empty:
         st.caption("A red × marks a daily period where the available input is lower than the defects required by that KPI. The daily KPI is not calculated; a valid larger-period aggregate remains available.")
+
+    with st.expander("Detalhamento dos dados e qualidade", expanded=True):
+        detail = smt_trend[[
+            "Period", "Granularity", "Input", "FunctionalDefectPCBs", "FunctionPassRate",
+            "ClassifiedDefectPCBs", "SMTProcessNGRatePPM", "RejudgeOKRecords",
+            "UnclassifiedDefectPCBs", "FunctionPassStatus", "SMTProcessStatus",
+        ]].copy()
+        detail["FunctionPassRate"] = (detail["FunctionPassRate"] * 100).round(2)
+        detail["SMTProcessNGRatePPM"] = detail["SMTProcessNGRatePPM"].round(2)
+        detail = detail.rename(columns={
+            "Period": "Período", "Granularity": "Granularidade",
+            "FunctionalDefectPCBs": "Functional NG", "FunctionPassRate": "Function Pass Rate (%)",
+            "ClassifiedDefectPCBs": "Process NG", "SMTProcessNGRatePPM": "Process NG PPM",
+            "RejudgeOKRecords": "Rejudge OK", "UnclassifiedDefectPCBs": "Unclassified NG",
+            "FunctionPassStatus": "Function status", "SMTProcessStatus": "Process status",
+        })
+        styled_table(detail)
+        totals = smt_analysis["totals"]
+        st.caption(
+            f"Fonte ativa: {fmt_int(totals['InputFiles'])} arquivo(s) de input FPY e "
+            f"{fmt_int(totals['DefectFiles'])} arquivo(s) de defeitos · "
+            f"{fmt_int(totals['UncoveredDefectRecords'])} registro(s) sem cobertura de input · "
+            f"{fmt_int(totals['RejudgeOKRecords'])} registro(s) Rejudge OK."
+        )
+        if assembly_kpi is not None and not assembly_trend.empty:
+            st.markdown("#### Assembly · SMT Process Duty")
+            duty_detail = assembly_trend[["Period", "Produced", "DutyDefects", "DutyPPM", "SMTDutyStatus"]].copy()
+            duty_detail["DutyPPM"] = duty_detail["DutyPPM"].round(2)
+            duty_detail = duty_detail.rename(columns={
+                "Period": "Período", "Produced": "Assembly input", "DutyDefects": "SMT-duty NG",
+                "DutyPPM": "SMT-duty PPM", "SMTDutyStatus": "Status",
+            })
+            styled_table(duty_detail)
+            st.caption("Este KPI usa os defeitos de responsabilidade SMT e o input de Assembly.")
+
 
 def assembly_kpi_track_page(color: str) -> None:
     import pandas as pd
@@ -7693,36 +7708,6 @@ def assembly_kpi_track_page(color: str) -> None:
     st.markdown("### KPI formulas")
     styled_table(pd.DataFrame(formula_rows), table_class="kpi-formula-table")
 
-    with st.expander("Detalhamento diário e qualidade dos dados", expanded=True):
-        daily_view = metrics["daily"].copy()
-        daily_view["Date"] = pd.to_datetime(daily_view["Date"]).dt.strftime("%d/%m/%Y")
-        daily_view["Function Pass Rate"] = (daily_view["FunctionPassRate"] * 100).round(2)
-        daily_view["Appearance Pass Rate"] = (daily_view["AppearancePassRate"] * 100).round(2)
-        daily_view["Function Mando PPM"] = daily_view["FunctionMandoPPM"].round(2)
-        daily_view = daily_view.rename(
-            columns={
-                "Date": "Data",
-                "FunctionalNGPCBs": "Functional NG",
-                "AppearanceNGPCBs": "Appearance NG",
-                "FunctionMandoPCBs": "Function Mando NG",
-                "PendingResponsibilityPCBs": "Responsabilidade pendente",
-            }
-        )
-        styled_table(
-            daily_view[
-                [
-                    "Data", "Input", "Functional NG", "Function Pass Rate",
-                    "Appearance NG", "Appearance Pass Rate", "Function Mando NG",
-                    "Function Mando PPM", "Responsabilidade pendente",
-                ]
-            ]
-        )
-        st.caption(
-            f"Fonte ativa: {metrics['source']} · "
-            f"{fmt_int(metrics['pending_responsibility_pcbs'])} PCB(s) funcionais com responsabilidade pendente · "
-            f"{fmt_int(len(metrics['unclassified']))} ocorrência(s) fora do escopo."
-        )
-
     trend = metrics["trend"]
     trend_label = metrics["trend_settings"]["label"]
     function_exceptions = trend.loc[
@@ -7779,32 +7764,50 @@ def assembly_kpi_track_page(color: str) -> None:
             "percent",
             target_value=oqc_fqc_target,
         )
-    dense_trends = max(len(trend), len(oqc_fqc_records)) > 10
     charts = [
         (function_chart, "Function Pass Rate trend will appear after Functional Failure stations are defined."),
         (appearance_chart, "Appearance Total Pass Rate trend will appear after Appearance Failure stations are defined."),
         (mando_chart, "Function Mando trend will appear after Functional Failure stations are defined."),
         (oqc_fqc_chart, "Assembly OQC × FQC Pass Rate trend will appear after the first manual inspection entry."),
     ]
-    if dense_trends:
-        for chart, empty_message in charts:
-            if chart is not None:
-                show_chart(chart)
-            else:
-                st.info(empty_message)
-    else:
-        for chart_pair in (charts[:2], charts[2:]):
-            left, right = st.columns(2)
-            for column, (chart, empty_message) in zip((left, right), chart_pair):
-                with column:
-                    if chart is not None:
-                        show_chart(chart)
-                    else:
-                        st.info(empty_message)
+    for chart, empty_message in charts:
+        if chart is not None:
+            show_chart(chart)
+        else:
+            st.info(empty_message)
 
     if not function_exceptions.empty or not appearance_exceptions.empty or not mando_exceptions.empty:
         st.caption("A red × marks a daily period where the available input is lower than the defects required by that KPI. The daily KPI is not calculated; a valid larger-period aggregate remains available.")
 
+    with st.expander("Detalhamento dos dados e qualidade", expanded=True):
+        daily_view = metrics["daily"].copy()
+        daily_view["Date"] = pd.to_datetime(daily_view["Date"]).dt.strftime("%d/%m/%Y")
+        daily_view["Function Pass Rate"] = (daily_view["FunctionPassRate"] * 100).round(2)
+        daily_view["Appearance Pass Rate"] = (daily_view["AppearancePassRate"] * 100).round(2)
+        daily_view["Function Mando PPM"] = daily_view["FunctionMandoPPM"].round(2)
+        daily_view = daily_view.rename(
+            columns={
+                "Date": "Data",
+                "FunctionalNGPCBs": "Functional NG",
+                "AppearanceNGPCBs": "Appearance NG",
+                "FunctionMandoPCBs": "Function Mando NG",
+                "PendingResponsibilityPCBs": "Responsabilidade pendente",
+            }
+        )
+        styled_table(
+            daily_view[
+                [
+                    "Data", "Input", "Functional NG", "Function Pass Rate",
+                    "Appearance NG", "Appearance Pass Rate", "Function Mando NG",
+                    "Function Mando PPM", "Responsabilidade pendente",
+                ]
+            ]
+        )
+        st.caption(
+            f"Fonte ativa: {metrics['source']} · "
+            f"{fmt_int(metrics['pending_responsibility_pcbs'])} PCB(s) funcionais com responsabilidade pendente · "
+            f"{fmt_int(len(metrics['unclassified']))} ocorrência(s) fora do escopo."
+        )
 
 
 def _dashboard_defect_key(frame, pcb_column: str = "PCB"):
