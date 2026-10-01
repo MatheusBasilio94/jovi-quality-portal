@@ -42,7 +42,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.85"
+APP_VERSION = "v0.5.86"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 LOGIN_USERNAME = os.environ.get("JOVI_LOGIN_USERNAME", "jovi")
@@ -97,6 +97,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.86", "Added Assembly PowerPoint KPI graphs below the SMT graphs in Weekly KPI Review, using the same weekly values, visible days and vector export."),
     ("v0.5.85", "Removed the excess gap above Assembly defect breakdown cards by rendering their styles in one block."),
     ("v0.5.84", "Reduced shared page, navigation and filter spacing across the portal while preserving the existing navigation button styling."),
     ("v0.5.83", "Aligned Assembly Quality Dashboard with SMT by keeping the defect breakdown and matching PCB details and removing the additional charts and analysis sections."),
@@ -6204,7 +6205,8 @@ def kpi_review_table(
     install_kpi_table_copy_controls()
 
 
-def weekly_smt_kpi_slide_panels(
+def weekly_kpi_slide_panels(
+    area: str,
     directory: tuple[dict, ...],
     previous_label: str,
     current_label: str,
@@ -6216,13 +6218,29 @@ def weekly_smt_kpi_slide_panels(
     total_exceptions: dict[str, str],
     daily_exceptions: dict[str, dict[date, str]],
 ):
-    """Build the SMT PowerPoint slide from the exact Weekly KPI Review values."""
+    """Build area-specific PowerPoint panels from the Weekly KPI Review values."""
     import pandas as pd
 
-    # The Functional trend follows the SMT production-input calendar. It is the
-    # common timeline for all four charts, so weekends without input never
-    # appear only because a manual OQC record happened to exist there.
-    daily_days = [day for day in visible_days if day in daily.get("smt_function", {})]
+    panel_sources = {
+        "SMT": (
+            ("Functional Pass Rate", "smt_function", "percent"),
+            ("SMT Process NG Rate (PPM)", "smt_process", "ppm"),
+            ("Assembly SMT Process Duty NG Rate (PPM)", "smt_assembly_duty", "ppm"),
+            ("SMT OQC Pass Rate", "smt_oqc", "percent"),
+        ),
+        "Assembly": (
+            ("Functional Pass Rate", "assembly_function", "percent"),
+            ("Appearance Pass Rate", "assembly_appearance", "percent"),
+            ("Function Mando (PPM)", "assembly_mando", "ppm"),
+            ("Assembly OQC × FQC Pass Rate", "assembly_oqc_fqc", "percent"),
+        ),
+    }
+    if area not in panel_sources:
+        raise ValueError(f"Unsupported KPI graph area: {area}")
+    # Use each area's functional input calendar for all four panels. A manual
+    # inspection on a weekend must not create an otherwise absent daily point.
+    functional_source = "smt_function" if area == "SMT" else "assembly_function"
+    daily_days = [day for day in visible_days if day in daily.get(functional_source, {})]
 
     def frame_for(source: str) -> pd.DataFrame:
         rows = [
@@ -6248,14 +6266,8 @@ def weekly_smt_kpi_slide_panels(
         return pd.DataFrame(rows)
 
     targets = {item["source"]: item["target"] for item in directory}
-    panels = [
-        ("Functional Pass Rate", "smt_function", "percent"),
-        ("SMT Process NG Rate (PPM)", "smt_process", "ppm"),
-        ("Assembly SMT Process Duty NG Rate (PPM)", "smt_assembly_duty", "ppm"),
-        ("SMT OQC Pass Rate", "smt_oqc", "percent"),
-    ]
     slide_panels = []
-    for title, source, value_type in panels:
+    for title, source, value_type in panel_sources[area]:
         frame = frame_for(source)
         slide_panels.append(
             {
@@ -6385,36 +6397,39 @@ def weekly_kpi_review_page() -> None:
         visible_days,
         daily_exceptions,
     )
-    with st.expander("SMT KPI Graphs · PowerPoint", expanded=False):
-        st.caption(
-            "Cada gráfico usa os mesmos acumulados WK e os mesmos dias visíveis da tabela acima. "
-            "Use PPT para baixar o SVG vetorial já dimensionado para 16,17 cm × 8,17 cm no PowerPoint; "
-            "use ⧉ para copiar um PNG 4K."
-        )
-        previous_label = f"WK{previous_end.isocalendar().week:02d}"
-        current_label = f"WK{week_end.isocalendar().week:02d}"
-        panels = weekly_smt_kpi_slide_panels(
-            directory,
-            previous_label,
-            current_label,
-            previous_totals,
-            totals,
-            daily,
-            visible_days,
-            previous_total_exceptions,
-            total_exceptions,
-            daily_exceptions,
-        )
-        chart_tabs = st.tabs([panel["title"] for panel in panels])
-        for chart_tab, panel in zip(chart_tabs, panels):
-            with chart_tab:
-                show_chart(
-                    build_kpi_panel_chart(panel),
-                    image_filename=(
-                        f"quality_smt_{panel['title'].lower().replace(' ', '_').replace('(', '').replace(')', '')}_"
-                        f"{previous_start.strftime('%Y%m%d')}_{week_end.strftime('%Y%m%d')}"
-                    ),
-                )
+    previous_label = f"WK{previous_end.isocalendar().week:02d}"
+    current_label = f"WK{week_end.isocalendar().week:02d}"
+    for area in ("SMT", "Assembly"):
+        with st.expander(f"{area} KPI Graphs · PowerPoint", expanded=False):
+            st.caption(
+                "Cada gráfico usa os mesmos acumulados WK e os mesmos dias visíveis da tabela acima. "
+                "Use PPT para baixar o SVG vetorial já dimensionado para 16,17 cm × 8,17 cm no PowerPoint; "
+                "use ⧉ para copiar um PNG 4K."
+            )
+            panels = weekly_kpi_slide_panels(
+                area,
+                directory,
+                previous_label,
+                current_label,
+                previous_totals,
+                totals,
+                daily,
+                visible_days,
+                previous_total_exceptions,
+                total_exceptions,
+                daily_exceptions,
+            )
+            chart_tabs = st.tabs([panel["title"] for panel in panels])
+            for chart_tab, panel in zip(chart_tabs, panels):
+                with chart_tab:
+                    chart_name = re.sub(r"[^a-z0-9]+", "_", panel["title"].lower()).strip("_")
+                    show_chart(
+                        build_kpi_panel_chart(panel),
+                        image_filename=(
+                            f"quality_{area.lower()}_{chart_name}_"
+                            f"{previous_start.strftime('%Y%m%d')}_{week_end.strftime('%Y%m%d')}"
+                        ),
+                    )
     if hidden_days:
         st.caption(
             "Hidden from this table and its copied image: "
