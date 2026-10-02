@@ -68,7 +68,7 @@ class KPITrackDatesTest(unittest.TestCase):
         self.assertEqual(settings["grain"], "day")
         self.assertEqual(trend["Period"].tolist(), ["01/09", "30/09"])
 
-    def test_chart_marks_every_selected_day_without_inventing_values(self):
+    def test_chart_marks_every_selected_day_and_connects_recorded_values(self):
         frame = pd.DataFrame({
             "PeriodDate": pd.to_datetime(["2026-09-01", "2026-09-30"]),
             "Period": ["01/09", "30/09"],
@@ -81,8 +81,9 @@ class KPITrackDatesTest(unittest.TestCase):
         self.assertEqual(len(chart.layout.xaxis.tickvals), 30)
         self.assertEqual(chart.layout.xaxis.ticktext[0], "01/09")
         self.assertEqual(chart.layout.xaxis.ticktext[-1], "30/09")
-        self.assertEqual(len(chart.data[0].x), 30)
-        self.assertIsNone(chart.data[0].y[1])
+        self.assertEqual(len(chart.data[0].x), 2)
+        self.assertEqual(list(chart.data[0].y), [0.99, 0.98])
+        self.assertEqual(chart.data[0].mode, "lines+markers+text")
         self.assertEqual(chart.data[0].y[-1], 0.98)
 
 

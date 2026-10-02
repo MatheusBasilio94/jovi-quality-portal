@@ -4,6 +4,7 @@ import math
 import os
 import re
 import hashlib
+import importlib
 import sqlite3
 import streamlit as st
 from datetime import date, datetime, timedelta
@@ -29,7 +30,13 @@ from tools.supabase_store import (
     upload_bytes,
     upload_local_file,
 )
-from tools.trend_rules import analysis_period_days, requested_trend_grain, trend_grain_labels
+from tools import trend_rules
+if trend_rules.DAILY_TREND_LIMIT_DAYS != 31:
+    # Streamlit can rerun app.py without re-importing modules already in memory.
+    trend_rules = importlib.reload(trend_rules)
+analysis_period_days = trend_rules.analysis_period_days
+requested_trend_grain = trend_rules.requested_trend_grain
+trend_grain_labels = trend_rules.trend_grain_labels
 from tools import assembly_kpi_v2
 from tools.kpi_slide import build_kpi_panel_chart
 from tools.auth_session import COOKIE_NAME, SESSION_SECONDS, issue_token, revoke_token
@@ -48,7 +55,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.91"
+APP_VERSION = "v0.5.92"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 PORTAL_ACCOUNTS = configured_accounts()
@@ -101,6 +108,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.92", "Refresh cached KPI grouping rules after deployment and restore trend lines between recorded days."),
     ("v0.5.91", "Show every selected day on SMT and Assembly KPI Track charts for periods up to 31 days; keep OQC dates within the selected range."),
     ("v0.5.90", "Improved Repair Info daily chart with narrower bars, one date tick per day and visible PCB count labels."),
     ("v0.5.89", "Added read-only Repair Info with stored SMT and Assembly repair throughput, elapsed-time analysis and searchable PCB-level details."),
@@ -7283,13 +7291,9 @@ def smt_kpi_line_chart(
     date_column = next((name for name in ("PeriodDate", "PeriodStart") if name in frame.columns), None)
     plot_frame = frame
     if daily_axis and date_column is not None:
-        calendar = pd.date_range(period_start, period_end, freq="D")
         plot_frame = frame.copy()
         plot_frame[date_column] = pd.to_datetime(plot_frame[date_column], errors="coerce").dt.normalize()
-        plot_frame = plot_frame.loc[plot_frame[date_column].between(calendar[0], calendar[-1])]
-        plot_frame = plot_frame.drop_duplicates(date_column).set_index(date_column).reindex(calendar)
-        plot_frame.index.name = date_column
-        plot_frame = plot_frame.reset_index()
+        plot_frame = plot_frame.loc[plot_frame[date_column].between(pd.Timestamp(period_start), pd.Timestamp(period_end))]
     x_values = pd.to_datetime(plot_frame[date_column]) if date_column is not None and period_start is not None else plot_frame[x_column]
     hover_x = "%{x|%d/%m/%Y}" if date_column is not None and period_start is not None else "%{x}"
     values = pd.to_numeric(plot_frame[y_column], errors="coerce")
@@ -7625,6 +7629,11 @@ def build_assembly_oqc_fqc_trend(records, start_date: date, end_date: date):
 def smt_kpi_track_page(color: str) -> None:
     import pandas as pd
     from tools import smt_quality_dashboard
+
+    if smt_quality_dashboard.requested_trend_grain is not requested_trend_grain:
+        # The analysis module may still hold the previous grouping function.
+        smt_quality_dashboard = importlib.reload(smt_quality_dashboard)
+        smt_quality_dashboard.analyze_smt_quality_paths.clear()
 
     st.markdown(f"<h1 class='section-title' style='color:{color};'>SMT KPI Track</h1>", unsafe_allow_html=True)
 
