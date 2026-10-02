@@ -48,7 +48,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.89"
+APP_VERSION = "v0.5.90"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 PORTAL_ACCOUNTS = configured_accounts()
@@ -101,6 +101,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.90", "Improved Repair Info daily chart with narrower bars, one date tick per day and visible PCB count labels."),
     ("v0.5.89", "Added read-only Repair Info with stored SMT and Assembly repair throughput, elapsed-time analysis and searchable PCB-level details."),
     ("v0.5.88", "Set Matheus as administrator and jovi as the standard read-only user; invalidated previous browser sessions after the role change."),
     ("v0.5.87", "Added administrator and read-only viewer accounts; data uploads, deletions and saved settings require administrator access."),
@@ -6702,15 +6703,33 @@ def repair_info_page() -> None:
     with chart_column:
         st.markdown("#### Repaired PCBs per day")
         volume = go.Figure()
+        day_ms = 86_400_000
+        bar_width = day_ms * (0.32 if area == "Both" else 0.52)
         for label, color in (("SMT", "#0B7E48"), ("Assembly", "#6532C8")):
             if area == "Both" or area == label:
-                volume.add_bar(x=daily["Date"], y=daily[label], name=label, marker_color=color,
-                               hovertemplate="%{x|%d/%m/%Y}<br>%{y:,} unique PCBs<extra>" + label + "</extra>")
-        volume.update_layout(barmode="group", height=350, margin=dict(l=10, r=10, t=12, b=25),
+                volume.add_bar(
+                    x=daily["Date"], y=daily[label], name=label, marker_color=color,
+                    width=bar_width,
+                    text=[f"{value:,}" if value else "" for value in daily[label]],
+                    textposition="outside", textfont=dict(size=11, color="#17345C"),
+                    cliponaxis=False,
+                    hovertemplate="%{x|%d/%m/%Y}<br>%{y:,} unique PCBs<extra>" + label + "</extra>",
+                )
+        tick_stride = max(1, (len(daily) + 8) // 9)
+        tick_days = daily["Date"].iloc[::tick_stride].tolist()
+        if tick_days and tick_days[-1] != daily["Date"].iloc[-1]:
+            tick_days.append(daily["Date"].iloc[-1])
+        peak = max(int(daily["SMT"].max()), int(daily["Assembly"].max()), 1)
+        volume.update_layout(barmode="group", height=350, margin=dict(l=10, r=18, t=12, b=25),
                              paper_bgcolor="#FFFFFF", plot_bgcolor="#FFFFFF", legend_orientation="h",
                              legend_y=1.14, font_color="#17345C", dragmode="zoom")
-        volume.update_xaxes(tickformat="%d %b", showgrid=False)
-        volume.update_yaxes(title="Unique PCBs", gridcolor="#DDE7F3", rangemode="tozero")
+        volume.update_xaxes(
+            tickmode="array", tickvals=tick_days, ticktext=[day.strftime("%d %b") for day in tick_days],
+            range=[daily["Date"].iloc[0] - pd.Timedelta(days=1),
+                   daily["Date"].iloc[-1] + pd.Timedelta(days=1)],
+            showgrid=False,
+        )
+        volume.update_yaxes(title="Unique PCBs", gridcolor="#DDE7F3", range=[0, peak * 1.18])
         st.plotly_chart(volume, use_container_width=True, config={"displayModeBar": False})
     with duration_column:
         st.markdown("#### Elapsed-time distribution")
