@@ -55,7 +55,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.92"
+APP_VERSION = "v0.5.93"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 PORTAL_ACCOUNTS = configured_accounts()
@@ -108,6 +108,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.93", "Invalidate weekly SMT KPI cache when the selected period requires daily values."),
     ("v0.5.92", "Refresh cached KPI grouping rules after deployment and restore trend lines between recorded days."),
     ("v0.5.91", "Show every selected day on SMT and Assembly KPI Track charts for periods up to 31 days; keep OQC dates within the selected range."),
     ("v0.5.90", "Improved Repair Info daily chart with narrower bars, one date tick per day and visible PCB count labels."),
@@ -7630,7 +7631,10 @@ def smt_kpi_track_page(color: str) -> None:
     import pandas as pd
     from tools import smt_quality_dashboard
 
-    if smt_quality_dashboard.requested_trend_grain is not requested_trend_grain:
+    if (
+        getattr(smt_quality_dashboard, "SMT_TREND_POLICY_VERSION", None) != 2
+        or smt_quality_dashboard.requested_trend_grain is not requested_trend_grain
+    ):
         # The analysis module may still hold the previous grouping function.
         smt_quality_dashboard = importlib.reload(smt_quality_dashboard)
         smt_quality_dashboard.analyze_smt_quality_paths.clear()
@@ -7660,6 +7664,7 @@ def smt_kpi_track_page(color: str) -> None:
         start_date.isoformat(),
         end_date.isoformat(),
         smt_quality_dashboard.SMT_FAILURE_RULE_VERSION,
+        smt_quality_dashboard.SMT_TREND_POLICY_VERSION,
     )
     smt_totals = smt_analysis["totals"]
     function_pass_valid = smt_totals.get("FunctionPassStatus") == "Valid"

@@ -25,6 +25,7 @@ from tools.smt_fpy_sources import read_detail, validate_pair, active_pairs
 
 TOOL_VERSION = "v2.0.1"
 SMT_FAILURE_RULE_VERSION = "mes-fpy-authoritative-entry-date-2026-09-28.2"
+SMT_TREND_POLICY_VERSION = 2
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 SMT_STORE_DIR = PROJECT_DIR / "data_store" / "smt"
 SMT_INPUT_DIR = SMT_STORE_DIR / "fpy" / "input"
@@ -768,6 +769,7 @@ def analyze_smt_quality_paths(
     start_text: str,
     end_text: str,
     failure_rule_version: str = SMT_FAILURE_RULE_VERSION,
+    trend_policy_version: int = SMT_TREND_POLICY_VERSION,
 ) -> dict:
     model_parts = []
     org_parts = []
@@ -825,7 +827,11 @@ def analyze_smt_quality_paths(
     rejudge = covered_defects[covered_defects["IsRejudgeOK"]].copy()
 
     period_rows = []
-    requested_grain = requested_trend_grain(start, end_exclusive - pd.Timedelta(days=1))
+    requested_grain = (
+        "day"
+        if trend_policy_version >= 2 and (end_exclusive - start).days <= 31
+        else requested_trend_grain(start, end_exclusive - pd.Timedelta(days=1))
+    )
     input_granularities = set(selected_input["Granularity"].dropna().astype(str))
     if input_granularities and input_granularities.issubset({"daily"}):
         available_grain = "day"
