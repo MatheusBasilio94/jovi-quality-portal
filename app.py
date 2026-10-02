@@ -48,7 +48,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.90"
+APP_VERSION = "v0.5.91"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 PORTAL_ACCOUNTS = configured_accounts()
@@ -101,6 +101,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.91", "Show every selected day on SMT and Assembly KPI Track charts for periods up to 31 days; keep OQC dates within the selected range."),
     ("v0.5.90", "Improved Repair Info daily chart with narrower bars, one date tick per day and visible PCB count labels."),
     ("v0.5.89", "Added read-only Repair Info with stored SMT and Assembly repair throughput, elapsed-time analysis and searchable PCB-level details."),
     ("v0.5.88", "Set Matheus as administrator and jovi as the standard read-only user; invalidated previous browser sessions after the role change."),
@@ -7268,11 +7269,30 @@ def smt_kpi_line_chart(
     exception_count_column: str = "ClassifiedDefectPCBs",
     exception_count_label: str = "Classified NG PCBs",
     exception_reason_column: str | None = None,
+    period_start: date | None = None,
+    period_end: date | None = None,
 ):
     import pandas as pd
     import plotly.graph_objects as go
 
-    values = pd.to_numeric(frame[y_column], errors="coerce")
+    daily_axis = (
+        period_start is not None
+        and period_end is not None
+        and analysis_period_days(period_start, period_end) <= 31
+    )
+    date_column = next((name for name in ("PeriodDate", "PeriodStart") if name in frame.columns), None)
+    plot_frame = frame
+    if daily_axis and date_column is not None:
+        calendar = pd.date_range(period_start, period_end, freq="D")
+        plot_frame = frame.copy()
+        plot_frame[date_column] = pd.to_datetime(plot_frame[date_column], errors="coerce").dt.normalize()
+        plot_frame = plot_frame.loc[plot_frame[date_column].between(calendar[0], calendar[-1])]
+        plot_frame = plot_frame.drop_duplicates(date_column).set_index(date_column).reindex(calendar)
+        plot_frame.index.name = date_column
+        plot_frame = plot_frame.reset_index()
+    x_values = pd.to_datetime(plot_frame[date_column]) if date_column is not None and period_start is not None else plot_frame[x_column]
+    hover_x = "%{x|%d/%m/%Y}" if date_column is not None and period_start is not None else "%{x}"
+    values = pd.to_numeric(plot_frame[y_column], errors="coerce")
     # Plotly treats an explicit null as a gap.  Keep it distinct from zero so
     # an invalid daily denominator never draws a line down to the x-axis.
     chart_values = values.astype(object).where(values.notna(), None)
@@ -7310,7 +7330,7 @@ def smt_kpi_line_chart(
     chart = go.Figure(
         data=[
             go.Scatter(
-                x=frame[x_column],
+                x=x_values,
                 y=chart_values,
                 mode="lines+markers+text",
                 connectgaps=False,
@@ -7321,9 +7341,9 @@ def smt_kpi_line_chart(
                 textfont=dict(color=color, size=11),
                 cliponaxis=False,
                 hovertemplate=(
-                    "%{x}<br>Rate: %{y:.2%}<extra></extra>"
+                    f"{hover_x}<br>Rate: %{{y:.2%}}<extra></extra>"
                     if value_type == "percent"
-                    else "%{x}<br>PPM: %{y:,.0f}<extra></extra>"
+                    else f"{hover_x}<br>PPM: %{{y:,.0f}}<extra></extra>"
                 ),
             )
         ]
@@ -7357,7 +7377,7 @@ def smt_kpi_line_chart(
         )
         chart.add_trace(
             go.Scatter(
-                x=exception_rows[x_column],
+                x=(pd.to_datetime(exception_rows[date_column]) if date_column is not None and period_start is not None else exception_rows[x_column]),
                 y=[exception_y] * len(exception_rows),
                 mode="markers",
                 marker=dict(color="#DC2626", size=13, symbol="x"),
@@ -7386,7 +7406,28 @@ def smt_kpi_line_chart(
         plot_bgcolor="#F8FAFD",
         showlegend=False,
     )
-    chart.update_xaxes(tickangle=-35 if len(frame) > 10 else 0, automargin=True)
+    if period_start is not None and period_end is not None and date_column is not None:
+        grain = requested_trend_grain(period_start, period_end)
+        if grain == "day":
+            ticks = pd.date_range(period_start, period_end, freq="D")
+        elif grain == "week":
+            ticks = pd.date_range(period_start, period_end, freq="W-MON")
+        else:
+            ticks = pd.date_range(period_start, period_end, freq="MS")
+        start_tick = pd.Timestamp(period_start)
+        if len(ticks) == 0 or ticks[0] != start_tick:
+            ticks = ticks.insert(0, start_tick)
+        chart.update_xaxes(
+            type="date",
+            range=[start_tick - pd.Timedelta(hours=12), pd.Timestamp(period_end) + pd.Timedelta(hours=12)],
+            tickmode="array",
+            tickvals=ticks,
+            ticktext=[tick.strftime("%d/%m" if grain != "month" else "%b/%y") for tick in ticks],
+            tickangle=-45 if len(ticks) > 10 else 0,
+            automargin=True,
+        )
+    else:
+        chart.update_xaxes(tickangle=-35 if len(frame) > 10 else 0, automargin=True)
     chart.update_yaxes(
         range=axis_range,
         tickformat=".1%" if value_type == "percent" else ",.0f",
@@ -7414,12 +7455,16 @@ def build_smt_oqc_trend(oqc_records, start_date: date, end_date: date):
     import pandas as pd
 
     settings = trend_granularity(pd.Timestamp(start_date), pd.Timestamp(end_date))
-    oqc_trend = add_trend_period(oqc_records, "InspectionDate", settings)
+    selected = oqc_records.copy()
+    selected["InspectionDate"] = parse_date_series(selected["InspectionDate"]).dt.normalize()
+    selected = selected.loc[selected["InspectionDate"].between(pd.Timestamp(start_date), pd.Timestamp(end_date))]
+    oqc_trend = add_trend_period(selected, "InspectionDate", settings)
     oqc_trend = oqc_trend.groupby("PeriodDate", as_index=False).agg(
         Inspected=("Inspected", "sum"),
         OK=("OK", "sum"),
         NG=("NG", "sum"),
     )
+    oqc_trend["PeriodDate"] = oqc_trend["PeriodDate"].clip(lower=pd.Timestamp(start_date))
     oqc_trend["Period"] = oqc_trend["PeriodDate"].map(
         lambda value: format_trend_period(value, settings["grain"])
     )
@@ -7559,13 +7604,17 @@ def build_assembly_oqc_fqc_trend(records, start_date: date, end_date: date):
     import pandas as pd
 
     settings = trend_granularity(pd.Timestamp(start_date), pd.Timestamp(end_date))
-    trend = add_trend_period(records, "InspectionDate", settings)
+    selected = records.copy()
+    selected["InspectionDate"] = parse_date_series(selected["InspectionDate"]).dt.normalize()
+    selected = selected.loc[selected["InspectionDate"].between(pd.Timestamp(start_date), pd.Timestamp(end_date))]
+    trend = add_trend_period(selected, "InspectionDate", settings)
     trend = trend.groupby("PeriodDate", as_index=False).agg(
         OQCInspected=("OQCInspected", "sum"),
         OQCOK=("OQCOK", "sum"),
         FQCInspected=("FQCInspected", "sum"),
         FQCOK=("FQCOK", "sum"),
     )
+    trend["PeriodDate"] = trend["PeriodDate"].clip(lower=pd.Timestamp(start_date))
     trend["Period"] = trend["PeriodDate"].map(lambda value: format_trend_period(value, settings["grain"]))
     trend["OQCPassRate"] = trend["OQCOK"] / trend["OQCInspected"].replace(0, pd.NA)
     trend["FQCPassRate"] = trend["FQCOK"] / trend["FQCInspected"].replace(0, pd.NA)
@@ -7746,6 +7795,8 @@ def smt_kpi_track_page(color: str) -> None:
         exception_count_column="FunctionalDefectPCBs",
         exception_count_label="Functional NG PCBs",
         exception_reason_column="FunctionPassStatus",
+        period_start=start_date,
+        period_end=end_date,
     )
     process_ng_chart = smt_kpi_line_chart(
         smt_trend,
@@ -7759,6 +7810,8 @@ def smt_kpi_track_page(color: str) -> None:
         exception_count_column="ClassifiedDefectPCBs",
         exception_count_label="Classified NG PCBs",
         exception_reason_column="SMTProcessStatus",
+        period_start=start_date,
+        period_end=end_date,
     )
     show_chart(function_pass_chart)
     show_chart(process_ng_chart)
@@ -7780,6 +7833,8 @@ def smt_kpi_track_page(color: str) -> None:
             exception_count_column="DutyDefects",
             exception_count_label="SMT-duty NG PCBs",
             exception_reason_column="SMTDutyStatus",
+            period_start=start_date,
+            period_end=end_date,
         )
         if not assembly_trend.empty
         else None
@@ -7794,6 +7849,8 @@ def smt_kpi_track_page(color: str) -> None:
             "#1D5FBF",
             "percent",
             target_value=oqc_target,
+            period_start=start_date,
+            period_end=end_date,
         )
     else:
         oqc_trend = pd.DataFrame()
@@ -8023,6 +8080,8 @@ def assembly_kpi_track_page(color: str) -> None:
             exception_count_column="FunctionalNGRecords",
             exception_count_label="Functional NG PCBs",
             exception_reason_column="FunctionPassStatus",
+            period_start=start_date,
+            period_end=end_date,
         )
         if functional_ready else None
     )
@@ -8034,6 +8093,8 @@ def assembly_kpi_track_page(color: str) -> None:
             exception_count_column="AppearanceNGRecords",
             exception_count_label="Appearance NG PCBs",
             exception_reason_column="AppearancePassStatus",
+            period_start=start_date,
+            period_end=end_date,
         )
         if appearance_ready else None
     )
@@ -8045,6 +8106,8 @@ def assembly_kpi_track_page(color: str) -> None:
             exception_count_column="FunctionMandoPCBs",
             exception_count_label="Function Mando NG PCBs",
             exception_reason_column="FunctionMandoStatus",
+            period_start=start_date,
+            period_end=end_date,
         )
         if functional_ready else None
     )
@@ -8059,6 +8122,8 @@ def assembly_kpi_track_page(color: str) -> None:
             "#0D7A45",
             "percent",
             target_value=oqc_fqc_target,
+            period_start=start_date,
+            period_end=end_date,
         )
     charts = [
         (function_chart, "Function Pass Rate trend will appear after Functional Failure stations are defined."),

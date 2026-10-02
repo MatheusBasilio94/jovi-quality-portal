@@ -1,7 +1,7 @@
 from datetime import date, datetime
 
 
-DAILY_TREND_LIMIT_DAYS = 30
+DAILY_TREND_LIMIT_DAYS = 31
 WEEKLY_TREND_LIMIT_DAYS = 180
 
 
@@ -25,7 +25,7 @@ def analysis_period_days(start, end) -> int:
 
 def requested_trend_grain(start, end) -> str:
     days = analysis_period_days(start, end)
-    if days < DAILY_TREND_LIMIT_DAYS:
+    if days <= DAILY_TREND_LIMIT_DAYS:
         return "day"
     if days <= WEEKLY_TREND_LIMIT_DAYS:
         return "week"
