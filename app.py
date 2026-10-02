@@ -48,7 +48,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.88"
+APP_VERSION = "v0.5.89"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 PORTAL_ACCOUNTS = configured_accounts()
@@ -96,10 +96,12 @@ MODULES = {
     "Model Comparison": {"color": "#1D5FBF", "tabs": []},
     "IQC": {"color": "#B45309", "tabs": ["Overview"]},
     "Smart Report": {"color": "#0F766E", "tabs": []},
+    "Repair Info": {"color": "#1D5FBF", "tabs": []},
     "About": {"color": "#1D5FBF", "tabs": []},
 }
 
 VERSION_HISTORY = [
+    ("v0.5.89", "Added read-only Repair Info with stored SMT and Assembly repair throughput, elapsed-time analysis and searchable PCB-level details."),
     ("v0.5.88", "Set Matheus as administrator and jovi as the standard read-only user; invalidated previous browser sessions after the role change."),
     ("v0.5.87", "Added administrator and read-only viewer accounts; data uploads, deletions and saved settings require administrator access."),
     ("v0.5.86", "Added Assembly PowerPoint KPI graphs below the SMT graphs in Weekly KPI Review, using the same weekly values, visible days and vector export."),
@@ -2224,6 +2226,7 @@ def top_navigation() -> None:
         ("Model Comparison", "Compare Models", 1.06),
         ("IQC", "IQC", 0.46),
         ("Smart Report", "Smart Report", 0.98),
+        ("Repair Info", "Repair Info", 0.83),
         ("Learning Area", "Learning", 0.84),
     ]
     with st.container(key="top_navigation"):
@@ -6573,6 +6576,230 @@ def smart_report_page() -> None:
         defect_action_report_page()
 
 
+@st.cache_data(show_spinner=False)
+def _repair_info_events_cached(
+    smt_signatures: tuple[tuple[str, int, int], ...],
+    assembly_signatures: tuple[tuple[str, int, int], ...],
+):
+    from tools.repair_info import combine_repair_files
+
+    return combine_repair_files({
+        "SMT": [Path(signature[0]) for signature in smt_signatures],
+        "Assembly": [Path(signature[0]) for signature in assembly_signatures],
+    })
+
+
+def _repair_info_hours(value) -> str:
+    import pandas as pd
+
+    if value is None or pd.isna(value):
+        return "N/A"
+    if value < 1 / 60:
+        return "<1 min"
+    if value < 1:
+        return f"{value * 60:.0f} min"
+    return f"{value:,.1f} h"
+
+
+def repair_info_page() -> None:
+    """Operational repair view based solely on the existing stored MES files."""
+    import pandas as pd
+    import plotly.graph_objects as go
+    from tools import repair_info, smt_quality_dashboard
+
+    st.markdown(
+        "<h1 class='section-title' style='color:#2861EB;'>Repair Info</h1>"
+        "<p class='small-muted'>Repair throughput and time from defect entry to recorded repair.</p>",
+        unsafe_allow_html=True,
+    )
+    try:
+        smt_sources = smt_quality_dashboard.stored_smt_sources_v2()["repair"]
+        assembly_sources = stored_assembly_sources_v2()["repair"]
+        events, audit = _repair_info_events_cached(
+            tuple(smt_quality_dashboard.path_signature(path) for path in smt_sources),
+            tuple(path_signature(path) for path in assembly_sources),
+        )
+    except Exception as exc:
+        st.error(f"Stored repair files could not be loaded: {exc}")
+        return
+    for error in audit["errors"]:
+        st.warning(f"Skipped repair file: {error}")
+    if events.empty:
+        st.info("No repair records with a PCB SN and RepairDate are stored yet. An administrator can add repair exports in Data Upload.")
+        return
+
+    first_day = events["Repair day"].min().date()
+    last_day = events["Repair day"].max().date()
+    default_start = max(first_day, last_day - timedelta(days=6))
+    if "repair_info_period_preset" not in st.session_state:
+        st.session_state["repair_info_period_preset"] = "Last 7 days"
+    filter_period, filter_area, filter_model, filter_repairer = st.columns([1.3, 0.7, 0.95, 0.95], gap="medium")
+    with filter_period:
+        start_date, end_date = analysis_period_control(
+            "repair_info_period", first_day, last_day,
+            default_start=default_start, default_end=last_day,
+        )
+    with filter_area:
+        area = st.segmented_control(
+            "Area", ["Both", "SMT", "Assembly"], default="Both",
+            key="repair_info_area", persist_state="session",
+        ) or "Both"
+    dated = events[events["Repair day"].between(pd.Timestamp(start_date), pd.Timestamp(end_date))].copy()
+    if area != "Both":
+        dated = dated[dated["Area"].eq(area)].copy()
+    with filter_model:
+        models = sorted(value for value in dated["Model"].unique() if value)
+        if st.session_state.get("repair_info_model") not in ["All models", *models]:
+            st.session_state["repair_info_model"] = "All models"
+        model = st.selectbox("Model", ["All models", *models], key="repair_info_model", persist_state="session")
+    if model != "All models":
+        dated = dated[dated["Model"].eq(model)].copy()
+    with filter_repairer:
+        repairers = sorted(value for value in dated["Repairer"].unique() if value)
+        if st.session_state.get("repair_info_repairer") not in ["All repairers", *repairers]:
+            st.session_state["repair_info_repairer"] = "All repairers"
+        repairer = st.selectbox("Repairer", ["All repairers", *repairers], key="repair_info_repairer", persist_state="session")
+    if repairer != "All repairers":
+        dated = dated[dated["Repairer"].eq(repairer)].copy()
+
+    st.caption(
+        f"Stored repair dates: {first_day:%d/%m/%Y} – {last_day:%d/%m/%Y} · "
+        f"{audit['files']} source file(s) · {audit['duplicates']:,} repeated snapshot rows reconciled · "
+        f"{audit['undated']:,} records without RepairDate excluded."
+    )
+    if dated.empty:
+        st.info("No recorded repairs match these filters.")
+        return
+    summary = repair_info.repair_summary(dated)
+    cards = [
+        ("Repaired PCBs", f"{summary['pcbs']:,}", "Unique Area + PCB SN", "#0B7E48"),
+        ("Average elapsed time", _repair_info_hours(summary["avg_h"]), "Entry to recorded repair", "#1D5FBF"),
+        ("Median elapsed time", _repair_info_hours(summary["median_h"]), "Less affected by long cases", "#6532C8"),
+        ("Within 24 hours", f"{summary['within_24_pct']:.0f}%" if summary["within_24_pct"] is not None else "N/A", "Of valid elapsed-time records", "#B45309"),
+    ]
+    for column, (label, value, note, accent) in zip(st.columns(4, gap="medium"), cards):
+        with column:
+            st.markdown(
+                f"<div style='background:#fff;border:1px solid #C9D8EC;border-left:6px solid {accent};"
+                "border-radius:12px;padding:16px 18px;min-height:125px;box-shadow:0 4px 12px #112A5012;'>"
+                f"<div style='font-size:.76rem;font-weight:800;color:#17345C;text-transform:uppercase;'>{label}</div>"
+                f"<div style='font-size:1.85rem;font-weight:800;color:{accent};margin:8px 0;'>{value}</div>"
+                f"<div style='font-size:.78rem;color:#607999;'>{note}</div></div>",
+                unsafe_allow_html=True,
+            )
+    st.caption(
+        f"Elapsed-time coverage: {summary['coverage_pct']:.0f}% of recorded repairs. "
+        "Elapsed time includes waiting after defect entry; it is not technician hands-on repair time."
+    )
+    if summary["near_zero_pct"] is not None and summary["near_zero_pct"] >= 20:
+        st.info(
+            f"{summary['near_zero_pct']:.0f}% of valid elapsed times are under one minute. "
+            "Review the MES timestamps before interpreting the average as a process-speed measure."
+        )
+
+    daily = repair_info.daily_summary(dated, start_date, end_date)
+    chart_column, duration_column = st.columns([1.75, 1], gap="medium")
+    with chart_column:
+        st.markdown("#### Repaired PCBs per day")
+        volume = go.Figure()
+        for label, color in (("SMT", "#0B7E48"), ("Assembly", "#6532C8")):
+            if area == "Both" or area == label:
+                volume.add_bar(x=daily["Date"], y=daily[label], name=label, marker_color=color,
+                               hovertemplate="%{x|%d/%m/%Y}<br>%{y:,} unique PCBs<extra>" + label + "</extra>")
+        volume.update_layout(barmode="group", height=350, margin=dict(l=10, r=10, t=12, b=25),
+                             paper_bgcolor="#FFFFFF", plot_bgcolor="#FFFFFF", legend_orientation="h",
+                             legend_y=1.14, font_color="#17345C", dragmode="zoom")
+        volume.update_xaxes(tickformat="%d %b", showgrid=False)
+        volume.update_yaxes(title="Unique PCBs", gridcolor="#DDE7F3", rangemode="tozero")
+        st.plotly_chart(volume, use_container_width=True, config={"displayModeBar": False})
+    with duration_column:
+        st.markdown("#### Elapsed-time distribution")
+        valid = dated["Elapsed (h)"].dropna()
+        bucket_labels = ["Under 1 h", "1–4 h", "4–24 h", "Over 24 h"]
+        bucket_counts = [int(valid.lt(1).sum()), int(valid.between(1, 4, inclusive="left").sum()),
+                         int(valid.between(4, 24, inclusive="left").sum()), int(valid.ge(24).sum())]
+        distribution = go.Figure(go.Bar(
+            x=bucket_counts, y=bucket_labels, orientation="h",
+            marker_color=["#0B7E48", "#1D5FBF", "#6532C8", "#C76A06"],
+            text=[f"{count / len(valid) * 100:.0f}%" if len(valid) else "N/A" for count in bucket_counts],
+            textposition="outside", hovertemplate="%{y}: %{x:,} repair events<extra></extra>",
+        ))
+        distribution.update_layout(height=350, margin=dict(l=10, r=35, t=12, b=25),
+                                   paper_bgcolor="#FFFFFF", plot_bgcolor="#FFFFFF", font_color="#17345C")
+        distribution.update_yaxes(autorange="reversed")
+        distribution.update_xaxes(title="Repair events", gridcolor="#DDE7F3", rangemode="tozero")
+        st.plotly_chart(distribution, use_container_width=True, config={"displayModeBar": False})
+        st.caption(f"Median {_repair_info_hours(summary['median_h'])} · P90 {_repair_info_hours(summary['p90_h'])}")
+
+    st.markdown("#### Daily detail")
+    daily_view = daily.copy().sort_values("Date", ascending=False)
+    daily_view["Date"] = daily_view["Date"].dt.strftime("%d/%m/%Y")
+    for name in ("Avg elapsed (h)", "Median (h)", "P90 (h)"):
+        daily_view[name] = daily_view[name].map(_repair_info_hours)
+    daily_view["Coverage (%)"] = daily_view["Coverage (%)"].map(lambda value: f"{value:.0f}%" if pd.notna(value) else "N/A")
+    st.dataframe(daily_view, hide_index=True, use_container_width=True, height=250)
+    st.download_button(
+        "Download daily detail", daily.to_csv(index=False).encode("utf-8-sig"),
+        file_name=f"repair_daily_{start_date:%Y-%m-%d}_{end_date:%Y-%m-%d}.csv", mime="text/csv",
+        key="repair_info_daily_download",
+    )
+
+    st.markdown("#### Repaired PCB details")
+    st.caption("Search PCB SN or device Barcode. One SN can have multiple repair events; the daily volume counts it once per area and day.")
+    positive_days = daily.loc[daily["Total PCBs"].gt(0), "Date"].dt.date.tolist()
+    day_options = [None, *reversed(positive_days)]
+    if st.session_state.get("repair_info_detail_day") not in day_options:
+        st.session_state["repair_info_detail_day"] = None
+    day_column, search_column = st.columns([0.55, 1.45])
+    with day_column:
+        selected_day = st.selectbox(
+            "Repair day", day_options, key="repair_info_detail_day", persist_state="session",
+            format_func=lambda value: "All selected days" if value is None else value.strftime("%d/%m/%Y"),
+        )
+    with search_column:
+        search = st.text_input("Search PCB SN / Barcode", key="repair_info_search", persist_state="session")
+    details = dated.copy()
+    if selected_day is not None:
+        details = details[details["Repair day"].eq(pd.Timestamp(selected_day))]
+    if search.strip():
+        term = search.strip().casefold()
+        details = details[
+            details["PCB SN"].str.casefold().str.contains(term, regex=False)
+            | details["Device Barcode"].str.casefold().str.contains(term, regex=False)
+        ]
+    details = details.sort_values(["Repair date", "Area", "PCB SN"], ascending=[False, True, True]).reset_index(drop=True)
+    st.caption(f"{len(details):,} repair event(s) · {details[['Area', 'PCB SN']].drop_duplicates().shape[0]:,} unique Area + PCB SN")
+    detail_view = details[repair_info.DISPLAY_COLUMNS].copy()
+    for name in ("Defect entry", "Repair date"):
+        detail_view[name] = detail_view[name].dt.strftime("%d/%m/%Y %H:%M").fillna("—")
+    detail_view["Elapsed (h)"] = detail_view["Elapsed (h)"].map(_repair_info_hours)
+    detail_view["Repair #"] = detail_view["Repair #"].map(lambda value: str(int(value)) if pd.notna(value) else "—")
+    visible = ["PCB SN", "Device Barcode", "Area", "Model", "Defect entry", "Repair date", "Elapsed (h)", "Repairer", "Repair #"]
+    selection = st.dataframe(
+        detail_view[visible], hide_index=True, use_container_width=True, height=300,
+        on_select="rerun", selection_mode="single-row", key="repair_info_records",
+    )
+    selected_rows = selection.selection.rows
+    if selected_rows and selected_rows[0] < len(detail_view):
+        record = detail_view.iloc[selected_rows[0]]
+        with st.container(border=True):
+            st.markdown(f"**Selected PCB SN: {escape(str(record['PCB SN']))}**")
+            left, right = st.columns(2)
+            with left:
+                st.write(f"**TestOperation:** {record['TestOperation'] or '—'}")
+                st.write(f"**Fault Phenomenon:** {record['Fault Phenomenon'] or '—'}")
+                st.write(f"**Fault reason:** {record['Fault reason'] or '—'}")
+            with right:
+                st.write(f"**RepaireRemark:** {record['RepaireRemark'] or '—'}")
+                st.write(f"**DutyType:** {record['DutyType'] or '—'}")
+                st.write(f"**Repairer:** {record['Repairer'] or '—'}")
+    st.download_button(
+        "Download matching repair records", detail_view.to_csv(index=False).encode("utf-8-sig"),
+        file_name=f"repair_pcb_details_{start_date:%Y-%m-%d}_{end_date:%Y-%m-%d}.csv",
+        mime="text/csv", key="repair_info_records_download",
+    )
+
+
 def _home_kpi_chart(frame, area: str, kpi: str, grain: str, models: list[str], target: dict | None) -> None:
     import plotly.graph_objects as go
     import pandas as pd
@@ -10479,6 +10706,8 @@ def render_page() -> None:
         iqc_page()
     elif module == "Smart Report":
         smart_report_page()
+    elif module == "Repair Info":
+        repair_info_page()
     elif module == "Model Comparison":
         model_comparison_page(MODULES[module]["color"])
     elif module == "About":
