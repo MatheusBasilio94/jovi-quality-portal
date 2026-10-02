@@ -55,7 +55,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.93"
+APP_VERSION = "v0.5.94"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 PORTAL_ACCOUNTS = configured_accounts()
@@ -108,6 +108,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.94", "Hide zero-input days from daily KPI Track charts while preserving valid zero-PPM results."),
     ("v0.5.93", "Invalidate weekly SMT KPI cache when the selected period requires daily values."),
     ("v0.5.92", "Refresh cached KPI grouping rules after deployment and restore trend lines between recorded days."),
     ("v0.5.91", "Show every selected day on SMT and Assembly KPI Track charts for periods up to 31 days; keep OQC dates within the selected range."),
@@ -7280,6 +7281,7 @@ def smt_kpi_line_chart(
     exception_reason_column: str | None = None,
     period_start: date | None = None,
     period_end: date | None = None,
+    input_columns: tuple[str, ...] = (),
 ):
     import pandas as pd
     import plotly.graph_objects as go
@@ -7295,8 +7297,17 @@ def smt_kpi_line_chart(
         plot_frame = frame.copy()
         plot_frame[date_column] = pd.to_datetime(plot_frame[date_column], errors="coerce").dt.normalize()
         plot_frame = plot_frame.loc[plot_frame[date_column].between(pd.Timestamp(period_start), pd.Timestamp(period_end))]
-    x_values = pd.to_datetime(plot_frame[date_column]) if date_column is not None and period_start is not None else plot_frame[x_column]
-    hover_x = "%{x|%d/%m/%Y}" if date_column is not None and period_start is not None else "%{x}"
+        for input_column in input_columns:
+            plot_frame = plot_frame.loc[pd.to_numeric(plot_frame[input_column], errors="coerce").gt(0)]
+    if daily_axis and date_column is not None:
+        x_values = plot_frame[date_column].dt.strftime("%d/%m/%Y")
+        hover_x = "%{x}"
+    elif date_column is not None and period_start is not None:
+        x_values = pd.to_datetime(plot_frame[date_column])
+        hover_x = "%{x|%d/%m/%Y}"
+    else:
+        x_values = plot_frame[x_column]
+        hover_x = "%{x}"
     values = pd.to_numeric(plot_frame[y_column], errors="coerce")
     # Plotly treats an explicit null as a gap.  Keep it distinct from zero so
     # an invalid daily denominator never draws a line down to the x-axis.
@@ -7366,6 +7377,10 @@ def smt_kpi_line_chart(
         fallback_top = float(target_value) * 1.22 if target_value and target_value > 0 else (1.0 if value_type == "percent" else 1_000_000.0)
         axis_range = [0.0, fallback_top]
     if exception_rows is not None and not exception_rows.empty and axis_range is not None:
+        if daily_axis and date_column is not None:
+            exception_rows = exception_rows.copy()
+            exception_rows[date_column] = pd.to_datetime(exception_rows[date_column], errors="coerce").dt.normalize()
+            exception_rows = exception_rows.loc[exception_rows[date_column].isin(plot_frame[date_column])]
         exception_y = axis_range[1] - ((axis_range[1] - axis_range[0]) * 0.04)
         empty_exception_values = pd.Series(0, index=exception_rows.index, dtype="float64")
         exception_counts = pd.to_numeric(
@@ -7382,7 +7397,13 @@ def smt_kpi_line_chart(
         )
         chart.add_trace(
             go.Scatter(
-                x=(pd.to_datetime(exception_rows[date_column]) if date_column is not None and period_start is not None else exception_rows[x_column]),
+                x=(
+                    exception_rows[date_column].dt.strftime("%d/%m/%Y")
+                    if daily_axis and date_column is not None
+                    else pd.to_datetime(exception_rows[date_column])
+                    if date_column is not None and period_start is not None
+                    else exception_rows[x_column]
+                ),
                 y=[exception_y] * len(exception_rows),
                 mode="markers",
                 marker=dict(color="#DC2626", size=13, symbol="x"),
@@ -7414,23 +7435,34 @@ def smt_kpi_line_chart(
     if period_start is not None and period_end is not None and date_column is not None:
         grain = requested_trend_grain(period_start, period_end)
         if grain == "day":
-            ticks = pd.date_range(period_start, period_end, freq="D")
-        elif grain == "week":
-            ticks = pd.date_range(period_start, period_end, freq="W-MON")
+            chart.update_xaxes(
+                type="category",
+                categoryorder="array",
+                categoryarray=list(x_values),
+                tickmode="array",
+                tickvals=list(x_values),
+                ticktext=plot_frame[date_column].dt.strftime("%d/%m").tolist(),
+                range=[-0.5, max(len(plot_frame) - 0.5, 0.5)],
+                tickangle=-45 if len(plot_frame) > 10 else 0,
+                automargin=True,
+            )
         else:
-            ticks = pd.date_range(period_start, period_end, freq="MS")
-        start_tick = pd.Timestamp(period_start)
-        if len(ticks) == 0 or ticks[0] != start_tick:
-            ticks = ticks.insert(0, start_tick)
-        chart.update_xaxes(
-            type="date",
-            range=[start_tick - pd.Timedelta(hours=12), pd.Timestamp(period_end) + pd.Timedelta(hours=12)],
-            tickmode="array",
-            tickvals=ticks,
-            ticktext=[tick.strftime("%d/%m" if grain != "month" else "%b/%y") for tick in ticks],
-            tickangle=-45 if len(ticks) > 10 else 0,
-            automargin=True,
-        )
+            if grain == "week":
+                ticks = pd.date_range(period_start, period_end, freq="W-MON")
+            else:
+                ticks = pd.date_range(period_start, period_end, freq="MS")
+            start_tick = pd.Timestamp(period_start)
+            if len(ticks) == 0 or ticks[0] != start_tick:
+                ticks = ticks.insert(0, start_tick)
+            chart.update_xaxes(
+                type="date",
+                range=[start_tick - pd.Timedelta(hours=12), pd.Timestamp(period_end) + pd.Timedelta(hours=12)],
+                tickmode="array",
+                tickvals=ticks,
+                ticktext=[tick.strftime("%d/%m" if grain != "month" else "%b/%y") for tick in ticks],
+                tickangle=-45 if len(ticks) > 10 else 0,
+                automargin=True,
+            )
     else:
         chart.update_xaxes(tickangle=-35 if len(frame) > 10 else 0, automargin=True)
     chart.update_yaxes(
@@ -7811,6 +7843,7 @@ def smt_kpi_track_page(color: str) -> None:
         exception_reason_column="FunctionPassStatus",
         period_start=start_date,
         period_end=end_date,
+        input_columns=("Input",),
     )
     process_ng_chart = smt_kpi_line_chart(
         smt_trend,
@@ -7826,6 +7859,7 @@ def smt_kpi_track_page(color: str) -> None:
         exception_reason_column="SMTProcessStatus",
         period_start=start_date,
         period_end=end_date,
+        input_columns=("Input",),
     )
     show_chart(function_pass_chart)
     show_chart(process_ng_chart)
@@ -7849,6 +7883,7 @@ def smt_kpi_track_page(color: str) -> None:
             exception_reason_column="SMTDutyStatus",
             period_start=start_date,
             period_end=end_date,
+            input_columns=("Produced",),
         )
         if not assembly_trend.empty
         else None
@@ -7865,6 +7900,7 @@ def smt_kpi_track_page(color: str) -> None:
             target_value=oqc_target,
             period_start=start_date,
             period_end=end_date,
+            input_columns=("Inspected",),
         )
     else:
         oqc_trend = pd.DataFrame()
@@ -8096,6 +8132,7 @@ def assembly_kpi_track_page(color: str) -> None:
             exception_reason_column="FunctionPassStatus",
             period_start=start_date,
             period_end=end_date,
+            input_columns=("Produced",),
         )
         if functional_ready else None
     )
@@ -8109,6 +8146,7 @@ def assembly_kpi_track_page(color: str) -> None:
             exception_reason_column="AppearancePassStatus",
             period_start=start_date,
             period_end=end_date,
+            input_columns=("Produced",),
         )
         if appearance_ready else None
     )
@@ -8122,6 +8160,7 @@ def assembly_kpi_track_page(color: str) -> None:
             exception_reason_column="FunctionMandoStatus",
             period_start=start_date,
             period_end=end_date,
+            input_columns=("Produced",),
         )
         if functional_ready else None
     )
@@ -8138,6 +8177,7 @@ def assembly_kpi_track_page(color: str) -> None:
             target_value=oqc_fqc_target,
             period_start=start_date,
             period_end=end_date,
+            input_columns=("OQCInspected", "FQCInspected"),
         )
     charts = [
         (function_chart, "Function Pass Rate trend will appear after Functional Failure stations are defined."),

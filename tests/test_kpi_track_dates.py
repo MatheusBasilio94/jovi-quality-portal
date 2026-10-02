@@ -68,23 +68,56 @@ class KPITrackDatesTest(unittest.TestCase):
         self.assertEqual(settings["grain"], "day")
         self.assertEqual(trend["Period"].tolist(), ["01/09", "30/09"])
 
-    def test_chart_marks_every_selected_day_and_connects_recorded_values(self):
+    def test_daily_chart_shows_only_days_with_input(self):
         frame = pd.DataFrame({
-            "PeriodDate": pd.to_datetime(["2026-09-01", "2026-09-30"]),
-            "Period": ["01/09", "30/09"],
-            "PassRate": [0.99, 0.98],
+            "PeriodDate": pd.to_datetime(["2026-09-01", "2026-09-02", "2026-09-30"]),
+            "Period": ["01/09", "02/09", "30/09"],
+            "Inspected": [10, 0, 20],
+            "PassRate": [0.99, None, 0.98],
         })
         chart = self.builders["smt_kpi_line_chart"](
             frame, "Period", "PassRate", "OQC", "#1D5FBF", "percent",
             period_start=date(2026, 9, 1), period_end=date(2026, 9, 30),
+            input_columns=("Inspected",),
         )
-        self.assertEqual(len(chart.layout.xaxis.tickvals), 30)
+        self.assertEqual(chart.layout.xaxis.type, "category")
+        self.assertEqual(len(chart.layout.xaxis.tickvals), 2)
         self.assertEqual(chart.layout.xaxis.ticktext[0], "01/09")
         self.assertEqual(chart.layout.xaxis.ticktext[-1], "30/09")
         self.assertEqual(len(chart.data[0].x), 2)
         self.assertEqual(list(chart.data[0].y), [0.99, 0.98])
         self.assertEqual(chart.data[0].mode, "lines+markers+text")
         self.assertEqual(chart.data[0].y[-1], 0.98)
+
+    def test_zero_ppm_with_positive_input_remains_visible(self):
+        frame = pd.DataFrame({
+            "PeriodDate": pd.to_datetime(["2026-09-01", "2026-09-02", "2026-09-03"]),
+            "Period": ["01/09", "02/09", "03/09"],
+            "Input": [100, 0, 50],
+            "PPM": [1200.0, 0.0, 0.0],
+        })
+        chart = self.builders["smt_kpi_line_chart"](
+            frame, "Period", "PPM", "Process NG", "#0D7A45", "ppm",
+            period_start=date(2026, 9, 1), period_end=date(2026, 9, 3),
+            input_columns=("Input",),
+        )
+        self.assertEqual(list(chart.layout.xaxis.ticktext), ["01/09", "03/09"])
+        self.assertEqual(list(chart.data[0].y), [1200.0, 0.0])
+
+    def test_combined_inspection_needs_both_inputs(self):
+        frame = pd.DataFrame({
+            "PeriodDate": pd.to_datetime(["2026-09-01", "2026-09-02", "2026-09-03"]),
+            "Period": ["01/09", "02/09", "03/09"],
+            "OQCInspected": [10, 10, 0],
+            "FQCInspected": [10, 0, 10],
+            "CombinedPassRate": [0.99, None, None],
+        })
+        chart = self.builders["smt_kpi_line_chart"](
+            frame, "Period", "CombinedPassRate", "OQC × FQC", "#0D7A45", "percent",
+            period_start=date(2026, 9, 1), period_end=date(2026, 9, 3),
+            input_columns=("OQCInspected", "FQCInspected"),
+        )
+        self.assertEqual(list(chart.layout.xaxis.ticktext), ["01/09"])
 
 
 if __name__ == "__main__":
