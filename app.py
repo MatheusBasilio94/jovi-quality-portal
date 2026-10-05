@@ -55,7 +55,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.6.00"
+APP_VERSION = "v0.6.01"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 PORTAL_ACCOUNTS = configured_accounts()
@@ -108,6 +108,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.6.01", "Use the breakdown chart expander directly without an extra Show chart toggle."),
     ("v0.6.00", "Add editable defect breakdown chart exports to SMT and Assembly Quality Dashboards."),
     ("v0.5.99", "Add a black outer frame to copied chart images while preserving their resolution and report dimensions."),
     ("v0.5.98", "Keep monthly KPI chart preparation inside the app so startup does not depend on a newly exported tools symbol."),
@@ -8981,8 +8982,6 @@ def render_breakdown_chart_builder(confirmed, area: str) -> None:
     prefix = area.lower()
     dimensions = SMT_DEFECT_DIMENSIONS if area == "SMT" else ASSEMBLY_DEFECT_DIMENSIONS
     with st.expander("Breakdown chart · Copy / Export", expanded=False):
-        if not st.toggle("Show chart", key=f"{prefix}_breakdown_chart_enabled"):
-            return
         source = confirmed.copy()
         for _, column, _, _ in dimensions:
             if column not in source:
