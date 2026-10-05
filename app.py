@@ -38,7 +38,7 @@ analysis_period_days = trend_rules.analysis_period_days
 requested_trend_grain = trend_rules.requested_trend_grain
 trend_grain_labels = trend_rules.trend_grain_labels
 from tools import assembly_kpi_v2
-from tools.kpi_slide import build_kpi_panel_chart, build_monthly_kpi_panels
+from tools.kpi_slide import build_kpi_panel_chart
 from tools.auth_session import COOKIE_NAME, SESSION_SECONDS, issue_token, revoke_token
 from tools.access_control import (
     account_from_token,
@@ -55,7 +55,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.97"
+APP_VERSION = "v0.5.98"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 PORTAL_ACCOUNTS = configured_accounts()
@@ -108,6 +108,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.98", "Keep monthly KPI chart preparation inside the app so startup does not depend on a newly exported tools symbol."),
     ("v0.5.97", "Added monthly SMT and Assembly KPI PowerPoint charts matching the three review-table months with compact report exports."),
     ("v0.5.96", "Export KPI Track trends as compact, readable report charts and publish the tighter pass-rate scale."),
     ("v0.5.95", "Tighten KPI Track pass-rate scales around the selected period's minimum without clipping data labels."),
@@ -6434,6 +6435,37 @@ def weekly_kpi_slide_panels(
     return slide_panels
 
 
+def monthly_kpi_slide_panels(directory, summary_columns):
+    """Build monthly charts from the same columns displayed in the review table."""
+    import pandas as pd
+
+    panels = []
+    for item in directory:
+        source = item["source"]
+        frame = pd.DataFrame(
+            [
+                {
+                    "Period": label,
+                    "Value": totals.get(source),
+                    "IsException": bool(exceptions.get(source)),
+                }
+                for label, totals, exceptions in summary_columns
+            ]
+        )
+        panels.append(
+            {
+                "title": item["kpi"],
+                "frame": frame,
+                "x_column": "Period",
+                "y_column": "Value",
+                "value_type": "percent" if item["direction"] == "min" else "ppm",
+                "target": item["target"],
+                "exceptions": frame.loc[frame["IsException"]],
+            }
+        )
+    return panels
+
+
 def kpi_review_email(
     period_label: str,
     period_name: str,
@@ -6575,8 +6607,10 @@ def weekly_kpi_review_page() -> None:
             for chart_tab, panel in zip(chart_tabs, panels):
                 with chart_tab:
                     chart_name = re.sub(r"[^a-z0-9]+", "_", panel["title"].lower()).strip("_")
+                    figure = build_kpi_panel_chart(panel)
+                    figure.update_layout(meta={"jovi_report_export": "kpi_review"})
                     show_chart(
-                        build_kpi_panel_chart(panel),
+                        figure,
                         image_filename=(
                             f"quality_{area.lower()}_{chart_name}_"
                             f"{previous_start.strftime('%Y%m%d')}_{week_end.strftime('%Y%m%d')}"
@@ -6663,13 +6697,15 @@ def monthly_kpi_review_page() -> None:
             "Use ⧉ to copy a compact, high-resolution PNG or PPT to download a vector SVG "
             "sized 16.17 cm × 8.17 cm."
         )
-        panels = build_monthly_kpi_panels(directory, month_columns)
+        panels = monthly_kpi_slide_panels(directory, month_columns)
         chart_tabs = st.tabs([panel["title"] for panel in panels])
         for chart_tab, panel in zip(chart_tabs, panels):
             with chart_tab:
                 chart_name = re.sub(r"[^a-z0-9]+", "_", panel["title"].lower()).strip("_")
+                figure = build_kpi_panel_chart(panel)
+                figure.update_layout(meta={"jovi_report_export": "kpi_review"})
                 show_chart(
-                    build_kpi_panel_chart(panel),
+                    figure,
                     image_filename=(
                         f"quality_monthly_{area.lower()}_{chart_name}_"
                         f"{two_months_ago_start.strftime('%Y%m')}_{start_date.strftime('%Y%m')}"

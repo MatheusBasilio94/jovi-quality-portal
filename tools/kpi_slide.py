@@ -372,35 +372,3 @@ def build_kpi_panel_chart(panel: dict[str, Any]) -> go.Figure:
         tickfont=dict(size=18, color="#111111"),
     )
     return figure
-
-
-def build_monthly_kpi_panels(
-    directory: tuple[dict[str, Any], ...],
-    summary_columns: list[tuple[str, dict[str, float | None], dict[str, str]]],
-) -> list[dict[str, Any]]:
-    """Mirror the monthly review table's KPI order, values and exceptions."""
-    panels = []
-    for item in directory:
-        source = item["source"]
-        frame = pd.DataFrame(
-            [
-                {
-                    "Period": label,
-                    "Value": totals.get(source),
-                    "IsException": bool(exceptions.get(source)),
-                }
-                for label, totals, exceptions in summary_columns
-            ]
-        )
-        panels.append(
-            {
-                "title": item["kpi"],
-                "frame": frame,
-                "x_column": "Period",
-                "y_column": "Value",
-                "value_type": "percent" if item["direction"] == "min" else "ppm",
-                "target": item["target"],
-                "exceptions": frame.loc[frame["IsException"]],
-            }
-        )
-    return panels

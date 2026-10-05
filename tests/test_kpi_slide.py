@@ -1,10 +1,11 @@
+import ast
 import unittest
+from pathlib import Path
 
 import pandas as pd
 
 from tools.kpi_slide import (
     build_kpi_panel_chart,
-    build_monthly_kpi_panels,
     build_kpi_slide,
     build_presentation_timeline,
     build_presentation_trend,
@@ -146,7 +147,15 @@ class KpiSlideTests(unittest.TestCase):
             ("Sep", {"smt_function": None, "smt_process": 8418.0}, {"smt_function": "Invalid input"}),
             ("Oct", {"smt_function": 0.9973, "smt_process": 0.0}, {}),
         ]
-        panels = build_monthly_kpi_panels(directory, months)
+        source = Path(__file__).resolve().parents[1] / "app.py"
+        module = ast.parse(source.read_text(encoding="utf-8"))
+        builder = next(
+            node for node in module.body
+            if isinstance(node, ast.FunctionDef) and node.name == "monthly_kpi_slide_panels"
+        )
+        namespace = {}
+        exec(compile(ast.Module(body=[builder], type_ignores=[]), str(source), "exec"), namespace)
+        panels = namespace["monthly_kpi_slide_panels"](directory, months)
         self.assertEqual([panel["title"] for panel in panels], [item["kpi"] for item in directory])
         self.assertEqual(panels[0]["frame"]["Period"].tolist(), ["Aug", "Sep", "Oct"])
         self.assertEqual(panels[0]["frame"]["Value"].tolist()[0], 0.9969)
