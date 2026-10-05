@@ -55,7 +55,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.98"
+APP_VERSION = "v0.5.99"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 PORTAL_ACCOUNTS = configured_accounts()
@@ -108,6 +108,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.99", "Add a black outer frame to copied chart images while preserving their resolution and report dimensions."),
     ("v0.5.98", "Keep monthly KPI chart preparation inside the app so startup does not depend on a newly exported tools symbol."),
     ("v0.5.97", "Added monthly SMT and Assembly KPI PowerPoint charts matching the three review-table months with compact report exports."),
     ("v0.5.96", "Export KPI Track trends as compact, readable report charts and publish the tighter pass-rate scale."),
@@ -4721,6 +4722,29 @@ def install_chart_copy_controls() -> None:
                 let pngBlob = sourceBlob.type === "image/png"
                     ? sourceBlob
                     : new parentWindow.Blob([await sourceBlob.arrayBuffer()], {type: "image/png"});
+                // Draw the frame inside the existing image so its resolution
+                // and final report size include the complete black border.
+                const imageUrl = parentWindow.URL.createObjectURL(pngBlob);
+                try {
+                    const image = new parentWindow.Image();
+                    image.src = imageUrl;
+                    await image.decode();
+                    const canvas = parentDocument.createElement("canvas");
+                    canvas.width = image.naturalWidth;
+                    canvas.height = image.naturalHeight;
+                    const context = canvas.getContext("2d");
+                    context.drawImage(image, 0, 0);
+                    const lineWidth = reportSize ? 3 : Math.max(2, Math.round(canvas.width / 1000));
+                    context.strokeStyle = "#000000";
+                    context.lineWidth = lineWidth;
+                    context.strokeRect(lineWidth / 2, lineWidth / 2, canvas.width - lineWidth, canvas.height - lineWidth);
+                    pngBlob = await new Promise((resolve, reject) => canvas.toBlob(
+                        (blob) => blob ? resolve(blob) : reject(new Error("Chart image unavailable")),
+                        "image/png"
+                    ));
+                } finally {
+                    parentWindow.URL.revokeObjectURL(imageUrl);
+                }
                 if (reportSize) pngBlob = await sizePngForReport(pngBlob);
                 await parentWindow.navigator.clipboard.write([
                     new parentWindow.ClipboardItem({"image/png": pngBlob})
