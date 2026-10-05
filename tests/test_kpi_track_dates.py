@@ -23,6 +23,7 @@ def load_chart_functions():
         "escape": escape,
         "analysis_period_days": analysis_period_days,
         "requested_trend_grain": requested_trend_grain,
+        "fmt_kpi_pct": lambda value: f"{value:.2%}",
     }
     exec(compile(ast.Module(body=functions, type_ignores=[]), str(source), "exec"), namespace)
     namespace["trend_granularity"] = lambda start, end: {
@@ -103,6 +104,23 @@ class KPITrackDatesTest(unittest.TestCase):
         )
         self.assertEqual(list(chart.layout.xaxis.ticktext), ["01/09", "03/09"])
         self.assertEqual(list(chart.data[0].y), [1200.0, 0.0])
+
+    def test_pass_rate_scale_tracks_september_minimum(self):
+        frame = pd.DataFrame({
+            "PeriodDate": pd.to_datetime(["2026-09-01", "2026-09-22", "2026-09-23"]),
+            "Period": ["01/09", "22/09", "23/09"],
+            "Input": [100, 23, 10],
+            "PassRate": [0.9972, 0.913, 1.0],
+        })
+        chart = self.builders["smt_kpi_line_chart"](
+            frame, "Period", "PassRate", "Function Pass Rate", "#0D7A45", "percent",
+            target_value=0.9966, period_start=date(2026, 9, 1),
+            period_end=date(2026, 9, 30), input_columns=("Input",),
+        )
+        lower, upper = chart.layout.yaxis.range
+        self.assertGreater(lower, 0.89)
+        self.assertLess(lower, 0.91)
+        self.assertEqual(upper, 1.0)
 
     def test_combined_inspection_needs_both_inputs(self):
         frame = pd.DataFrame({

@@ -55,7 +55,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.94"
+APP_VERSION = "v0.5.96"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 PORTAL_ACCOUNTS = configured_accounts()
@@ -108,6 +108,8 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.96", "Export KPI Track trends as compact, readable report charts and publish the tighter pass-rate scale."),
+    ("v0.5.95", "Tighten KPI Track pass-rate scales around the selected period's minimum without clipping data labels."),
     ("v0.5.94", "Hide zero-input days from daily KPI Track charts while preserving valid zero-PPM results."),
     ("v0.5.93", "Invalidate weekly SMT KPI cache when the selected period requires daily values."),
     ("v0.5.92", "Refresh cached KPI grouping rules after deployment and restore trend lines between recorded days."),
@@ -4681,15 +4683,106 @@ def install_chart_copy_controls() -> None:
                 }
             };
 
-            const copyImage = async (href) => {
+            const sizePngForReport = async (sourceBlob) => {
+                const original = new Uint8Array(await sourceBlob.arrayBuffer());
+                const view = new DataView(original.buffer);
+                if (view.getUint32(0) !== 0x89504e47 || view.getUint32(12) !== 0x49484452) {
+                    return sourceBlob;
+                }
+                const pixelsPerMeter = Math.round(view.getUint32(16) / 0.1617);
+                const chunk = new Uint8Array(21);
+                const chunkView = new DataView(chunk.buffer);
+                chunkView.setUint32(0, 9);
+                chunk.set([112, 72, 89, 115], 4); // pHYs
+                chunkView.setUint32(8, pixelsPerMeter);
+                chunkView.setUint32(12, pixelsPerMeter);
+                chunk[16] = 1;
+                let crc = 0xffffffff;
+                for (let index = 4; index < 17; index++) {
+                    crc ^= chunk[index];
+                    for (let bit = 0; bit < 8; bit++) {
+                        crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+                    }
+                }
+                chunkView.setUint32(17, (crc ^ 0xffffffff) >>> 0);
+                const firstChunkEnd = 8 + 12 + view.getUint32(8);
+                const sized = new Uint8Array(original.length + chunk.length);
+                sized.set(original.slice(0, firstChunkEnd), 0);
+                sized.set(chunk, firstChunkEnd);
+                sized.set(original.slice(firstChunkEnd), firstChunkEnd + chunk.length);
+                return new parentWindow.Blob([sized], {type: "image/png"});
+            };
+
+            const copyImage = async (href, reportSize = false) => {
                 const response = await parentWindow.fetch(href);
                 const sourceBlob = await response.blob();
-                const pngBlob = sourceBlob.type === "image/png"
+                let pngBlob = sourceBlob.type === "image/png"
                     ? sourceBlob
                     : new parentWindow.Blob([await sourceBlob.arrayBuffer()], {type: "image/png"});
+                if (reportSize) pngBlob = await sizePngForReport(pngBlob);
                 await parentWindow.navigator.clipboard.write([
                     new parentWindow.ClipboardItem({"image/png": pngBlob})
                 ]);
+            };
+
+            const exportReportChart = async (graphDiv, format) => {
+                const exportWidth = 916;
+                const exportHeight = 463;
+                const clone = (value) => JSON.parse(JSON.stringify(value));
+                const data = graphDiv.data.map((trace) => {
+                    const result = clone(trace);
+                    if (result.type === "scatter") {
+                        result.textfont = {...result.textfont, size: 18};
+                        result.marker = {...result.marker, size: 9};
+                        result.line = {...result.line, width: 3};
+                        const labels = Array.isArray(result.text) ? result.text : [];
+                        if (labels.length > 16) {
+                            // Repeated zero labels hide the actual trend when a
+                            // month is placed in a small report chart slot.
+                            result.text = labels.map((label, index) =>
+                                String(label).trim() === "0" && index !== 0 && index !== labels.length - 1
+                                    ? "" : label
+                            );
+                        }
+                    }
+                    return result;
+                });
+                const layout = clone(graphDiv.layout);
+                layout.width = exportWidth;
+                layout.height = exportHeight;
+                layout.autosize = false;
+                layout.margin = {l: 76, r: 34, t: 68, b: 86};
+                layout.font = {...layout.font, size: 17, color: "#12233F"};
+                layout.title = {...layout.title, font: {...layout.title?.font, size: 22}};
+                layout.xaxis = {
+                    ...layout.xaxis,
+                    tickfont: {...layout.xaxis?.tickfont, size: 15},
+                    title: {...layout.xaxis?.title, font: {...layout.xaxis?.title?.font, size: 17}},
+                };
+                layout.yaxis = {
+                    ...layout.yaxis,
+                    tickfont: {...layout.yaxis?.tickfont, size: 15},
+                    title: {...layout.yaxis?.title, font: {...layout.yaxis?.title?.font, size: 17}},
+                };
+                layout.annotations = (layout.annotations || []).map((annotation) => ({
+                    ...annotation,
+                    font: {...annotation.font, size: 16},
+                }));
+                const exportDiv = parentDocument.createElement("div");
+                exportDiv.style.cssText = `position:fixed;left:-10000px;top:0;width:${exportWidth}px;height:${exportHeight}px;`;
+                parentDocument.body.appendChild(exportDiv);
+                try {
+                    await parentWindow.Plotly.newPlot(exportDiv, data, layout, {staticPlot: true, displayModeBar: false});
+                    return await parentWindow.Plotly.toImage(exportDiv, {
+                        format,
+                        width: exportWidth,
+                        height: exportHeight,
+                        scale: format === "png" ? 3 : 1,
+                    });
+                } finally {
+                    parentWindow.Plotly.purge(exportDiv);
+                    exportDiv.remove();
+                }
             };
 
             const addPowerPointFrame = async (href, width, height) => {
@@ -4740,6 +4833,20 @@ def install_chart_copy_controls() -> None:
                 copyButton.setAttribute("tabindex", "0");
 
                 const capture = () => {
+                    const graphDiv = chartContainer.querySelector(".js-plotly-plot");
+                    if (graphDiv?.layout?.meta?.jovi_report_export === "kpi_track" && parentWindow.Plotly?.toImage) {
+                        (async () => {
+                            try {
+                                const href = await exportReportChart(graphDiv, "png");
+                                await copyImage(href, true);
+                                setButtonState(copyButton, "✓", "Report-sized chart copied");
+                            } catch (_error) {
+                                nativeButton.click();
+                                setButtonState(copyButton, "↓", "Copy failed; PNG downloaded");
+                            }
+                        })();
+                        return;
+                    }
                     if (!parentWindow.navigator?.clipboard || !parentWindow.ClipboardItem) {
                         nativeButton.click();
                         setButtonState(copyButton, "↓", "Clipboard unavailable; PNG downloaded");
@@ -4807,14 +4914,14 @@ def install_chart_copy_controls() -> None:
                     try {
                         const svgWidth = 916;
                         const svgHeight = 463;
-                        const href = await parentWindow.Plotly.toImage(graphDiv, {
-                            format: "svg",
-                            // These canvas values provide enough drawing room;
-                            // addPowerPointFrame writes the final physical size.
-                            width: svgWidth,
-                            height: svgHeight,
-                            scale: 1,
-                        });
+                        const href = graphDiv.layout?.meta?.jovi_report_export === "kpi_track"
+                            ? await exportReportChart(graphDiv, "svg")
+                            : await parentWindow.Plotly.toImage(graphDiv, {
+                                format: "svg",
+                                width: svgWidth,
+                                height: svgHeight,
+                                scale: 1,
+                            });
                         const framedHref = await addPowerPointFrame(href, svgWidth, svgHeight);
                         const link = parentDocument.createElement("a");
                         link.href = framedHref;
@@ -7368,7 +7475,8 @@ def smt_kpi_line_chart(
         minimum = float(axis_values.min())
         maximum = float(axis_values.max())
         span = max(maximum - minimum, 0.005)
-        axis_range = [max(0.0, minimum - span), min(1.0, maximum + span * 1.6)]
+        lower_padding = min(max(span * 0.15, 0.002), 0.015)
+        axis_range = [max(0.0, minimum - lower_padding), min(1.0, maximum + span * 1.6)]
     elif not axis_values.empty and float(axis_values.max()) > 0:
         axis_range = [0, float(axis_values.max()) * 1.22]
     else:
@@ -7431,6 +7539,7 @@ def smt_kpi_line_chart(
         paper_bgcolor="white",
         plot_bgcolor="#F8FAFD",
         showlegend=False,
+        meta={"jovi_report_export": "kpi_track"},
     )
     if period_start is not None and period_end is not None and date_column is not None:
         grain = requested_trend_grain(period_start, period_end)
