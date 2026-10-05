@@ -38,7 +38,7 @@ analysis_period_days = trend_rules.analysis_period_days
 requested_trend_grain = trend_rules.requested_trend_grain
 trend_grain_labels = trend_rules.trend_grain_labels
 from tools import assembly_kpi_v2
-from tools.kpi_slide import build_kpi_panel_chart
+from tools.kpi_slide import build_kpi_panel_chart, build_monthly_kpi_panels
 from tools.auth_session import COOKIE_NAME, SESSION_SECONDS, issue_token, revoke_token
 from tools.access_control import (
     account_from_token,
@@ -55,7 +55,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.96"
+APP_VERSION = "v0.5.97"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 PORTAL_ACCOUNTS = configured_accounts()
@@ -108,6 +108,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.5.97", "Added monthly SMT and Assembly KPI PowerPoint charts matching the three review-table months with compact report exports."),
     ("v0.5.96", "Export KPI Track trends as compact, readable report charts and publish the tighter pass-rate scale."),
     ("v0.5.95", "Tighten KPI Track pass-rate scales around the selected period's minimum without clipping data labels."),
     ("v0.5.94", "Hide zero-input days from daily KPI Track charts while preserving valid zero-PPM results."),
@@ -4834,7 +4835,7 @@ def install_chart_copy_controls() -> None:
 
                 const capture = () => {
                     const graphDiv = chartContainer.querySelector(".js-plotly-plot");
-                    if (graphDiv?.layout?.meta?.jovi_report_export === "kpi_track" && parentWindow.Plotly?.toImage) {
+                    if (["kpi_track", "kpi_review"].includes(graphDiv?.layout?.meta?.jovi_report_export) && parentWindow.Plotly?.toImage) {
                         (async () => {
                             try {
                                 const href = await exportReportChart(graphDiv, "png");
@@ -4914,7 +4915,7 @@ def install_chart_copy_controls() -> None:
                     try {
                         const svgWidth = 916;
                         const svgHeight = 463;
-                        const href = graphDiv.layout?.meta?.jovi_report_export === "kpi_track"
+                        const href = ["kpi_track", "kpi_review"].includes(graphDiv.layout?.meta?.jovi_report_export)
                             ? await exportReportChart(graphDiv, "svg")
                             : await parentWindow.Plotly.toImage(graphDiv, {
                                 format: "svg",
@@ -6555,7 +6556,7 @@ def weekly_kpi_review_page() -> None:
             st.caption(
                 "Cada gráfico usa os mesmos acumulados WK e os mesmos dias visíveis da tabela acima. "
                 "Use PPT para baixar o SVG vetorial já dimensionado para 16,17 cm × 8,17 cm no PowerPoint; "
-                "use ⧉ para copiar um PNG 4K."
+                "use ⧉ para copiar um PNG compacto em alta resolução."
             )
             panels = weekly_kpi_slide_panels(
                 area,
@@ -6650,16 +6651,30 @@ def monthly_kpi_review_page() -> None:
     two_months_ago_totals, _, _, two_months_ago_total_exceptions, _ = weekly_kpi_review_data(
         two_months_ago_start, two_months_ago_end
     )
-    kpi_review_table(
-        directory,
-        [
-            (two_months_ago_start.strftime("%b"), two_months_ago_totals, two_months_ago_total_exceptions),
-            (previous_start.strftime("%b"), previous_totals, previous_total_exceptions),
-            (start_date.strftime("%b"), totals, total_exceptions),
-        ],
-        {},
-        [],
-    )
+    month_columns = [
+        (two_months_ago_start.strftime("%b"), two_months_ago_totals, two_months_ago_total_exceptions),
+        (previous_start.strftime("%b"), previous_totals, previous_total_exceptions),
+        (start_date.strftime("%b"), totals, total_exceptions),
+    ]
+    kpi_review_table(directory, month_columns, {}, [])
+    with st.expander(f"{area} KPI Graphs · PowerPoint", expanded=False):
+        st.caption(
+            "Each chart uses the same three monthly values and target as the table above. "
+            "Use ⧉ to copy a compact, high-resolution PNG or PPT to download a vector SVG "
+            "sized 16.17 cm × 8.17 cm."
+        )
+        panels = build_monthly_kpi_panels(directory, month_columns)
+        chart_tabs = st.tabs([panel["title"] for panel in panels])
+        for chart_tab, panel in zip(chart_tabs, panels):
+            with chart_tab:
+                chart_name = re.sub(r"[^a-z0-9]+", "_", panel["title"].lower()).strip("_")
+                show_chart(
+                    build_kpi_panel_chart(panel),
+                    image_filename=(
+                        f"quality_monthly_{area.lower()}_{chart_name}_"
+                        f"{two_months_ago_start.strftime('%Y%m')}_{start_date.strftime('%Y%m')}"
+                    ),
+                )
     if errors.get(area):
         st.info(f"{area}: {errors[area]}")
     if previous_errors.get(area):

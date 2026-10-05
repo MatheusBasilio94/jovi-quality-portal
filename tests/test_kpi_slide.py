@@ -4,6 +4,7 @@ import pandas as pd
 
 from tools.kpi_slide import (
     build_kpi_panel_chart,
+    build_monthly_kpi_panels,
     build_kpi_slide,
     build_presentation_timeline,
     build_presentation_trend,
@@ -133,6 +134,29 @@ class KpiSlideTests(unittest.TestCase):
         self.assertFalse(figure.layout.xaxis.mirror)
         self.assertFalse(figure.layout.yaxis.showline)
         self.assertFalse(figure.layout.yaxis.mirror)
+        self.assertEqual(figure.layout.meta["jovi_report_export"], "kpi_review")
+
+    def test_monthly_panels_follow_table_values_and_exceptions(self):
+        directory = (
+            {"kpi": "Functional Pass Rate", "source": "smt_function", "direction": "min", "target": 0.9966},
+            {"kpi": "SMT Process NG Rate (PPM)", "source": "smt_process", "direction": "max", "target": 5000.0},
+        )
+        months = [
+            ("Aug", {"smt_function": 0.9969, "smt_process": 8049.0}, {}),
+            ("Sep", {"smt_function": None, "smt_process": 8418.0}, {"smt_function": "Invalid input"}),
+            ("Oct", {"smt_function": 0.9973, "smt_process": 0.0}, {}),
+        ]
+        panels = build_monthly_kpi_panels(directory, months)
+        self.assertEqual([panel["title"] for panel in panels], [item["kpi"] for item in directory])
+        self.assertEqual(panels[0]["frame"]["Period"].tolist(), ["Aug", "Sep", "Oct"])
+        self.assertEqual(panels[0]["frame"]["Value"].tolist()[0], 0.9969)
+        self.assertTrue(pd.isna(panels[0]["frame"]["Value"].iloc[1]))
+        self.assertEqual(panels[0]["exceptions"]["Period"].tolist(), ["Sep"])
+        self.assertEqual(panels[1]["value_type"], "ppm")
+        self.assertEqual(panels[1]["frame"]["Value"].tolist()[-1], 0.0)
+        figure = build_kpi_panel_chart(panels[0])
+        self.assertEqual(list(figure.data[0].x), ["Aug", "Sep", "Oct"])
+        self.assertIsNone(figure.data[0].y[1])
 
 
 if __name__ == "__main__":
