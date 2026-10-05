@@ -55,7 +55,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.5.99"
+APP_VERSION = "v0.6.00"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 PORTAL_ACCOUNTS = configured_accounts()
@@ -108,6 +108,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.6.00", "Add editable defect breakdown chart exports to SMT and Assembly Quality Dashboards."),
     ("v0.5.99", "Add a black outer frame to copied chart images while preserving their resolution and report dimensions."),
     ("v0.5.98", "Keep monthly KPI chart preparation inside the app so startup does not depend on a newly exported tools symbol."),
     ("v0.5.97", "Added monthly SMT and Assembly KPI PowerPoint charts matching the three review-table months with compact report exports."),
@@ -4777,7 +4778,7 @@ def install_chart_copy_controls() -> None:
                 layout.width = exportWidth;
                 layout.height = exportHeight;
                 layout.autosize = false;
-                layout.margin = {l: 76, r: 34, t: 68, b: 86};
+                layout.margin = {l: 76, r: 34, t: 68, b: layout.meta?.jovi_report_export === "breakdown" ? 150 : 86};
                 layout.font = {...layout.font, size: 17, color: "#12233F"};
                 layout.title = {...layout.title, font: {...layout.title?.font, size: 22}};
                 layout.xaxis = {
@@ -4860,7 +4861,7 @@ def install_chart_copy_controls() -> None:
 
                 const capture = () => {
                     const graphDiv = chartContainer.querySelector(".js-plotly-plot");
-                    if (["kpi_track", "kpi_review"].includes(graphDiv?.layout?.meta?.jovi_report_export) && parentWindow.Plotly?.toImage) {
+                    if (["kpi_track", "kpi_review", "breakdown"].includes(graphDiv?.layout?.meta?.jovi_report_export) && parentWindow.Plotly?.toImage) {
                         (async () => {
                             try {
                                 const href = await exportReportChart(graphDiv, "png");
@@ -4940,7 +4941,7 @@ def install_chart_copy_controls() -> None:
                     try {
                         const svgWidth = 916;
                         const svgHeight = 463;
-                        const href = ["kpi_track", "kpi_review"].includes(graphDiv.layout?.meta?.jovi_report_export)
+                        const href = ["kpi_track", "kpi_review", "breakdown"].includes(graphDiv.layout?.meta?.jovi_report_export)
                             ? await exportReportChart(graphDiv, "svg")
                             : await parentWindow.Plotly.toImage(graphDiv, {
                                 format: "svg",
@@ -8974,6 +8975,61 @@ def render_assembly_defect_dimension_cards(confirmed):
     return _smt_breakdown_scope(source, selections)
 
 
+def render_breakdown_chart_builder(confirmed, area: str) -> None:
+    from tools.breakdown_chart import build_breakdown_chart, category_counts
+
+    prefix = area.lower()
+    dimensions = SMT_DEFECT_DIMENSIONS if area == "SMT" else ASSEMBLY_DEFECT_DIMENSIONS
+    with st.expander("Breakdown chart · Copy / Export", expanded=False):
+        if not st.toggle("Show chart", key=f"{prefix}_breakdown_chart_enabled"):
+            return
+        source = confirmed.copy()
+        for _, column, _, _ in dimensions:
+            if column not in source:
+                source[column] = ""
+            source[column] = source[column].fillna("").astype(str).str.strip().replace(
+                {"": "Not specified", "nan": "Not specified"}
+            )
+        selections = {
+            column: st.session_state.get(f"{prefix}_breakdown_{column}", "All")
+            for _, column, _, _ in dimensions
+        }
+        card_col, title_col = st.columns([1, 2])
+        with card_col:
+            card = st.selectbox("Card", [item[0] for item in dimensions], key=f"{prefix}_breakdown_chart_card")
+        column = next(item[1] for item in dimensions if item[0] == card)
+        chart_key = f"{prefix}_breakdown_chart_{column}"
+        with title_col:
+            title = st.text_input("Chart title", value=f"{area} · {card} - Top Issues", key=f"{chart_key}_title")
+        counts = category_counts(source, column, selections)
+        if counts.empty:
+            st.info("No defects match the current analysis filters and breakdown selections.")
+            return
+        hidden_key = f"{chart_key}_hidden"
+        if hidden_key in st.session_state:
+            st.session_state[hidden_key] = [item for item in st.session_state[hidden_key] if item in counts.index]
+        hidden = st.multiselect("Hide categories from chart", counts.index.tolist(), key=hidden_key)
+        limit_col, angle_col, labels_col = st.columns([1, 1, 1])
+        with limit_col:
+            limit = st.selectbox("Categories to show", ["Top 20", "Top 10", "Top 30", "All"], key=f"{prefix}_breakdown_chart_limit")
+        with angle_col:
+            angle = st.selectbox("X-axis label angle", [45, 0, 90], key=f"{prefix}_breakdown_chart_angle")
+        with labels_col:
+            show_values = st.checkbox("Show data labels", value=True, key=f"{prefix}_breakdown_chart_labels")
+        visible = counts.drop(index=hidden)
+        if limit != "All":
+            visible = visible.head(int(limit.split()[1]))
+        if visible.empty:
+            st.info("Select at least one visible category to generate the chart.")
+            return
+        st.caption("Uses the same unique Defect PCB counts as this card, including filters from other cards. Hidden categories affect only this chart. Use ⧉ to copy a high-resolution image or PPT to export SVG.")
+        show_chart(build_breakdown_chart(visible, title, angle=angle, show_values=show_values), f"{prefix}_defect_breakdown")
+        st.download_button(
+            "Download chart data", visible.rename("Defect PCB").rename_axis(card).to_csv().encode("utf-8-sig"),
+            file_name=f"{prefix}_defect_breakdown.csv", mime="text/csv", key=f"{prefix}_breakdown_chart_data",
+        )
+
+
 def _render_smt_model_comparison(
     model_a: str,
     model_b: str,
@@ -9519,6 +9575,7 @@ def smt_quality_dashboard_v2(color: str) -> None:
         use_container_width=True,
     )
     breakdown_detail = render_smt_defect_dimension_cards(view["confirmed"])
+    render_breakdown_chart_builder(view["confirmed"], "SMT")
 
     active_breakdown = any(
         st.session_state.get(f"smt_breakdown_{column}", "All") != "All"
@@ -10650,6 +10707,7 @@ def assembly_quality_dashboard_v2(color: str) -> None:
         use_container_width=True,
     )
     breakdown_detail = render_assembly_defect_dimension_cards(view["confirmed"])
+    render_breakdown_chart_builder(view["confirmed"], "Assembly")
     if any(
         st.session_state.get(f"assembly_breakdown_{column}", "All") != "All"
         for _, column, _, _ in ASSEMBLY_DEFECT_DIMENSIONS
