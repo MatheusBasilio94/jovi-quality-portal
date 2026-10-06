@@ -55,7 +55,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.6.01"
+APP_VERSION = "v0.6.02"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 PORTAL_ACCOUNTS = configured_accounts()
@@ -108,6 +108,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.6.02", "Simulate SMT Process NG Rate with and without selected glue defects, preserving mixed-defect PCBs and the original input."),
     ("v0.6.01", "Use the breakdown chart expander directly without an extra Show chart toggle."),
     ("v0.6.00", "Add editable defect breakdown chart exports to SMT and Assembly Quality Dashboards."),
     ("v0.5.99", "Add a black outer frame to copied chart images while preserving their resolution and report dimensions."),
@@ -7845,6 +7846,63 @@ def build_assembly_oqc_fqc_trend(records, start_date: date, end_date: date):
     return trend.sort_values("PeriodDate"), settings
 
 
+def smt_glue_scenario_controls(analysis):
+    import pandas as pd
+    from tools.smt_glue_scenario import build_glue_scenarios
+
+    st.markdown("#### SMT Process NG Rate · Glue scenario")
+    mode = st.selectbox(
+        "Calculation scenario", ["Include glue defects", "Exclude glue defects", "Compare scenarios"],
+        key="smt_glue_scenario_mode",
+    )
+    defaults = {"Operation": ["SMT-Visual-Inspection"], "Phenomenon": ["Disperse glue"]}
+    rules = {}
+    with st.expander("Glue defect definition / Review records", expanded=False):
+        st.caption("A glue record must match every populated field below. Multiple values within a field are alternatives; an empty field adds no restriction.")
+        columns = st.columns(2)
+        for index, (field, label) in enumerate([
+            ("Operation", "TestOperation"), ("Phenomenon", "Fault Phenomenon"),
+            ("FaultReason", "Fault reason"), ("RepairRemark", "RepaireRemark"),
+        ]):
+            key = f"smt_glue_rule_{field}"
+            source_values = analysis["covered_raw"].get(field, pd.Series(dtype="object"))
+            options = sorted(set(source_values.dropna().astype(str).str.strip())
+                             | set(defaults.get(field, [])) | set(st.session_state.get(key, [])))
+            options = [value for value in options if value and value.lower() != "nan"]
+            with columns[index % 2]:
+                rules[field] = st.multiselect(label, options, default=defaults.get(field, []), key=key)
+        st.caption("Input stays unchanged. Only glue-only PCBs are removed from Process NG; PCBs with other classified defects remain NG. Counts are evaluated within each displayed period.")
+    if mode == "Include glue defects":
+        return mode, None
+    if not any(rules.values()):
+        st.warning("Choose at least one glue classification value. With no rule, both scenarios remain identical.")
+    scenario = build_glue_scenarios(analysis, rules)
+    totals = scenario["totals"]
+    st.info("Simulation for SMT Process NG Rate only. Uploaded records and the other KPIs keep their original calculations.")
+    summary = pd.DataFrame([
+        {"Scenario": "Include glue defects", "Process NG PCB": totals["WithGlueNG"], "Input": analysis["totals"]["Produced"], "PPM": fmt_ppm(totals["WithGluePPM"]) if totals["WithGluePPM"] is not None else "N/A", "Status": totals["WithGlueStatus"]},
+        {"Scenario": "Simulation — exclude glue defects", "Process NG PCB": totals["WithoutGlueNG"], "Input": analysis["totals"]["Produced"], "PPM": fmt_ppm(totals["WithoutGluePPM"]) if totals["WithoutGluePPM"] is not None else "N/A", "Status": totals["WithoutGlueStatus"]},
+    ])
+    styled_table(summary)
+    delta = totals["WithGluePPM"] - totals["WithoutGluePPM"] if totals["WithGluePPM"] is not None and totals["WithoutGluePPM"] is not None else None
+    st.caption(f"Excluded glue-only PCBs: {totals['GlueOnlyNG']:,} · Retained PCBs with glue + other defects: {totals['GlueMixedNG']:,} · Reduction: {fmt_ppm(delta) + ' PPM' if delta is not None else 'N/A'}")
+    with st.expander("Scenario details · PCB / SN and export", expanded=False):
+        audit = scenario["audit"]
+        detail_columns = ["PCB", "Model", "KPIDate", "Operation", "Phenomenon", "FaultReason", "RepairRemark", "ScenarioGlueRecord", "ScenarioDisposition", "SourceFile"]
+        details = audit[[column for column in detail_columns if column in audit]].copy()
+        if details.empty:
+            st.info("No classified glue defects match this definition in the selected period.")
+        else:
+            st.dataframe(details, hide_index=True, width="stretch", height=260)
+        rule_text = " AND ".join(f"{field}: {', '.join(values)}" for field, values in rules.items() if values)
+        export = scenario["trend"][["Period", "Input", "WithGlueNG", "WithoutGlueNG", "GlueOnlyNG", "GlueMixedNG", "WithGluePPM", "WithoutGluePPM", "WithGlueStatus", "WithoutGlueStatus"]].copy()
+        export["Glue definition"] = rule_text
+        st.download_button("Download scenario comparison", export.to_csv(index=False).encode("utf-8-sig"), file_name="smt_process_glue_simulation.csv", mime="text/csv", key="smt_glue_scenario_csv")
+        details["Glue definition"] = rule_text
+        st.download_button("Download PCB / SN audit", details.to_csv(index=False).encode("utf-8-sig"), file_name="smt_glue_pcb_audit.csv", mime="text/csv", key="smt_glue_audit_csv")
+    return mode, scenario
+
+
 def smt_kpi_track_page(color: str) -> None:
     import pandas as pd
     from tools import smt_quality_dashboard
@@ -7884,7 +7942,15 @@ def smt_kpi_track_page(color: str) -> None:
         smt_quality_dashboard.SMT_FAILURE_RULE_VERSION,
         smt_quality_dashboard.SMT_TREND_POLICY_VERSION,
     )
-    smt_totals = smt_analysis["totals"]
+    glue_mode, glue_scenario = smt_glue_scenario_controls(smt_analysis)
+    exclude_glue = glue_mode == "Exclude glue defects"
+    smt_totals = smt_analysis["totals"].copy()
+    if exclude_glue:
+        scenario_totals = glue_scenario["totals"]
+        smt_totals["ClassifiedDefectPCBs"] = scenario_totals["WithoutGlueNG"]
+        smt_totals["SMTProcessNGRatePPM"] = scenario_totals["WithoutGluePPM"]
+        smt_totals["SMTProcessNGRate"] = scenario_totals["WithoutGluePPM"] / 1_000_000 if scenario_totals["WithoutGluePPM"] is not None else None
+        smt_totals["SMTProcessStatus"] = scenario_totals["WithoutGlueStatus"]
     function_pass_valid = smt_totals.get("FunctionPassStatus") == "Valid"
     process_ng_valid = smt_totals.get("SMTProcessStatus") == "Valid"
     try:
@@ -7918,10 +7984,10 @@ def smt_kpi_track_page(color: str) -> None:
         )
     with cards[1]:
         smt_kpi_card(
-            "SMT Process NG Rate",
+            "SMT Process NG Rate · Simulation without glue" if exclude_glue else "SMT Process NG Rate",
             f"{fmt_ppm(smt_totals['SMTProcessNGRatePPM'])} PPM" if process_ng_valid else "N/A",
             (
-                f"{fmt_kpi_pct(smt_totals['SMTProcessNGRate'])} · functional + appearance"
+                f"{fmt_kpi_pct(smt_totals['SMTProcessNGRate'])} · {'excluding glue-only PCBs' if exclude_glue else 'functional + appearance'}"
                 if process_ng_valid
                 else f"Input {fmt_int(smt_totals['Produced'])} < classified NG {fmt_int(smt_totals['ClassifiedDefectPCBs'])}"
             ),
@@ -7969,7 +8035,7 @@ def smt_kpi_track_page(color: str) -> None:
             "Result": fmt_kpi_pct(smt_totals["FunctionPassRate"]) if function_pass_valid else "N/A",
         },
         {
-            "KPI": "SMT Process NG Rate (PPM)",
+            "KPI": "SMT Process NG Rate (PPM) · Simulation without glue" if exclude_glue else "SMT Process NG Rate (PPM)",
             "Calculation basis": (
                 f"{fmt_int(smt_totals['ClassifiedDefectPCBs'])} classified NG PCBs | "
                 f"{fmt_int(smt_totals['Produced'])} SMT input"
@@ -8002,7 +8068,11 @@ def smt_kpi_track_page(color: str) -> None:
     st.markdown("### KPI formulas")
     styled_table(pd.DataFrame(formula_rows), table_class="kpi-formula-table")
 
-    smt_trend = smt_analysis["trend"].copy()
+    smt_trend = (glue_scenario["trend"] if glue_scenario is not None else smt_analysis["trend"]).copy()
+    if exclude_glue:
+        smt_trend["ClassifiedDefectPCBs"] = smt_trend["WithoutGlueNG"]
+        smt_trend["SMTProcessNGRatePPM"] = smt_trend["WithoutGluePPM"]
+        smt_trend["SMTProcessStatus"] = smt_trend["WithoutGlueStatus"]
     smt_period_column = "PeriodDate" if "PeriodDate" in smt_trend.columns else "PeriodStart"
     if smt_period_column in smt_trend.columns:
         smt_trend["Period"] = smt_trend[smt_period_column].map(
@@ -8035,7 +8105,7 @@ def smt_kpi_track_page(color: str) -> None:
         smt_trend,
         "Period",
         "SMTProcessNGRatePPM",
-        f"SMT Process NG Rate trend · {selected_trend_label}",
+        f"SMT Process NG Rate {'· Simulation without glue ' if exclude_glue else ''}trend · {selected_trend_label}",
         "#C2410C",
         "ppm",
         target_value=process_target,
@@ -8048,7 +8118,26 @@ def smt_kpi_track_page(color: str) -> None:
         input_columns=("Input",),
     )
     show_chart(function_pass_chart)
-    show_chart(process_ng_chart)
+    if glue_mode == "Compare scenarios":
+        without_exceptions = smt_trend.loc[smt_trend["WithoutGlueStatus"].ne("Valid")].copy()
+        without_chart = smt_kpi_line_chart(
+            smt_trend, "Period", "WithoutGluePPM",
+            f"SMT Process NG Rate · Simulation without glue · {selected_trend_label}",
+            "#1D5FBF", "ppm", target_value=process_target,
+            exception_rows=without_exceptions, exception_count_column="WithoutGlueNG",
+            exception_count_label="NG PCBs excluding glue-only", exception_reason_column="WithoutGlueStatus",
+            period_start=start_date, period_end=end_date, input_columns=("Input",),
+        )
+        # Use the same vertical scale to make the scenario comparison fair.
+        shared_ranges = [list(chart.layout.yaxis.range) for chart in (process_ng_chart, without_chart) if chart.layout.yaxis.range]
+        if shared_ranges:
+            shared_range = [min(values[0] for values in shared_ranges), max(values[1] for values in shared_ranges)]
+            process_ng_chart.update_yaxes(range=shared_range)
+            without_chart.update_yaxes(range=shared_range)
+        show_chart(process_ng_chart)
+        show_chart(without_chart)
+    else:
+        show_chart(process_ng_chart)
 
     assembly_trend = assembly_kpi["trend"] if assembly_kpi else pd.DataFrame()
     assembly_duty_exceptions = assembly_trend.loc[
