@@ -58,7 +58,8 @@ class GlueScenarioTests(unittest.TestCase):
         from streamlit.testing.v1 import AppTest
         app_path = Path(__file__).resolve().parents[1] / "app.py"
         tree = ast.parse(app_path.read_text(encoding="utf-8-sig"))
-        function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "smt_glue_scenario_controls")
+        functions = [next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == name)
+                     for name in ("smt_glue_scenario_controls", "smt_glue_scenario_details")]
         script = '''
 import streamlit as st
 import pandas as pd
@@ -81,10 +82,11 @@ analysis = {
     }),
 }
 '''
-        app = AppTest.from_string(script + ast.unparse(function) + "\nsmt_glue_scenario_controls(analysis)\n").run()
+        app = AppTest.from_string(script + '\n'.join(ast.unparse(function) for function in functions)
+                                  + "\nmode, scenario = smt_glue_scenario_controls(analysis)\nsmt_glue_scenario_details(analysis, mode, scenario)\n").run()
         self.assertEqual(len(app.exception), 0)
         for mode in ("Exclude glue defects", "Compare scenarios", "Include glue defects"):
-            app.selectbox(key="smt_glue_scenario_mode").set_value(mode).run()
+            app.segmented_control(key="smt_glue_scenario_mode").set_value(mode).run()
             self.assertEqual(len(app.exception), 0)
             if mode != "Include glue defects":
                 summary = app.dataframe[0].value
