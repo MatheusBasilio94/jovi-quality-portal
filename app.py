@@ -55,7 +55,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.6.02"
+APP_VERSION = "v0.6.03"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 PORTAL_ACCOUNTS = configured_accounts()
@@ -108,6 +108,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.6.03", "Publish the approved redesign: horizontal navigation, compact highlighted filters, unclipped Home charts, aligned KPI chart controls and the revised KPI Review."),
     ("v0.6.02", "Simulate SMT Process NG Rate with and without selected glue defects, preserving mixed-defect PCBs and the original input."),
     ("v0.6.01", "Use the breakdown chart expander directly without an extra Show chart toggle."),
     ("v0.6.00", "Add editable defect breakdown chart exports to SMT and Assembly Quality Dashboards."),
@@ -304,6 +305,9 @@ VERSION_HISTORY = [
 
 
 def apply_global_css() -> None:
+    if st.session_state.get("module") in {"Home", "SMT", "Assembly", "Smart Report"}:
+        st.html(f"<style>{(BASE_DIR / 'assets' / 'approved-layout.css').read_text(encoding='utf-8')}</style>")
+        return
     st.markdown(
         """
         <style>
@@ -1788,6 +1792,9 @@ def apply_global_css() -> None:
     )
 
 
+    st.html(f"<style>{(BASE_DIR / 'assets' / 'portal-theme.css').read_text(encoding='utf-8')}</style>")
+
+
 def apply_login_css() -> None:
     st.markdown(
         """
@@ -2307,8 +2314,8 @@ def footer() -> None:
     st.markdown(
         f"""
         <div class="{footer_class}">
-            <b>Jovi Quality Center {APP_VERSION}</b><br>
-            Developed by: {DEVELOPER} &nbsp; | &nbsp; Role: {ROLE} &nbsp; | &nbsp; Manager: {MANAGER}
+            <b>Jovi Quality Center {APP_VERSION}</b>
+            <span class="footer-credits">Developed by: {DEVELOPER} &nbsp; | &nbsp; Role: {ROLE} &nbsp; | &nbsp; Manager: {MANAGER}</span>
         </div>
         """,
         unsafe_allow_html=True,
@@ -2540,7 +2547,7 @@ def analysis_period_bounds(rules: dict):
     return start, end
 
 
-ANALYSIS_PERIOD_OPTIONS = ("Today", "Last 7 days", "This month", "Previous month", "YTD")
+ANALYSIS_PERIOD_OPTIONS = ("Today", "Last 7 days", "Last 30 days", "This month", "Previous month", "YTD")
 
 
 def _as_date(value) -> date:
@@ -2577,6 +2584,12 @@ def _apply_period_preset(
     selected_range = _preset_period_range(preset, minimum_date, maximum_date)
     st.session_state[range_key] = selected_range
     st.session_state[remembered_range_key] = selected_range
+
+
+def _select_period_shortcut(preset: str, preset_key: str, range_key: str, remembered_range_key: str,
+                            minimum_date: date, maximum_date: date) -> None:
+    st.session_state[preset_key] = preset
+    _apply_period_preset(preset_key, range_key, remembered_range_key, minimum_date, maximum_date)
 
 
 def _remember_period_range(range_key: str, remembered_range_key: str) -> None:
@@ -2633,34 +2646,30 @@ def analysis_period_control(
     if range_key not in st.session_state:
         st.session_state[range_key] = initial_range
 
-    with st.container(key=f"analysis_period_{navigation_key(key)}", width=455 if show_presets else 270):
+    with st.container(key=f"analysis_period_{navigation_key(key)}", width=260):
+        selected_period = st.date_input(
+            "Analysis period", min_value=minimum_date, max_value=maximum_date,
+            format="DD/MM/YYYY", key=range_key, persist_state="session",
+            on_change=_remember_period_range, args=(range_key, remembered_range_key), width=260,
+        )
         if show_presets:
-            preset_col, range_col = st.columns([0.48, 0.82], gap="small", width=455)
-            with preset_col:
-                st.selectbox(
-                    "Quick selection",
-                    ANALYSIS_PERIOD_OPTIONS,
-                    key=preset_key,
-                    persist_state="session",
-                    on_change=_apply_period_preset,
-                    args=(preset_key, range_key, remembered_range_key, minimum_date, maximum_date),
-                    width=160,
-                )
-            with range_col:
-                selected_period = st.date_input(
-                    "Analysis period", min_value=minimum_date, max_value=maximum_date,
-                    format="DD/MM/YYYY", key=range_key,
-                    persist_state="session",
-                    on_change=_remember_period_range, args=(range_key, remembered_range_key), width=270,
-                )
-        else:
-            selected_period = st.date_input(
-                "Analysis period", min_value=minimum_date, max_value=maximum_date,
-                format="DD/MM/YYYY", key=range_key,
-                persist_state="session",
-                on_change=_remember_period_range, args=(range_key, remembered_range_key),
-                width=270,
-            )
+            with st.container(key=f"period_shortcuts_{navigation_key(key)}"):
+                shortcuts = st.columns([0.8, 0.9, 1.4, 0.7], gap="small")
+                for slot, (label, preset) in zip(shortcuts, (("7 days", "Last 7 days"),
+                                                           ("30 days", "Last 30 days"),
+                                                           ("This month", "This month"))):
+                    with slot:
+                        st.button(label, key=f"{key}_shortcut_{navigation_key(preset)}",
+                                  on_click=_select_period_shortcut,
+                                  args=(preset, preset_key, range_key, remembered_range_key,
+                                        minimum_date, maximum_date), width="stretch")
+                with shortcuts[3]:
+                    with st.popover("…", help="More analysis periods", width="stretch"):
+                        for preset in ("Today", "Previous month", "YTD"):
+                            st.button(preset, key=f"{key}_shortcut_{navigation_key(preset)}",
+                                      on_click=_select_period_shortcut,
+                                      args=(preset, preset_key, range_key, remembered_range_key,
+                                            minimum_date, maximum_date))
 
     if isinstance(selected_period, (tuple, list)) and len(selected_period) >= 2:
         start_date, end_date = selected_period[0], selected_period[1]
@@ -6186,6 +6195,26 @@ def weekly_kpi_is_below_target(value: float | None, target: float, direction: st
     return float(value) > target if direction == "max" else float(value) < target
 
 
+def report_target_issues(items, totals, candidates_by_source) -> None:
+    for index, item in enumerate(items, start=1):
+        title = item["kpi"] if item["kpi"].startswith(item["area"] + " ") else f'{item["area"]} {item["kpi"]}'
+        actual = float(totals[item["source"]])
+        value = weekly_kpi_value_label(actual, item["direction"])
+        target = weekly_kpi_value_label(item["target"], item["direction"])
+        gap = (actual - item["target"]) if item["direction"] == "max" else (item["target"] - actual)
+        gap_label = weekly_kpi_value_label(gap, item["direction"])
+        candidates = candidates_by_source.get(item["source"], [])
+        issue = (f"Top issue: {candidates[0]['defect']} ({candidates[0]['cases']} cases)"
+                 if candidates else "No confirmed defect detail available.")
+        st.markdown(
+            f'<p><strong>{index}. {escape(title)}</strong><br>'
+            f'Target: {escape(target)}<br>'
+            f'Achieved: {escape(value)} (gap {escape(gap_label)})<br>'
+            f'Description: {escape(issue)}</p>',
+            unsafe_allow_html=True,
+        )
+
+
 def weekly_kpi_review_data(
     start_date: date,
     end_date: date,
@@ -6535,9 +6564,10 @@ def weekly_kpi_review_page() -> None:
 
     st.markdown("<div class='smart-report-title'>Weekly KPI Review</div><div class='smart-report-subtitle'>Major KPI achievement status and action follow-up, generated from the same validated portal calculations.</div>", unsafe_allow_html=True)
     default_week_end = date.today() - timedelta(days=date.today().weekday() + 1)
-    controls, visibility_column, action_column = st.columns([1.1, 1.55, 0.75])
+    with st.container(key="weekly_report_filters"):
+        controls, visibility_column, action_column = st.columns([1.1, 1.55, 0.75])
     with controls:
-        week_end = st.date_input("Week ending", value=default_week_end, key="weekly_kpi_week_end", persist_state="session", help="Select the Sunday that closes the report week.")
+        week_end = st.date_input("Week ending", value=default_week_end, key="weekly_kpi_week_end", persist_state="session", width=180, help="Select the Sunday that closes the report week.")
     start_date = week_end - timedelta(days=6)
     days = [start_date + timedelta(days=offset) for offset in range(7)]
     week_label = f"WK{week_end.isocalendar().week:02d} · {start_date.strftime('%d/%m')} – {week_end.strftime('%d/%m/%Y')}"
@@ -6554,9 +6584,9 @@ def weekly_kpi_review_page() -> None:
     visible_days = [day for day in days if day not in hidden_days]
     with action_column:
         st.markdown("<div class='smart-control-label'>&nbsp;</div>", unsafe_allow_html=True)
-        if st.button("Refresh weekly review", key="weekly_kpi_refresh", type="primary", use_container_width=True):
+        if st.button("Refresh weekly review", key="weekly_kpi_refresh", type="primary", icon=":material/refresh:", use_container_width=True):
             st.toast("Weekly KPI review refreshed from the stored source data.")
-    directory = configured_kpi_directory()
+    directory = tuple(sorted(configured_kpi_directory(), key=lambda item: item["area"] != "SMT"))
     if is_admin():
         with st.expander("Edit GBR and Jovi responsible owners"):
             owner_rows = pd.DataFrame(
@@ -6661,15 +6691,9 @@ def weekly_kpi_review_page() -> None:
     if not available:
         st.info("No KPI source data is available for the selected week.")
     elif below:
-        for item in below:
-            top = candidates_by_source.get(item["source"], [])
-            defect = f" Top issue: {top[0]['defect']} ({top[0]['cases']} cases)." if top else ""
-            st.warning(f"**{item['area']} · {item['kpi']}** is below target. Responsible: {item['gbr']} / {item['jovi']}.{defect}")
+        report_target_issues(below, totals, candidates_by_source)
     else:
         st.success("All available KPIs achieved the configured targets in the selected week.")
-    email_text = kpi_review_email(week_label, "week", directory, previous_totals, totals, candidates_by_source)
-    with st.expander("Copyable weekly e-mail", expanded=True):
-        st.code(email_text, language=None)
     st.caption("Targets match the validated KPI Track configuration. Empty cells indicate that the corresponding source or manual OQC/FQC record has not yet been loaded.")
     st.caption("× indicates that defects exceeded the available input for that KPI period, so the KPI was intentionally not calculated.")
 
@@ -6750,10 +6774,7 @@ def monthly_kpi_review_page() -> None:
     if not available:
         st.info(f"No {area} KPI source data is available for {period_label}.")
     elif below:
-        for item in below:
-            top = candidates_by_source.get(item["source"], [])
-            defect = f" Top issue: {top[0]['defect']} ({top[0]['cases']} cases)." if top else ""
-            st.warning(f"**{item['kpi']}** is below target. Responsible: {item['gbr']} / {item['jovi']}.{defect}")
+        report_target_issues(below, totals, candidates_by_source)
     else:
         st.success(f"All available {area} KPIs achieved the configured targets in {period_label}.")
     email_text = kpi_review_email(period_label, "month", directory, previous_totals, totals, candidates_by_source)
@@ -7022,7 +7043,7 @@ def _home_kpi_chart(frame, area: str, kpi: str, grain: str, models: list[str], t
     if frame.empty or frame["Value"].notna().sum() == 0:
         st.info(f"No {area} {kpi} result is available for the selected models and time scale.")
         return
-    colors = ("#087A8C", "#6532C8", "#D65B55", "#D3981F", "#1C6CC8", "#7F9A39")
+    colors = ("#2563EB", "#009A83", "#7C3AED", "#D3981F", "#1C6CC8", "#7F9A39")
     fig = go.Figure()
     for index, model in enumerate(models):
         data = frame.loc[frame["Model"].eq(model)].sort_values("PeriodDate")
@@ -7044,7 +7065,7 @@ def _home_kpi_chart(frame, area: str, kpi: str, grain: str, models: list[str], t
         ))
     if target:
         threshold = target["target"] * (100 if "Pass Rate" in kpi else 1)
-        fig.add_hline(y=threshold, line_color="#E56B2F", line_dash="dash", line_width=1.6)
+        fig.add_hline(y=threshold, line_color="#DC2626", line_dash="dash", line_width=1.6)
     periods = frame[["PeriodDate", "Period"]].drop_duplicates().sort_values("PeriodDate")
     # Keep Plotly's draggable range handles, but place the range-slider preview
     # y-axis below every valid KPI value so it remains a clean selection bar.
@@ -7063,10 +7084,13 @@ def _home_kpi_chart(frame, area: str, kpi: str, grain: str, models: list[str], t
                      ticktext=visible_ticks["Period"], tickangle=0, showgrid=False,
                      rangeslider=range_bar)
     fig.update_layout(
-        height=min(580, 330 + max(0, len(models) - 4) * 18),
-        margin=dict(l=38, r=24, t=35, b=18), dragmode="zoom",
+        # The unified tooltip includes every visible model. Reserve enough
+        # vertical space for its heading and model details without clipping.
+        height=200 + max(0, len(fig.data) - 2) * 48,
+        margin=dict(l=52, r=150, t=28, b=30), dragmode="zoom",
         paper_bgcolor="#FFFFFF", plot_bgcolor="#FFFFFF", hovermode="x unified",
-        legend=dict(orientation="h", y=1.16, x=0.25, font=dict(size=11)),
+        hoverlabel=dict(font=dict(size=12), align="left"),
+        legend=dict(orientation="v", y=0.85, x=1.02, font=dict(size=12)),
         font=dict(family="Arial", color="#17375F", size=11),
         yaxis=dict(title="%" if "Pass Rate" in kpi else "PPM",
                    gridcolor="#E6ECF4", zeroline=False),
@@ -7076,15 +7100,15 @@ def _home_kpi_chart(frame, area: str, kpi: str, grain: str, models: list[str], t
         target_value = f"{threshold:,.2f}%" if "Pass Rate" in kpi else f"{threshold:,.0f} PPM"
         direction = "≥" if target["direction"] == "min" else "≤"
         fig.add_annotation(
-            x=1, y=1, xref="paper", yref="paper", xanchor="right", yanchor="top", yshift=24,
+            x=1.02, y=1, xref="paper", yref="paper", xanchor="left", yanchor="bottom",
             text=f"<b>Target {direction} {escape(target_value)}</b>", showarrow=False,
-            font=dict(color="#C95823", size=12), align="right",
+            font=dict(color="#DC2626", size=12), align="right",
         )
     if "Pass Rate" in kpi:
         fig.update_yaxes(ticksuffix="%", range=[max(-1, min(float(frame["Value"].min() * 100) - 2, 95)), 101])
     else:
         upper_value = max(float(frame["Value"].max()), float(threshold) if target else 0, 1)
-        padding = max(upper_value * 0.04, 0.02)
+        padding = max(upper_value * 0.10, 0.02)
         fig.update_yaxes(range=[-padding, upper_value + padding])
     st.plotly_chart(fig, width="stretch", config={"displayModeBar": False}, key=f"home_{area.lower()}_{kpi.lower().replace(' ', '_')}_chart")
     if len(periods) > 6:
@@ -7228,14 +7252,56 @@ def home_model_performance(smt_context: dict, assembly_context: dict, smt_target
     st.markdown("".join(html_rows), unsafe_allow_html=True)
 
 
+def home_period_summary(analyses: dict, models: list[str], targets: dict, start_date: date, end_date: date) -> None:
+    """Compact model totals from the same KPI engines used by the detail screens."""
+    from tools.assembly_kpi_v2 import calculate_from_prepared
+
+    rows = []
+    for model in models:
+        smt = (_build_smt_dashboard_view(analyses["SMT"], model, "All", "All")
+               if "SMT" in analyses else {})
+        assembly = {}
+        if "Assembly" in analyses:
+            source = analyses["Assembly"]
+            model_inputs = source["inputs"].loc[source["inputs"]["Model"].eq(model)]
+            model_defects = source["defects"].loc[source["defects"]["Model"].eq(model)]
+            if not model_inputs.empty:
+                assembly = calculate_from_prepared(model_inputs, model_defects, start_date, end_date)
+        values = (((smt["produced"] - smt["functional_pcbs"]) / smt["produced"] if smt.get("produced") and smt["functional_pcbs"] <= smt["produced"] else None, "smt_function"),
+                  (smt.get("process_ppm"), "smt_process"),
+                  (assembly.get("appearance_pass_rate"), "assembly_appearance"),
+                  (assembly.get("function_mando_ppm"), "assembly_mando"))
+        available = [(value, targets[source]) for value, source in values if value is not None]
+        below = any(weekly_kpi_is_below_target(value, target["target"], target["direction"])
+                    for value, target in available)
+        status = "below-target" if below else "on-target"
+        label = "Below target" if below else "On target" if available else "N/A"
+        rows.append(
+            f'<tr><td>{escape(model)}</td>'
+            f'<td>{fmt_int(smt["produced"]) if smt else "—"}</td>'
+            f'<td>{fmt_ppm(smt.get("process_ppm")) if smt.get("process_ppm") is not None else "—"}</td>'
+            f'<td>{fmt_int(assembly["produced"]) if assembly else "—"}</td>'
+            f'<td>{fmt_ppm(assembly.get("function_mando_ppm")) if assembly.get("function_mando_ppm") is not None else "—"}</td>'
+            f'<td><span class="status-pill {status if available else "unavailable"}">{label}</span></td></tr>'
+        )
+    with st.container(key="home_period_summary"):
+        st.markdown(
+            '<div class="summary-table-title">Selected KPI details'
+            f'<small>{start_date.strftime("%d %b")} – {end_date.strftime("%d %b %Y")} · full analysis period</small></div>'
+            '<div class="summary-table-scroll"><table class="summary-table"><thead><tr>'
+            '<th>Model</th><th>SMT input</th><th>SMT PPM</th><th>Assembly input</th><th>Mando PPM</th><th>Status</th>'
+            '</tr></thead><tbody>' + ''.join(rows) + '</tbody></table></div>',
+            unsafe_allow_html=True,
+        )
+
+
 def home_page() -> None:
     """Shared filters, independent SMT/Assembly KPI charts, and full-period details."""
     import pandas as pd
     from tools import smt_quality_dashboard
     from tools.home_analysis import KPI_OPTIONS, KPI_TARGETS, build_home_kpi_rows
 
-    st.markdown("<div class='home-overview-head'><h1>Quality Overview</h1></div>", unsafe_allow_html=True)
-    st.caption("Compare model performance in SMT and Assembly on the same time scale.")
+    st.markdown("<div class='home-overview-head'><h1>Quality Overview</h1><div class='home-subtitle'>Compare SMT and Assembly on the same time scale.</div></div>", unsafe_allow_html=True)
     smt_inputs, smt_defects = smt_quality_dashboard.stored_smt_sources()
     assembly_sources = stored_assembly_sources_v2()
     smt_ready = bool(smt_inputs and smt_defects)
@@ -7253,7 +7319,8 @@ def home_page() -> None:
         bounds.append((low, high))
     minimum = min(value[0] for value in bounds)
     maximum = max(value[1] for value in bounds)
-    period_col, model_col, scale_col, action_col = st.columns([1.8, 1.2, 0.9, 0.65], gap="medium")
+    with st.container(key="home_filters"):
+        period_col, model_col, scale_col, action_col = st.columns([1.1, 1.4, 1.1, 0.8], gap="medium")
     with period_col:
         start_date, end_date = analysis_period_control("home_trends_period", minimum, maximum,
                                                        default_start=minimum, default_end=maximum)
@@ -7292,8 +7359,8 @@ def home_page() -> None:
         grain = st.segmented_control("Time scale", ["Days", "Weeks", "Months"], default="Weeks",
                                      key="home_trends_scale") or "Weeks"
     with action_col:
-        st.markdown("<div style='height:1.85rem'></div>", unsafe_allow_html=True)
-        st.button("Update view", key="home_trends_update", type="primary", width="stretch")
+        st.markdown("<div style='height:1.35rem'></div>", unsafe_allow_html=True)
+        st.button("Update view", key="home_trends_update", type="primary", icon=":material/refresh:", width="stretch")
     if not models:
         st.info("Select at least one model to display its KPI trends.")
         return
@@ -7303,11 +7370,11 @@ def home_page() -> None:
         if area not in analyses:
             continue
         with st.container(border=True, key=f"home_trends_{area.lower()}"):
-            left, right = st.columns([2.2, 1], gap="medium")
+            left, right = st.columns([4, 1], gap="medium")
             with right:
                 kpi = st.selectbox(f"{area} KPI", KPI_OPTIONS[area],
                                    index=1 if area == "SMT" else 2,
-                                   key=f"home_trends_{area.lower()}_kpi")
+                                   key=f"home_trends_{area.lower()}_kpi", label_visibility="collapsed")
                 target_source = KPI_TARGETS.get((area, kpi))
                 target = targets.get(target_source)
             with left:
@@ -7330,8 +7397,9 @@ def home_page() -> None:
                                         source_input, source_defects)
             frames[area] = frame
             _home_kpi_chart(frame, area, kpi, grain, models, target)
-    st.markdown("### Selected KPI details · full analysis period")
-    _home_detail_table(frames, models, grain, targets)
+    home_period_summary(analyses, models, targets, start_date, end_date)
+    with st.expander("Detailed KPI data · periods and export"):
+        _home_detail_table(frames, models, grain, targets)
 
 
 def overview_page(module: str, color: str) -> None:
@@ -7422,17 +7490,19 @@ def smt_kpi_card(
     actual_value: float | None = None,
     target_value: float | None = None,
     target_direction: str | None = None,
+    area: str = "",
 ) -> None:
     state = kpi_target_state(actual_value, target_value, target_direction)
     target_status = ""
     target_icon = ""
     card_style = ""
-    value_style = ""
+    value_style = "color:#14243B !important;"
     if state is not None:
         target_label = fmt_ppm(target_value) + " PPM" if target_direction == "max" else fmt_kpi_pct(target_value)
-        status_label = "Below target" if state == "below-target" else "On target"
+        status_label = ("Above target" if target_direction == "max" else "Below target") if state == "below-target" else "On target"
+        target_operator = "≤" if target_direction == "max" else "≥"
         target_status = (
-            f'<div class="kpi-target-status {state}">{status_label} · Target {escape(target_label)}</div>'
+            f'<div class="kpi-target-status {state}">{status_label} · Target {target_operator} {escape(target_label)}</div>'
         )
         icon = "!" if state == "below-target" else "✓"
         target_icon = f'<div class="kpi-target-icon {state}" aria-label="{escape(status_label)}">{icon}</div>'
@@ -7444,8 +7514,9 @@ def smt_kpi_card(
             value_style = "color:#08703B !important;"
     card_class = (" kpi-target-below" if state == "below-target" else " kpi-target-on") if state is not None else ""
     st.markdown(
-        f'<div class="metric-card{card_class}" style="{card_style}">'
-        f'<div class="metric-label">{escape(label)}</div>'
+        f'<div class="metric-card{card_class}" style="{card_style}">' +
+        (f'<div class="metric-label-line"><span class="home-area-tag" style="--area-color:{color}">{escape(area)}</span>'
+         f'<div class="metric-label">{escape(label)}</div></div>' if area else f'<div class="metric-label">{escape(label)}</div>') +
         f'<div class="metric-value" style="color:{color};{value_style}">{escape(value)}</div>'
         f'<div class="small-muted">{escape(note)}</div>{target_status}{target_icon}</div>',
         unsafe_allow_html=True,
@@ -7528,6 +7599,9 @@ def smt_kpi_line_chart(
             )
             for index, value in enumerate(values)
         ]
+    if len(labels) > 10:
+        stride = max(2, (len(labels) + 7) // 8)
+        labels = [label if index % stride == 0 or index == len(labels) - 1 else "" for index, label in enumerate(labels)]
     chart = go.Figure(
         data=[
             go.Scatter(
@@ -7611,12 +7685,13 @@ def smt_kpi_line_chart(
             )
         )
     chart.update_layout(
-        title=title,
-        height=420,
-        margin=dict(l=55, r=35, t=80, b=75),
+        title=dict(text=f"<b>{escape(title)}</b>", x=0.025, font=dict(size=16, color="#14243B")),
+        height=130,
+        margin=dict(l=60, r=150, t=35, b=30),
         paper_bgcolor="white",
-        plot_bgcolor="#F8FAFD",
+        plot_bgcolor="#FFFFFF",
         showlegend=False,
+        font=dict(family="Segoe UI, Arial", size=11, color="#294A72"),
         meta={"jovi_report_export": "kpi_track"},
     )
     if period_start is not None and period_end is not None and date_column is not None:
@@ -7627,10 +7702,10 @@ def smt_kpi_line_chart(
                 categoryorder="array",
                 categoryarray=list(x_values),
                 tickmode="array",
-                tickvals=list(x_values),
-                ticktext=plot_frame[date_column].dt.strftime("%d/%m").tolist(),
+                tickvals=list(x_values)[::max(1, (len(plot_frame) + 6) // 7)],
+                ticktext=plot_frame[date_column].dt.strftime("%d/%m").tolist()[::max(1, (len(plot_frame) + 6) // 7)],
                 range=[-0.5, max(len(plot_frame) - 0.5, 0.5)],
-                tickangle=-45 if len(plot_frame) > 10 else 0,
+                tickangle=0,
                 automargin=True,
             )
         else:
@@ -7659,19 +7734,16 @@ def smt_kpi_line_chart(
         automargin=True,
     )
     if target_value is not None:
-        valid_indices = [index for index, value in enumerate(values) if pd.notna(value)]
-        final_label_position = text_positions[valid_indices[-1]] if valid_indices else "bottom center"
-        target_label_position = "bottom right" if final_label_position.startswith("top") else "top right"
         target_text = fmt_kpi_pct(target_value) if value_type == "percent" else f"{fmt_ppm(target_value)} PPM"
         chart.add_hline(
             y=target_value,
             line_color="#DC2626",
             line_width=2,
             line_dash="dash",
-            annotation_text=target_text,
-            annotation_position=target_label_position,
-            annotation_font=dict(color="#DC2626", size=11),
         )
+        chart.add_annotation(x=1.015, y=target_value, xref="paper", yref="y",
+                             text=f"Target {target_text}", showarrow=False, xanchor="left",
+                             font=dict(color="#DC2626", size=11))
     return chart
 
 
@@ -7847,14 +7919,22 @@ def build_assembly_oqc_fqc_trend(records, start_date: date, end_date: date):
 
 
 def smt_glue_scenario_controls(analysis):
-    import pandas as pd
     from tools.smt_glue_scenario import build_glue_scenarios
 
-    st.markdown("#### SMT Process NG Rate · Glue scenario")
-    mode = st.selectbox(
-        "Calculation scenario", ["Include glue defects", "Exclude glue defects", "Compare scenarios"],
-        key="smt_glue_scenario_mode",
-    )
+    options = ["Include glue defects", "Exclude glue defects", "Compare scenarios"]
+    mode = st.segmented_control(
+        "Glue scenario", options, default=options[0], key="smt_glue_scenario_mode",
+        format_func=lambda value: {"Include glue defects": "Original data", "Exclude glue defects": "Exclude glue", "Compare scenarios": "Compare scenarios"}[value],
+    ) or options[0]
+    defaults = {"Operation": ["SMT-Visual-Inspection"], "Phenomenon": ["Disperse glue"]}
+    rules = {field: st.session_state.get(f"smt_glue_rule_{field}", defaults.get(field, []))
+             for field in ("Operation", "Phenomenon", "FaultReason", "RepairRemark")}
+    return mode, None if mode == options[0] else build_glue_scenarios(analysis, rules)
+
+
+def smt_glue_scenario_details(analysis, mode, scenario):
+    import pandas as pd
+
     defaults = {"Operation": ["SMT-Visual-Inspection"], "Phenomenon": ["Disperse glue"]}
     rules = {}
     with st.expander("Glue defect definition / Review records", expanded=False):
@@ -7872,11 +7952,10 @@ def smt_glue_scenario_controls(analysis):
             with columns[index % 2]:
                 rules[field] = st.multiselect(label, options, default=defaults.get(field, []), key=key)
         st.caption("Input stays unchanged. Only glue-only PCBs are removed from Process NG; PCBs with other classified defects remain NG. Counts are evaluated within each displayed period.")
-    if mode == "Include glue defects":
-        return mode, None
+    if scenario is None:
+        return
     if not any(rules.values()):
         st.warning("Choose at least one glue classification value. With no rule, both scenarios remain identical.")
-    scenario = build_glue_scenarios(analysis, rules)
     totals = scenario["totals"]
     st.info("Simulation for SMT Process NG Rate only. Uploaded records and the other KPIs keep their original calculations.")
     summary = pd.DataFrame([
@@ -7900,8 +7979,6 @@ def smt_glue_scenario_controls(analysis):
         st.download_button("Download scenario comparison", export.to_csv(index=False).encode("utf-8-sig"), file_name="smt_process_glue_simulation.csv", mime="text/csv", key="smt_glue_scenario_csv")
         details["Glue definition"] = rule_text
         st.download_button("Download PCB / SN audit", details.to_csv(index=False).encode("utf-8-sig"), file_name="smt_glue_pcb_audit.csv", mime="text/csv", key="smt_glue_audit_csv")
-    return mode, scenario
-
 
 def smt_kpi_track_page(color: str) -> None:
     import pandas as pd
@@ -7915,21 +7992,23 @@ def smt_kpi_track_page(color: str) -> None:
         smt_quality_dashboard = importlib.reload(smt_quality_dashboard)
         smt_quality_dashboard.analyze_smt_quality_paths.clear()
 
-    st.markdown(f"<h1 class='section-title' style='color:{color};'>SMT KPI Track</h1>", unsafe_allow_html=True)
-
+    st.markdown("<div><h1 class='section-title'>SMT KPI Track</h1><div class='page-subtitle'>Monitor KPI achievement and daily trends.</div></div>", unsafe_allow_html=True)
     input_paths, defect_paths = smt_quality_dashboard.stored_smt_sources()
     if not input_paths or not defect_paths:
         st.info("Abra a aba Data Upload e carregue pelo menos o Input FPY e os Defeitos FPY para iniciar os cálculos de SMT.")
         return
     input_signatures = tuple(smt_quality_dashboard.path_signature(path) for path in input_paths)
     minimum_date, maximum_date = smt_quality_dashboard.input_bounds(input_signatures)
-    start_date, end_date = analysis_period_control(
-        "smt_kpi_period",
-        minimum_date.date(),
-        maximum_date.date(),
-        default_start=minimum_date.date(),
-        default_end=maximum_date.date(),
-    )
+    with st.container(key="kpi_track_filters"):
+        period_column, scenario_column = st.columns([1.1, 3.3])
+    with period_column:
+        start_date, end_date = analysis_period_control(
+            "smt_kpi_period",
+            minimum_date.date(),
+            maximum_date.date(),
+            default_start=minimum_date.date(),
+            default_end=maximum_date.date(),
+        )
     if end_date < start_date:
         st.error("KPI end date must be on or after the start date.")
         return
@@ -7942,7 +8021,8 @@ def smt_kpi_track_page(color: str) -> None:
         smt_quality_dashboard.SMT_FAILURE_RULE_VERSION,
         smt_quality_dashboard.SMT_TREND_POLICY_VERSION,
     )
-    glue_mode, glue_scenario = smt_glue_scenario_controls(smt_analysis)
+    with scenario_column:
+        glue_mode, glue_scenario = smt_glue_scenario_controls(smt_analysis)
     exclude_glue = glue_mode == "Exclude glue defects"
     smt_totals = smt_analysis["totals"].copy()
     if exclude_glue:
@@ -7971,7 +8051,8 @@ def smt_kpi_track_page(color: str) -> None:
     oqc_target = configured_targets["smt_oqc"]["target"]
 
     period_note = f"{start_date.strftime('%d/%m/%Y')} to {end_date.strftime('%d/%m/%Y')}"
-    cards = st.columns(4)
+    with st.container(key="kpi_cards"):
+        cards = st.columns(4)
     with cards[0]:
         smt_kpi_card(
             "Function Pass Rate",
@@ -7998,7 +8079,7 @@ def smt_kpi_track_page(color: str) -> None:
         )
     with cards[2]:
         smt_kpi_card(
-            "Assembly SMT Process Duty NG Rate",
+            "Assembly SMT Duty NG Rate",
             f"{fmt_ppm(assembly_kpi['duty_ppm'])} PPM" if assembly_kpi else "N/A",
             (
                 f"{fmt_int(assembly_kpi['duty_defects'])} defects · {fmt_int(assembly_kpi['produced'])} Assembly input"
@@ -8065,8 +8146,8 @@ def smt_kpi_track_page(color: str) -> None:
             "Result": fmt_kpi_pct(oqc_pass_rate),
         },
     ]
-    st.markdown("### KPI formulas")
-    styled_table(pd.DataFrame(formula_rows), table_class="kpi-formula-table")
+    with st.expander("KPI formulas"):
+        styled_table(pd.DataFrame(formula_rows), table_class="kpi-formula-table")
 
     smt_trend = (glue_scenario["trend"] if glue_scenario is not None else smt_analysis["trend"]).copy()
     if exclude_glue:
@@ -8106,7 +8187,7 @@ def smt_kpi_track_page(color: str) -> None:
         "Period",
         "SMTProcessNGRatePPM",
         f"SMT Process NG Rate {'· Simulation without glue ' if exclude_glue else ''}trend · {selected_trend_label}",
-        "#C2410C",
+        "#2563EB",
         "ppm",
         target_value=process_target,
         exception_rows=process_exceptions,
@@ -8191,24 +8272,25 @@ def smt_kpi_track_page(color: str) -> None:
         st.info("SMT OQC Pass Rate trend will appear after the first manual inspection entry.")
 
     if not process_exceptions.empty:
-        st.markdown("### Data consistency exceptions")
-        st.warning(
-            "SMT Process NG Rate is not calculated for the periods below because classified NG PCBs exceed the available input. "
-            "The defect records remain included when a larger selected period has a valid aggregate denominator."
-        )
-        exception_view = process_exceptions[["Period", "Input", "ClassifiedDefectPCBs", "SMTProcessStatus"]].copy()
-        exception_view = exception_view.rename(
-            columns={
-                "ClassifiedDefectPCBs": "Classified NG PCBs",
-                "SMTProcessStatus": "Reason",
-            }
-        )
-        styled_table(exception_view)
+        with st.expander(f"Data consistency exceptions · {len(process_exceptions)} periods"):
+            st.warning(
+                "SMT Process NG Rate is not calculated for the periods below because classified NG PCBs exceed the available input. "
+                "The defect records remain included when a larger selected period has a valid aggregate denominator."
+            )
+            exception_view = process_exceptions[["Period", "Input", "ClassifiedDefectPCBs", "SMTProcessStatus"]].copy()
+            exception_view = exception_view.rename(
+                columns={
+                    "ClassifiedDefectPCBs": "Classified NG PCBs",
+                    "SMTProcessStatus": "Reason",
+                }
+            )
+            styled_table(exception_view)
 
     if not function_exceptions.empty or not process_exceptions.empty or not assembly_duty_exceptions.empty:
         st.caption("A red × marks a daily period where the available input is lower than the defects required by that KPI. The daily KPI is not calculated; a valid larger-period aggregate remains available.")
 
-    with st.expander("Detalhamento dos dados e qualidade", expanded=True):
+    smt_glue_scenario_details(smt_analysis, glue_mode, glue_scenario)
+    with st.expander("Source data and data quality", expanded=False):
         detail = smt_trend[[
             "Period", "Granularity", "Input", "FunctionalDefectPCBs", "FunctionPassRate",
             "ClassifiedDefectPCBs", "SMTProcessNGRatePPM", "RejudgeOKRecords",
@@ -8246,7 +8328,7 @@ def smt_kpi_track_page(color: str) -> None:
 def assembly_kpi_track_page(color: str) -> None:
     import pandas as pd
 
-    st.markdown(f"<h1 class='section-title' style='color:{color};'>Assembly KPI Track</h1>", unsafe_allow_html=True)
+    st.markdown("<div><h1 class='section-title'>Assembly KPI Track</h1><div class='page-subtitle'>Monitor KPI achievement and daily trends.</div></div>", unsafe_allow_html=True)
     sources = stored_assembly_sources_v2()
     stored_inputs = sources["input"]
     if not sources["defects"] or not stored_inputs or not sources["repair"]:
@@ -8258,13 +8340,14 @@ def assembly_kpi_track_page(color: str) -> None:
         st.error(f"Unable to read Assembly input dates: {exc}")
         return
 
-    start_date, end_date = analysis_period_control(
-        "assembly_kpi_period",
-        minimum_date,
-        maximum_date,
-        default_start=minimum_date,
-        default_end=maximum_date,
-    )
+    with st.container(key="kpi_track_filters"):
+        start_date, end_date = analysis_period_control(
+            "assembly_kpi_period",
+            minimum_date,
+            maximum_date,
+            default_start=minimum_date,
+            default_end=maximum_date,
+        )
     if end_date < start_date:
         st.error("KPI end date must be on or after the start date.")
         return
@@ -8300,7 +8383,8 @@ def assembly_kpi_track_page(color: str) -> None:
     oqc_fqc_target = configured_targets["assembly_oqc_fqc"]["target"]
     period_note = f"{start_date.strftime('%d/%m/%Y')} to {end_date.strftime('%d/%m/%Y')}"
 
-    cards = st.columns(4)
+    with st.container(key="kpi_cards"):
+        cards = st.columns(4)
     with cards[0]:
         smt_kpi_card(
             "Function Pass Rate",
@@ -8383,8 +8467,8 @@ def assembly_kpi_track_page(color: str) -> None:
             "Result": fmt_kpi_pct(oqc_fqc_pass_rate),
         },
     ]
-    st.markdown("### KPI formulas")
-    styled_table(pd.DataFrame(formula_rows), table_class="kpi-formula-table")
+    with st.expander("KPI formulas"):
+        styled_table(pd.DataFrame(formula_rows), table_class="kpi-formula-table")
 
     trend = metrics["trend"]
     trend_label = metrics["trend_settings"]["label"]
@@ -8469,7 +8553,7 @@ def assembly_kpi_track_page(color: str) -> None:
     if not function_exceptions.empty or not appearance_exceptions.empty or not mando_exceptions.empty:
         st.caption("A red × marks a daily period where the available input is lower than the defects required by that KPI. The daily KPI is not calculated; a valid larger-period aggregate remains available.")
 
-    with st.expander("Detalhamento dos dados e qualidade", expanded=True):
+    with st.expander("Detalhamento dos dados e qualidade", expanded=False):
         daily_view = metrics["daily"].copy()
         daily_view["Date"] = pd.to_datetime(daily_view["Date"]).dt.strftime("%d/%m/%Y")
         daily_view["Function Pass Rate"] = (daily_view["FunctionPassRate"] * 100).round(2)
@@ -8912,53 +8996,58 @@ def render_smt_defect_dimension_cards(confirmed):
     css.append('</style>')
     st.markdown(''.join(css), unsafe_allow_html=True)
 
-    for start in range(0, len(SMT_DEFECT_DIMENSIONS), 3):
-        columns = st.columns(3, gap="medium")
-        for offset, slot in enumerate(columns):
-            index = start + offset
-            if index >= len(SMT_DEFECT_DIMENSIONS):
-                break
-            title, column, subtitle, accent = SMT_DEFECT_DIMENSIONS[index]
-            with slot:
-                with st.container(key=f"smt_dimension_{index}"):
-                    scope = _smt_breakdown_scope(source, selections, excluded_column=column)
-                    counts = (
-                        scope.groupby(column)["_DefectKey"].nunique().sort_values(ascending=False, kind="stable")
-                        if not scope.empty else None
-                    )
-                    maximum = max(int(counts.iloc[0]), 1) if counts is not None and not counts.empty else 1
-                    selected = selections[column]
-                    st.markdown(
-                        f'<div class="smt-dimension-title">{escape(title)}</div>'
-                        f'<div class="smt-dimension-subtitle">{escape(subtitle)} · unique NG PCBs per category</div>',
-                        unsafe_allow_html=True,
-                    )
-                    ranked = counts.index.tolist() if counts is not None else []
-                    if selected != "All" and selected not in ranked:
-                        ranked.insert(0, selected)
-                    with st.container(height=208, border=False, key=f"smt_dimension_list_{index}"):
-                        if not ranked:
-                            st.markdown('<div class="smt-dimension-empty">No defects match the other selections.</div>', unsafe_allow_html=True)
-                        for rank, category in enumerate(ranked):
-                            count = int(counts.get(category, 0)) if counts is not None else 0
-                            width = max(3, round(count / maximum * 100)) if count else 0
-                            item_key = f"smt_breakdown_item_{index}_{rank}"
-                            with st.container(key=item_key):
-                                st.button(
-                                    f"{category}   ·   {count:,}", key=f"smt_breakdown_click_{index}_{rank}",
-                                    on_click=_select_smt_breakdown_category, args=(column, category),
-                                    use_container_width=True,
-                                )
-                                st.markdown(
-                                    f'<div class="smt-dimension-track"><i style="width:{width}%;background:{accent}"></i></div>',
-                                    unsafe_allow_html=True,
-                                )
-                            if category == selected:
-                                st.markdown(
-                                    f'<style>div[class*="st-key-{item_key}"] .stButton button{{background:{accent}18;'
-                                    f'border-color:{accent};color:{accent};font-weight:800}}</style>',
-                                    unsafe_allow_html=True,
-                                )
+    with st.container(key="defect_breakdown"):
+        for start in range(0, len(SMT_DEFECT_DIMENSIONS), 3):
+            columns = st.columns(3, gap="medium")
+            for offset, slot in enumerate(columns):
+                index = start + offset
+                if index >= len(SMT_DEFECT_DIMENSIONS):
+                    break
+                title, column, subtitle, accent = SMT_DEFECT_DIMENSIONS[index]
+                with slot:
+                    with st.container(key=f"smt_dimension_{index}"):
+                        scope = _smt_breakdown_scope(source, selections, excluded_column=column)
+                        counts = (
+                            scope.groupby(column)["_DefectKey"].nunique().sort_values(ascending=False, kind="stable")
+                            if not scope.empty else None
+                        )
+                        maximum = max(int(counts.iloc[0]), 1) if counts is not None and not counts.empty else 1
+                        selected = selections[column]
+                        st.markdown(
+                            f'<div class="smt-dimension-title">{escape(title)}</div>'
+                            f'<div class="smt-dimension-subtitle">{escape(subtitle)} · unique NG PCBs per category</div>',
+                            unsafe_allow_html=True,
+                        )
+                        ranked = counts.index.tolist() if counts is not None else []
+                        if selected != "All" and selected not in ranked:
+                            ranked.insert(0, selected)
+                        with st.container(height=72, border=False, key=f"smt_dimension_list_{index}"):
+                            if not ranked:
+                                st.markdown('<div class="smt-dimension-empty">No defects match the other selections.</div>', unsafe_allow_html=True)
+                            for rank, category in enumerate(ranked):
+                                count = int(counts.get(category, 0)) if counts is not None else 0
+                                width = max(3, round(count / maximum * 100)) if count else 0
+                                item_key = f"smt_breakdown_item_{index}_{rank}"
+                                with st.container(key=item_key):
+                                    label_slot, bar_slot = st.columns([1.1, 1.2], gap="small")
+                                    with label_slot:
+                                        st.button(
+                                            str(category), key=f"smt_breakdown_click_{index}_{rank}",
+                                            on_click=_select_smt_breakdown_category, args=(column, category),
+                                            use_container_width=True,
+                                        )
+                                    with bar_slot:
+                                        st.markdown(
+                                            f'<div class="dimension-bar"><div class="dimension-track"><i style="width:{width}%"></i></div>'
+                                            f'<span class="dimension-count">{count:,}</span></div>',
+                                            unsafe_allow_html=True,
+                                        )
+                                if category == selected:
+                                    st.markdown(
+                                        f'<style>div[class*="st-key-{item_key}"] .stButton button{{background:{accent}18;'
+                                        f'border-color:#2563EB;color:#2563EB;font-weight:800}}</style>',
+                                        unsafe_allow_html=True,
+                                    )
 
     active = [
         f"{title}: {selections[column]}"
@@ -9012,53 +9101,58 @@ def render_assembly_defect_dimension_cards(confirmed):
         )
     css.append('</style>')
     st.markdown(''.join(css), unsafe_allow_html=True)
-    for start in range(0, len(ASSEMBLY_DEFECT_DIMENSIONS), 3):
-        slots = st.columns(3, gap="medium")
-        for offset, slot in enumerate(slots):
-            index = start + offset
-            if index >= len(ASSEMBLY_DEFECT_DIMENSIONS):
-                break
-            title, column, subtitle, accent = ASSEMBLY_DEFECT_DIMENSIONS[index]
-            with slot:
-                with st.container(key=f"assembly_dimension_{index}"):
-                    scope = _smt_breakdown_scope(source, selections, excluded_column=column)
-                    counts = (
-                        scope.groupby(column)["_DefectKey"].nunique().sort_values(ascending=False, kind="stable")
-                        if not scope.empty else None
-                    )
-                    maximum = max(int(counts.iloc[0]), 1) if counts is not None and not counts.empty else 1
-                    selected = selections[column]
-                    st.markdown(
-                        f'<div class="assembly-dimension-title">{escape(title)}</div>'
-                        f'<div class="assembly-dimension-subtitle">{escape(subtitle)} · unique NG PCBs per category</div>',
-                        unsafe_allow_html=True,
-                    )
-                    ranked = counts.index.tolist() if counts is not None else []
-                    if selected != "All" and selected not in ranked:
-                        ranked.insert(0, selected)
-                    with st.container(height=208, border=False, key=f"assembly_dimension_list_{index}"):
-                        if not ranked:
-                            st.markdown('<div class="assembly-dimension-empty">No defects match the other selections.</div>', unsafe_allow_html=True)
-                        for rank, category in enumerate(ranked):
-                            count = int(counts.get(category, 0)) if counts is not None else 0
-                            width = max(3, round(count / maximum * 100)) if count else 0
-                            item_key = f"assembly_breakdown_item_{index}_{rank}"
-                            with st.container(key=item_key):
-                                st.button(
-                                    f"{category}   ·   {count:,}", key=f"assembly_breakdown_click_{index}_{rank}",
-                                    on_click=_select_assembly_breakdown_category, args=(column, category),
-                                    use_container_width=True,
-                                )
-                                st.markdown(
-                                    f'<div class="assembly-dimension-track"><i style="width:{width}%;background:{accent}"></i></div>',
-                                    unsafe_allow_html=True,
-                                )
-                            if category == selected:
-                                st.markdown(
-                                    f'<style>div[class*="st-key-{item_key}"] .stButton button{{background:{accent}18;'
-                                    f'border-color:{accent};color:{accent};font-weight:800}}</style>',
-                                    unsafe_allow_html=True,
-                                )
+    with st.container(key="defect_breakdown"):
+        for start in range(0, len(ASSEMBLY_DEFECT_DIMENSIONS), 3):
+            slots = st.columns(3, gap="medium")
+            for offset, slot in enumerate(slots):
+                index = start + offset
+                if index >= len(ASSEMBLY_DEFECT_DIMENSIONS):
+                    break
+                title, column, subtitle, accent = ASSEMBLY_DEFECT_DIMENSIONS[index]
+                with slot:
+                    with st.container(key=f"assembly_dimension_{index}"):
+                        scope = _smt_breakdown_scope(source, selections, excluded_column=column)
+                        counts = (
+                            scope.groupby(column)["_DefectKey"].nunique().sort_values(ascending=False, kind="stable")
+                            if not scope.empty else None
+                        )
+                        maximum = max(int(counts.iloc[0]), 1) if counts is not None and not counts.empty else 1
+                        selected = selections[column]
+                        st.markdown(
+                            f'<div class="assembly-dimension-title">{escape(title)}</div>'
+                            f'<div class="assembly-dimension-subtitle">{escape(subtitle)} · unique NG PCBs per category</div>',
+                            unsafe_allow_html=True,
+                        )
+                        ranked = counts.index.tolist() if counts is not None else []
+                        if selected != "All" and selected not in ranked:
+                            ranked.insert(0, selected)
+                        with st.container(height=72, border=False, key=f"assembly_dimension_list_{index}"):
+                            if not ranked:
+                                st.markdown('<div class="assembly-dimension-empty">No defects match the other selections.</div>', unsafe_allow_html=True)
+                            for rank, category in enumerate(ranked):
+                                count = int(counts.get(category, 0)) if counts is not None else 0
+                                width = max(3, round(count / maximum * 100)) if count else 0
+                                item_key = f"assembly_breakdown_item_{index}_{rank}"
+                                with st.container(key=item_key):
+                                    label_slot, bar_slot = st.columns([1.1, 1.2], gap="small")
+                                    with label_slot:
+                                        st.button(
+                                            str(category), key=f"assembly_breakdown_click_{index}_{rank}",
+                                            on_click=_select_assembly_breakdown_category, args=(column, category),
+                                            use_container_width=True,
+                                        )
+                                    with bar_slot:
+                                        st.markdown(
+                                            f'<div class="dimension-bar"><div class="dimension-track"><i style="width:{width}%"></i></div>'
+                                            f'<span class="dimension-count">{count:,}</span></div>',
+                                            unsafe_allow_html=True,
+                                        )
+                                if category == selected:
+                                    st.markdown(
+                                        f'<style>div[class*="st-key-{item_key}"] .stButton button{{background:{accent}18;'
+                                        f'border-color:#2563EB;color:#2563EB;font-weight:800}}</style>',
+                                        unsafe_allow_html=True,
+                                    )
     active = [f"{title}: {selections[column]}" for title, column, _, _ in ASSEMBLY_DEFECT_DIMENSIONS if selections[column] != "All"]
     if active:
         st.caption("Selected: " + " · ".join(active))
@@ -9548,10 +9642,9 @@ def smt_quality_dashboard_v2(color: str) -> None:
     page_started = perf_counter()
     source_started = perf_counter()
     st.markdown(
-        f"<h1 class='section-title' style='color:{color};'>SMT · Quality Dashboard</h1>",
+        "<div><h1 class='section-title'>SMT · Quality Dashboard</h1><div class='page-subtitle'>Analyze confirmed defects and cross-filter their causes.</div></div>",
         unsafe_allow_html=True,
     )
-    st.caption("Analyze confirmed SMT defects by failure class, station, symptom, cause, repair conclusion and responsibility.")
     input_paths, defect_paths = smt_quality_dashboard.stored_smt_sources()
     source_seconds = perf_counter() - source_started
     if not input_paths or not defect_paths:
@@ -9617,7 +9710,8 @@ def smt_quality_dashboard_v2(color: str) -> None:
     issue_pareto = smt_dashboard_issue_pareto(view["confirmed"])
     top_issue = issue_pareto.iloc[0] if not issue_pareto.empty else None
 
-    cards = st.columns(4)
+    with st.container(key="dashboard_cards"):
+        cards = st.columns(4)
     with cards[0]:
         smt_kpi_card("SMT input", fmt_int(view["produced"]), "Boards in the selected scope", color)
     with cards[1]:
@@ -9637,7 +9731,9 @@ def smt_quality_dashboard_v2(color: str) -> None:
             color,
         )
 
-    st.markdown("### Defect breakdown")
+    breakdown_heading, breakdown_action = st.columns([5, 1])
+    with breakdown_heading:
+        st.markdown("### Defect breakdown")
     st.markdown(
         """<style>
         div[class*="st-key-smt_breakdown_clear"] {max-width:245px;}
@@ -9657,11 +9753,12 @@ def smt_quality_dashboard_v2(color: str) -> None:
         </style>""",
         unsafe_allow_html=True,
     )
-    st.button(
-        "Clear breakdown selections", key="smt_breakdown_clear",
-        on_click=_clear_smt_breakdown_selections,
-        use_container_width=True,
-    )
+    with breakdown_action:
+        st.button(
+            "Clear breakdown selections", key="smt_breakdown_clear",
+            on_click=_clear_smt_breakdown_selections,
+            use_container_width=True,
+        )
     breakdown_detail = render_smt_defect_dimension_cards(view["confirmed"])
     render_breakdown_chart_builder(view["confirmed"], "SMT")
 
@@ -10689,7 +10786,7 @@ def assembly_quality_dashboard_v2(color: str) -> None:
     store_status = assembly_store_status(sync=False)
     source_seconds = perf_counter() - source_started
     st.markdown(
-        f"<h1 class='section-title' style='color:{color};'>Assembly · Quality Dashboard</h1>",
+        "<div><h1 class='section-title'>Assembly · Quality Dashboard</h1><div class='page-subtitle'>Analyze confirmed defects and cross-filter their causes.</div></div>",
         unsafe_allow_html=True,
     )
     if not stored_inputs or not sources["defects"] or not sources["repair"]:
@@ -10759,7 +10856,8 @@ def assembly_quality_dashboard_v2(color: str) -> None:
     functional_share = (
         view["functional_pcbs"] / total_classified if total_classified else 0
     )
-    cards = st.columns(4)
+    with st.container(key="dashboard_cards"):
+        cards = st.columns(4)
     with cards[0]:
         smt_kpi_card("Assembly input", fmt_int(view["produced"]), "Units in the selected scope", color)
     with cards[1]:
@@ -10788,12 +10886,15 @@ def assembly_quality_dashboard_v2(color: str) -> None:
             color,
         )
 
-    st.markdown("### Defect breakdown")
-    st.button(
-        "Clear breakdown selections", key="assembly_breakdown_clear",
-        on_click=_clear_assembly_breakdown_selections,
-        use_container_width=True,
-    )
+    breakdown_heading, breakdown_action = st.columns([5, 1])
+    with breakdown_heading:
+        st.markdown("### Defect breakdown")
+    with breakdown_action:
+        st.button(
+            "Clear breakdown selections", key="assembly_breakdown_clear",
+            on_click=_clear_assembly_breakdown_selections,
+            use_container_width=True,
+        )
     breakdown_detail = render_assembly_defect_dimension_cards(view["confirmed"])
     render_breakdown_chart_builder(view["confirmed"], "Assembly")
     if any(
