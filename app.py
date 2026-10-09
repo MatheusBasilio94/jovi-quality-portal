@@ -55,7 +55,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.6.05"
+APP_VERSION = "v0.6.06"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 PORTAL_ACCOUNTS = configured_accounts()
@@ -108,6 +108,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.6.06", "Identify combined KPI chart images with a centered SMT or Assembly weekly or monthly analysis title."),
     ("v0.6.05", "Extend the combined 2 by 2 chart copy to weekly Assembly and monthly SMT and Assembly reviews."),
     ("v0.6.04", "Copy all four Weekly SMT KPI charts together as one high-resolution 2 by 2 report image."),
     ("v0.6.03", "Publish the approved redesign: horizontal navigation, compact highlighted filters, unclipped Home charts, aligned KPI chart controls and the revised KPI Review."),
@@ -5001,20 +5002,38 @@ def install_chart_copy_controls() -> None:
                 }
                 const width = 916 * 3;
                 const height = Math.round(width * 8.17 / 16.17);
+                const titles = {
+                    weekly_smt: "SMT WEEKLY ANALYSIS",
+                    weekly_assembly: "ASSEMBLY WEEKLY ANALYSIS",
+                    monthly_smt: "SMT MONTHLY ANALYSIS",
+                    monthly_assembly: "ASSEMBLY MONTHLY ANALYSIS",
+                };
+                const title = titles[group];
+                if (!title) throw new Error("Unknown report group");
+                const titleHeight = Math.round(width * 1.4 / 16.17);
+                const gridHeight = Math.round(width * 16.61 / 16.17);
                 const canvas = parentDocument.createElement("canvas");
                 canvas.width = Math.round(width * 32.72 / 16.17);
-                canvas.height = Math.round(width * 16.61 / 16.17);
+                canvas.height = gridHeight + titleHeight;
                 const columnGap = canvas.width - width * 2;
-                const rowGap = canvas.height - height * 2;
+                const rowGap = gridHeight - height * 2;
                 const context = canvas.getContext("2d");
                 context.fillStyle = "#FFFFFF";
                 context.fillRect(0, 0, canvas.width, canvas.height);
+                context.font = `${Math.round(width * 0.04)}px Arial`;
+                context.textAlign = "center";
+                context.textBaseline = "middle";
+                const badgeWidth = context.measureText(title).width + 80;
+                context.fillStyle = "#BDD7EE";
+                context.fillRect((canvas.width - badgeWidth) / 2, 22, badgeWidth, titleHeight - 44);
+                context.fillStyle = "#111111";
+                context.fillText(title, canvas.width / 2, titleHeight / 2);
                 for (let index = 0; index < graphs.length; index++) {
                     const image = new parentWindow.Image();
                     image.src = await exportReportChart(graphs[index], "png");
                     await image.decode();
                     const x = (index % 2) * (width + columnGap);
-                    const y = Math.floor(index / 2) * (height + rowGap);
+                    const y = titleHeight + Math.floor(index / 2) * (height + rowGap);
                     context.drawImage(image, x, y, width, height);
                     context.strokeStyle = "#000000";
                     context.lineWidth = 3;
