@@ -55,7 +55,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.6.03"
+APP_VERSION = "v0.6.04"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 PORTAL_ACCOUNTS = configured_accounts()
@@ -108,6 +108,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.6.04", "Copy all four Weekly SMT KPI charts together as one high-resolution 2 by 2 report image."),
     ("v0.6.03", "Publish the approved redesign: horizontal navigation, compact highlighted filters, unclipped Home charts, aligned KPI chart controls and the revised KPI Review."),
     ("v0.6.02", "Simulate SMT Process NG Rate with and without selected glue defects, preserving mixed-defect PCBs and the original input."),
     ("v0.6.01", "Use the breakdown chart expander directly without an extra Show chart toggle."),
@@ -4679,9 +4680,11 @@ def install_chart_copy_controls() -> None:
             const parentDocument = parentWindow.document;
             const buttonClass = "jovi-copy-chart-button";
             const svgButtonClass = "jovi-download-svg-button";
+            const groupButtonClass = "jovi-copy-chart-group-button";
             const nativeSelector = '.modebar-btn[data-title*="Download plot as" i]';
 
             parentDocument.querySelectorAll(`.${buttonClass}, .${svgButtonClass}`).forEach((button) => button.remove());
+            parentDocument.querySelectorAll(`.${groupButtonClass}`).forEach((button) => button.remove());
 
             const setButtonState = (button, symbol, title, delay = 1800) => {
                 const originalSymbol = button.dataset.originalSymbol || "⧉";
@@ -4698,13 +4701,13 @@ def install_chart_copy_controls() -> None:
                 }
             };
 
-            const sizePngForReport = async (sourceBlob) => {
+            const sizePngForReport = async (sourceBlob, widthCm = 16.17) => {
                 const original = new Uint8Array(await sourceBlob.arrayBuffer());
                 const view = new DataView(original.buffer);
                 if (view.getUint32(0) !== 0x89504e47 || view.getUint32(12) !== 0x49484452) {
                     return sourceBlob;
                 }
-                const pixelsPerMeter = Math.round(view.getUint32(16) / 0.1617);
+                const pixelsPerMeter = Math.round(view.getUint32(16) / (widthCm / 100));
                 const chunk = new Uint8Array(21);
                 const chunkView = new DataView(chunk.buffer);
                 chunkView.setUint32(0, 9);
@@ -4988,8 +4991,73 @@ def install_chart_copy_controls() -> None:
                 copyButton.insertAdjacentElement("afterend", svgButton);
             };
 
+            const buildChartGroupImage = async (group) => {
+                const graphs = Array.from(parentDocument.querySelectorAll('.js-plotly-plot'))
+                    .filter((graph) => graph.layout?.meta?.jovi_review_group === group)
+                    .sort((left, right) => left.layout.meta.jovi_panel_index - right.layout.meta.jovi_panel_index);
+                if (graphs.length !== 4 || new Set(graphs.map((graph) => graph.layout.meta.jovi_panel_index)).size !== 4) {
+                    throw new Error("Wait for all four charts to load, then try again.");
+                }
+                const width = 916 * 3;
+                const height = Math.round(width * 8.17 / 16.17);
+                const canvas = parentDocument.createElement("canvas");
+                canvas.width = Math.round(width * 32.72 / 16.17);
+                canvas.height = Math.round(width * 16.61 / 16.17);
+                const columnGap = canvas.width - width * 2;
+                const rowGap = canvas.height - height * 2;
+                const context = canvas.getContext("2d");
+                context.fillStyle = "#FFFFFF";
+                context.fillRect(0, 0, canvas.width, canvas.height);
+                for (let index = 0; index < graphs.length; index++) {
+                    const image = new parentWindow.Image();
+                    image.src = await exportReportChart(graphs[index], "png");
+                    await image.decode();
+                    const x = (index % 2) * (width + columnGap);
+                    const y = Math.floor(index / 2) * (height + rowGap);
+                    context.drawImage(image, x, y, width, height);
+                    context.strokeStyle = "#000000";
+                    context.lineWidth = 3;
+                    context.strokeRect(x + 1.5, y + 1.5, width - 3, height - 3);
+                }
+                const blob = await new Promise((resolve, reject) => canvas.toBlob(
+                    (value) => value ? resolve(value) : reject(new Error("Unable to create combined image")), "image/png"
+                ));
+                return await sizePngForReport(blob, 32.72);
+            };
+
+            const addGroupCopyButton = (marker) => {
+                if (marker.querySelector(`.${groupButtonClass}`)) return;
+                const button = parentDocument.createElement("button");
+                button.className = groupButtonClass;
+                button.type = "button";
+                button.textContent = "⧉ Copy all 4 charts · 2 × 2";
+                button.style.cssText = "background:#2469D1;color:white;border:1px solid #2469D1;border-radius:8px;padding:10px 16px;font:600 14px Arial;cursor:pointer;margin:4px 0 12px;";
+                button.setAttribute("aria-live", "polite");
+                button.addEventListener("click", async () => {
+                    button.disabled = true;
+                    button.textContent = "Preparing combined image…";
+                    try {
+                        const png = buildChartGroupImage(marker.dataset.joviChartGroup);
+                        if (!parentWindow.navigator?.clipboard?.write || !parentWindow.ClipboardItem) {
+                            throw new Error("Clipboard access is unavailable in this browser.");
+                        }
+                        await parentWindow.navigator.clipboard.write([
+                            new parentWindow.ClipboardItem({"image/png": png})
+                        ]);
+                        button.textContent = "✓ All 4 charts copied";
+                    } catch (error) {
+                        button.textContent = error.message || "Unable to copy; please try again";
+                    } finally {
+                        button.disabled = false;
+                        parentWindow.setTimeout(() => { button.textContent = "⧉ Copy all 4 charts · 2 × 2"; }, 3000);
+                    }
+                });
+                marker.appendChild(button);
+            };
+
             const scan = () => {
                 parentDocument.querySelectorAll('[data-testid="stPlotlyChart"]').forEach(addCopyButton);
+                parentDocument.querySelectorAll('[data-jovi-chart-group]').forEach(addGroupCopyButton);
             };
             const observer = new parentWindow.MutationObserver(scan);
             observer.observe(parentDocument.body, {childList: true, subtree: true});
@@ -6660,12 +6728,18 @@ def weekly_kpi_review_page() -> None:
                 total_exceptions,
                 daily_exceptions,
             )
+            if area == "SMT":
+                st.markdown('<div data-jovi-chart-group="weekly_smt"></div>', unsafe_allow_html=True)
             chart_tabs = st.tabs([panel["title"] for panel in panels])
-            for chart_tab, panel in zip(chart_tabs, panels):
+            for panel_index, (chart_tab, panel) in enumerate(zip(chart_tabs, panels)):
                 with chart_tab:
                     chart_name = re.sub(r"[^a-z0-9]+", "_", panel["title"].lower()).strip("_")
                     figure = build_kpi_panel_chart(panel)
-                    figure.update_layout(meta={"jovi_report_export": "kpi_review"})
+                    figure.update_layout(meta={
+                        "jovi_report_export": "kpi_review",
+                        "jovi_review_group": f"weekly_{area.lower()}",
+                        "jovi_panel_index": panel_index,
+                    })
                     show_chart(
                         figure,
                         image_filename=(
