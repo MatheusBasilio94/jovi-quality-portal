@@ -55,7 +55,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.6.04"
+APP_VERSION = "v0.6.05"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 PORTAL_ACCOUNTS = configured_accounts()
@@ -108,6 +108,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.6.05", "Extend the combined 2 by 2 chart copy to weekly Assembly and monthly SMT and Assembly reviews."),
     ("v0.6.04", "Copy all four Weekly SMT KPI charts together as one high-resolution 2 by 2 report image."),
     ("v0.6.03", "Publish the approved redesign: horizontal navigation, compact highlighted filters, unclipped Home charts, aligned KPI chart controls and the revised KPI Review."),
     ("v0.6.02", "Simulate SMT Process NG Rate with and without selected glue defects, preserving mixed-defect PCBs and the original input."),
@@ -6728,8 +6729,7 @@ def weekly_kpi_review_page() -> None:
                 total_exceptions,
                 daily_exceptions,
             )
-            if area == "SMT":
-                st.markdown('<div data-jovi-chart-group="weekly_smt"></div>', unsafe_allow_html=True)
+            st.markdown(f'<div data-jovi-chart-group="weekly_{area.lower()}"></div>', unsafe_allow_html=True)
             chart_tabs = st.tabs([panel["title"] for panel in panels])
             for panel_index, (chart_tab, panel) in enumerate(zip(chart_tabs, panels)):
                 with chart_tab:
@@ -6823,12 +6823,17 @@ def monthly_kpi_review_page() -> None:
             "sized 16.17 cm × 8.17 cm."
         )
         panels = monthly_kpi_slide_panels(directory, month_columns)
+        st.markdown(f'<div data-jovi-chart-group="monthly_{area.lower()}"></div>', unsafe_allow_html=True)
         chart_tabs = st.tabs([panel["title"] for panel in panels])
-        for chart_tab, panel in zip(chart_tabs, panels):
+        for panel_index, (chart_tab, panel) in enumerate(zip(chart_tabs, panels)):
             with chart_tab:
                 chart_name = re.sub(r"[^a-z0-9]+", "_", panel["title"].lower()).strip("_")
                 figure = build_kpi_panel_chart(panel)
-                figure.update_layout(meta={"jovi_report_export": "kpi_review"})
+                figure.update_layout(meta={
+                    "jovi_report_export": "kpi_review",
+                    "jovi_review_group": f"monthly_{area.lower()}",
+                    "jovi_panel_index": panel_index,
+                })
                 show_chart(
                     figure,
                     image_filename=(
