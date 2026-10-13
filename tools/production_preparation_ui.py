@@ -7,7 +7,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from tools.production_preparation import history, simulate
+from tools.production_preparation import history, simulate, suggest_actions
 
 
 def _select_period():
@@ -120,6 +120,32 @@ def render(load_data, directory):
     context = f"{area}|{model}|{start}|{end}"
     saved = st.session_state.get("_production_actions", {}).get(context, {})
     reductions = {issue: values.get("Expected reduction (%)", 0) for issue, values in saved.items()}
+    with st.expander("Suggest actions to reach target"):
+        supported = [item for item in directory if item["area"] == area and item["source"] in baseline["scopes"]]
+        st.caption("Prioritize the most frequent defects affecting the selected KPI. Suggested percentages are goals for your team to assess, not guaranteed improvements. Existing actions are preserved; blocked defects are set to 0% reduction.")
+        if supported:
+            options = {item["kpi"]: item for item in supported}
+            option_key = f"production_suggest_kpi_{area}"
+            if st.session_state.get(option_key) not in options:
+                st.session_state[option_key] = next(iter(options))
+            selected_kpi = st.selectbox("KPI to reach", list(options), key=option_key, persist_state="session")
+            lock_key = "production_locked_" + sha1(context.encode()).hexdigest()[:12]
+            issue_names = baseline["issues"]["Defect"].tolist()
+            st.session_state[lock_key] = [issue for issue in st.session_state.get(lock_key, []) if issue in issue_names]
+            locked = st.multiselect("Cannot be reduced in the next production", issue_names, key=lock_key, persist_state="session")
+            if st.button("Suggest actions to reach target", key="production_suggest_button", disabled=not issue_names):
+                suggestion = suggest_actions(baseline, planned, options[selected_kpi], reductions, locked)
+                reductions = suggestion["reductions"]
+                saved = {issue: {**saved.get(issue, {}), "Expected reduction (%)": reductions.get(issue, 0)} for issue in issue_names}
+                all_actions = dict(st.session_state.get("_production_actions", {}))
+                all_actions[context] = saved
+                st.session_state["_production_actions"] = all_actions
+                st.session_state["_production_reset"] = st.session_state.get("_production_reset", 0) + 1
+                detail = f"{suggestion['after']:,} projected NG PCBs for this KPI; maximum allowed: {suggestion['allowed']:,}. Review the reductions below and add your planned actions."
+                if suggestion["achieved"]:
+                    st.success("Target reached in the suggested scenario. " + detail)
+                else:
+                    st.warning("Target cannot be reached with the blocked defects, even eliminating the remaining issues. " + detail)
     result = simulate(baseline, planned, reductions)
     rows = result["issues"].copy()
     rows["Last occurrence"] = pd.to_datetime(rows["Last occurrence"]).dt.strftime("%d %b %Y").fillna("Unavailable")

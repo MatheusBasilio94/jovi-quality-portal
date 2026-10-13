@@ -1,6 +1,6 @@
 import unittest
 import pandas as pd
-from tools.production_preparation import history, rounded_forecast, simulate
+from tools.production_preparation import history, rounded_forecast, simulate, suggest_actions
 
 
 def records(area="SMT"):
@@ -17,6 +17,40 @@ def records(area="SMT"):
 
 
 class ProductionPreparationTests(unittest.TestCase):
+    def test_suggestion_reaches_target_with_rounded_counts(self):
+        base = history(records(), 10, "SMT")
+        item = {"source": "smt_process", "direction": "max", "target": 50000}
+        suggestion = suggest_actions(base, 100, item)
+        self.assertTrue(suggestion["achieved"])
+        self.assertLessEqual(simulate(base, 100, suggestion["reductions"])["metrics"]["smt_process"]["counts"][1], 5)
+        self.assertEqual(suggestion["allowed"], 5)
+
+    def test_locked_mixed_defect_can_make_target_unreachable(self):
+        base = history(records(), 10, "SMT")
+        item = {"source": "smt_process", "direction": "max", "target": 50000}
+        suggestion = suggest_actions(base, 100, item, {"Functional": 60}, locked=["Functional"])
+        self.assertFalse(suggestion["achieved"])
+        self.assertEqual(suggestion["reductions"]["Functional"], 0)
+        self.assertEqual(suggestion["after"], 10)
+
+    def test_percentage_target_and_unrelated_actions(self):
+        base = history(records(), 10, "SMT")
+        item = {"source": "smt_function", "direction": "min", "target": .9966}
+        suggestion = suggest_actions(base, 100, item, {"Glue": 35})
+        self.assertTrue(suggestion["achieved"])
+        self.assertEqual(suggestion["allowed"], 0)
+        self.assertEqual(suggestion["reductions"]["Functional"], 100)
+        self.assertEqual(suggestion["reductions"]["Glue"], 35)
+        with self.assertRaises(ValueError):
+            suggest_actions(base, 100, {**item, "source": "smt_oqc"})
+
+    def test_already_met_target_keeps_existing_actions(self):
+        base = history(records(), 10, "SMT")
+        item = {"source": "smt_function", "direction": "min", "target": .8}
+        suggestion = suggest_actions(base, 100, item, {"Glue": 25})
+        self.assertEqual(suggestion["reductions"], {"Glue": 25})
+        self.assertTrue(suggestion["achieved"])
+
     def test_forecasts_are_ceilings_without_float_artifacts(self):
         self.assertEqual(rounded_forecast(21, 100, 1000), 3)
         self.assertEqual(rounded_forecast(5, 100, 100, 50), 3)
@@ -73,6 +107,10 @@ render(load, directory)
 '''
         app = AppTest.from_string(script).run(timeout=20)
         self.assertFalse(app.exception)
+        app.button(key="production_suggest_button").click().run(timeout=20)
+        self.assertFalse(app.exception)
+        self.assertTrue(app.success)
+        self.assertTrue(app.session_state["_production_actions"])
         app.selectbox(key="production_area").set_value("Assembly").run(timeout=20)
         self.assertFalse(app.exception)
 

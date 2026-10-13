@@ -1,6 +1,6 @@
 """Read-only production scenarios, preserving PCB overlaps and KPI scopes."""
 from collections import Counter
-from decimal import Decimal, ROUND_CEILING
+from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 
 import pandas as pd
 from tools.smart_report_rules import kpi_defect_scopes, top_issue_reasons
@@ -77,3 +77,65 @@ def simulate(baseline, planned, reductions):
         }
     totals = [projected_unique(baseline["records"], planned, denominator, rules) for rules in ({}, reductions)]
     return {"issues": rows, "metrics": metrics, "totals": totals}
+
+
+def suggest_actions(baseline, planned, item, reductions=None, locked=()):
+    """Frequency-first, editable target scenario using the same rounded PCB model."""
+    planned = int(planned)
+    if planned <= 0:
+        raise ValueError("Planned production must be positive.")
+    source = item["source"]
+    if source not in baseline["scopes"]:
+        raise ValueError("This KPI cannot be simulated with the available data.")
+    target = Decimal(str(item["target"]))
+    allowed = (Decimal(planned) * (1 - target) if item["direction"] == "min"
+               else Decimal(planned) * target / Decimal(1000000))
+    allowed = int(allowed.to_integral_value(rounding=ROUND_FLOOR))
+    if not 0 <= allowed <= planned:
+        raise ValueError("The KPI target is outside the valid range.")
+    rules = dict(reductions or {})
+    locked = set(locked)
+    for issue in locked:
+        rules[issue] = 0
+    scope = baseline["scopes"][source]
+    signatures = Counter(tuple(sorted(set(group["TopIssue"]))) for _, group in scope.groupby("_DefectKey"))
+
+    def count():
+        total = 0
+        for issues, frequency in signatures.items():
+            eliminated = Decimal(1)
+            for issue in issues:
+                reduction = Decimal(str(rules.get(issue, 0)))
+                if not 0 <= reduction <= 100:
+                    raise ValueError("Expected reductions must be between 0% and 100%.")
+                eliminated *= reduction / 100
+            value = Decimal(frequency) * planned / baseline["input"] * (1 - eliminated)
+            total += int(value.to_integral_value(rounding=ROUND_CEILING))
+        return min(planned, total)
+
+    initial = count()
+    ranking = scope.groupby("TopIssue")["_DefectKey"].nunique()
+    priority = sorted((issue for issue in ranking.index if issue not in locked), key=lambda issue: (-ranking[issue], issue))
+    selected = []
+    for issue in priority:
+        if count() <= allowed:
+            break
+        if rules.get(issue, 0) < 100:
+            selected.append((issue, float(rules.get(issue, 0))))
+            rules[issue] = 100
+    achieved = count() <= allowed
+    if achieved:
+        # Remove redundant increases and find whole-percent reductions that still
+        # meet the target, including boards with several defects.
+        for issue, original in reversed(selected):
+            low, high = int(Decimal(str(original)).to_integral_value(rounding=ROUND_CEILING)), 100
+            while low < high:
+                middle = (low + high) // 2
+                rules[issue] = middle
+                if count() <= allowed:
+                    high = middle
+                else:
+                    low = middle + 1
+            rules[issue] = low
+    return {"reductions": rules, "achieved": achieved, "allowed": allowed,
+            "before": initial, "after": count()}
