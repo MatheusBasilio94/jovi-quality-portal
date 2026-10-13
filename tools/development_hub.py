@@ -14,9 +14,11 @@ def documents():
 
 
 def render():
-    if not is_admin_session(st.session_state):
-        st.error('Administrator access is required for Development Hub.')
-        return
+    from tools.development_assessment_ui import render as render_assessment
+    render_assessment(documents())
+
+
+def render_catalog():
     records = documents()
     st.markdown("<div class='smart-report-title'>Development Hub</div><div class='smart-report-subtitle'>Quality specialist procedures and work instructions.</div>", unsafe_allow_html=True)
     st.html("<span style='display:inline-block;background:#E7EEFF;color:#2354AA;border:1px solid #B7CEF0;border-radius:6px;padding:4px 10px;font-size:12px;font-weight:600;'>Administrator only</span>")

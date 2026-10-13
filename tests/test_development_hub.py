@@ -27,12 +27,15 @@ render()
 '''
         app = AppTest.from_string(script).run(timeout=15)
         self.assertFalse(app.exception)
-        self.assertEqual(len(app.dataframe[0].value), 83)
+        catalog = next(item.value for item in app.dataframe if 'Document title' in item.value.columns)
+        self.assertEqual(len(catalog), 83)
         app.selectbox(key='development_area').set_value('SMT').run()
         self.assertFalse(app.exception)
-        self.assertTrue(app.dataframe[0].value['SMT'].eq('✓').all())
+        catalog = next(item.value for item in app.dataframe if 'Document title' in item.value.columns)
+        self.assertTrue(catalog['Area'].str.contains('SMT').all())
         app.text_input(key='development_search').set_value('SMT OQC').run()
-        self.assertEqual(len(app.dataframe[0].value), 1)
+        catalog = next(item.value for item in app.dataframe if 'Document title' in item.value.columns)
+        self.assertEqual(len(catalog), 1)
 
     def test_viewer_cannot_render_document_catalog(self):
         from streamlit.testing.v1 import AppTest

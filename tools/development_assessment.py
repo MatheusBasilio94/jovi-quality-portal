@@ -1,0 +1,121 @@
+"""Personal development rules and private, independently saved assessment parts."""
+from datetime import datetime, timezone
+from hashlib import sha256
+import json
+from pathlib import Path
+import re
+from threading import RLock
+from uuid import uuid4
+
+AXES = [
+    ('procedures', 'Procedures & Technical Knowledge', 'Knowledge of applicable procedures and evidence of practical application.'),
+    ('results', 'Quality Results', 'Results attributable to your responsibilities, supported by indicators and cases.'),
+    ('risks', 'Risk Prevention & Problem Solving', 'Risk detection, containment, root cause analysis and verified corrective actions.'),
+    ('improvements', 'Improvement & Innovation', 'Completed improvements with demonstrated quality, efficiency or cost benefits.'),
+    ('execution', 'Execution & Initiative', 'Timely deliveries, initiative, follow-through and early communication of obstacles.'),
+    ('collaboration', 'Collaboration & Communication', 'Cooperation, constructive contributions and clear communication with stakeholders.'),
+    ('learning', 'Learning & Knowledge Sharing', 'Application of learning, documented experience, training and support for colleagues.'),
+]
+SCALE = ['Not assessed', '1', '2', '3', '4', '5']
+PARTS = {'self', 'manager', 'plan', 'progress', 'achievements'}
+_LOCK = RLock()
+
+
+def revision(record):
+    return (record or {}).get('revision', '')
+
+
+def validate_ratings(rows, submitting=False):
+    cleaned = {}
+    for key, _, _ in AXES:
+        values = rows.get(key, {})
+        rating = values.get('rating')
+        if rating is not None and (type(rating) is not int or rating not in range(1, 6)):
+            raise ValueError('Ratings must be whole numbers from 1 to 5, or Not assessed.')
+        comment = str(values.get('comment') or '').strip()[:5000]
+        evidence = str(values.get('evidence') or '').strip()[:5000]
+        if submitting and rating is not None and not (comment or evidence):
+            raise ValueError('Add a comment or evidence for each rated development area.')
+        cleaned[key] = {'rating': rating, 'comment': comment, 'evidence': evidence}
+    if submitting and not any(row['rating'] is not None for row in cleaned.values()):
+        raise ValueError('Rate at least one development area before submitting.')
+    return cleaned
+
+
+def authorize(actor, subject, part, self_record=None):
+    if not actor:
+        raise PermissionError('An individual authenticated account is required.')
+    if part == 'manager':
+        if actor.casefold() == subject.casefold():
+            raise PermissionError('You cannot complete your own manager assessment.')
+        if not self_record or self_record.get('status') != 'submitted':
+            raise PermissionError('A submitted self assessment is required before manager review.')
+        if actor.casefold() != str(self_record.get('manager') or '').casefold():
+            raise PermissionError('Only the assigned manager can complete this review.')
+    elif actor.casefold() != subject.casefold():
+        raise PermissionError('You can only change your own development records.')
+
+
+class AssessmentStore:
+    def __init__(self, local_root=None, cloud=None):
+        if cloud is None:
+            from tools.supabase_store import supabase_is_configured
+            cloud = supabase_is_configured()
+        self.cloud = cloud
+        self.local_root = Path(local_root or Path(__file__).resolve().parents[1] / 'data_store' / 'development')
+
+    def path(self, subject, cycle, part):
+        if part not in PARTS or not subject:
+            raise ValueError('Invalid development record.')
+        if not re.fullmatch(r'\d{4}-(0[1-9]|1[0-2])_(SMT|Assembly|IQC-Lab)', cycle):
+            raise ValueError('Select a valid assessment month and role.')
+        person = sha256(subject.strip().casefold().encode()).hexdigest()
+        return f'development/{person}/{cycle}/{part}.json'
+
+    def load(self, subject, cycle, part):
+        path = self.path(subject, cycle, part)
+        if self.cloud:
+            from tools.supabase_store import download_bytes
+            raw = download_bytes(path)
+        else:
+            target = self.local_root / path
+            raw = target.read_bytes() if target.exists() else None
+        if raw is None:
+            return {}
+        record = json.loads(raw)
+        if not isinstance(record, dict):
+            raise ValueError('The saved development record could not be read.')
+        return record
+
+    def save(self, actor, subject, cycle, part, payload, expected_revision=''):
+        with _LOCK:
+            self_record = self.load(subject, cycle, 'self') if part == 'manager' else None
+            authorize(actor, subject, part, self_record)
+            if part == 'manager' and payload.get('self_revision') != revision(self_record):
+                raise ValueError('The self assessment changed. Reload it before saving the manager review.')
+            current = self.load(subject, cycle, part)
+            if revision(current) != expected_revision:
+                raise ValueError('This record was updated in another session. Reload before saving.')
+            record = {**payload, 'subject': subject, 'actor': actor, 'revision': uuid4().hex,
+                      'updated_at': datetime.now(timezone.utc).isoformat()}
+            if part in {'self', 'manager'}:
+                if record.get('status') not in {'draft', 'submitted'}:
+                    raise ValueError('Invalid assessment status.')
+                record['ratings'] = validate_ratings(record.get('ratings', {}), record['status'] == 'submitted')
+            raw = json.dumps(record, ensure_ascii=False).encode()
+            path = self.path(subject, cycle, part)
+            if self.cloud:
+                from tools.supabase_store import upload_bytes
+                upload_bytes(path, raw)
+            else:
+                target = self.local_root / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                temporary = target.with_name(target.name + '.' + uuid4().hex + '.tmp')
+                temporary.write_bytes(raw)
+                temporary.replace(target)
+            return record
+
+
+def comparable_manager(self_record, manager_record):
+    return bool(self_record.get('status') == 'submitted' and manager_record.get('status') == 'submitted'
+                and manager_record.get('self_revision') == revision(self_record))

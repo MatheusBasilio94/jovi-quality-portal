@@ -55,9 +55,20 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.6.16"
+APP_VERSION = "v0.6.17"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
+@st.cache_resource(show_spinner=False)
+def _development_release_modules(release):
+    """Load updated account and development modules once per deployed release."""
+    import importlib
+    from tools import portal_users, access_control, development_assessment, development_assessment_ui, development_hub
+    for module in [portal_users, access_control, development_assessment, development_assessment_ui, development_hub]:
+        importlib.reload(module)
+    return (access_control.configured_accounts, access_control.authenticate, access_control.account_from_token,
+            access_control.is_admin_session, access_control.require_admin_access, portal_users.development_access)
+
+configured_accounts, authenticate, account_from_token, is_admin_session, require_admin_access, development_access = _development_release_modules(APP_VERSION)
 PORTAL_ACCOUNTS = configured_accounts()
 LOGIN_USERNAME = PORTAL_ACCOUNTS[0].username
 MANAGER = "曹毅"
@@ -109,6 +120,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.6.17", "Add personal self and manager assessments, comparison radar, procedure progress and administrator-approved employee ID accounts with mandatory password changes."),
     ("v0.6.16", "Add administrator-only Development Hub in More with English quality document titles, original document links and area filters."),
     ("v0.6.15", "Show production target suggestions directly and refresh scenario modules on each deployed release."),
     ("v0.6.14", "Suggest editable frequency-prioritized actions to reach production KPI targets, with blocked defects and integer PCB forecasts."),
@@ -2083,18 +2095,9 @@ def render_auth_cookie(token: str = "") -> None:
 
 
 def restore_authentication() -> None:
-    if st.session_state.get("authenticated"):
-        current_user = st.session_state.get("authenticated_user")
-        current_role = st.session_state.get("auth_role")
-        if any(account.username == current_user and account.role == current_role for account in PORTAL_ACCOUNTS):
-            return
-        # Preserve existing administrator sessions across this deployment.
-        if current_user == LOGIN_USERNAME and not current_role:
-            st.session_state["auth_role"] = "admin"
-            return
-        st.session_state["authenticated"] = False
-    token = st.context.cookies.get(COOKIE_NAME)
+    token = st.session_state.get("auth_cookie_token") or st.context.cookies.get(COOKIE_NAME)
     account = account_from_token(token, PORTAL_ACCOUNTS)
+    st.session_state["authenticated"] = False
     if account:
         st.session_state["authenticated"] = True
         st.session_state["authenticated_user"] = account.username
@@ -2181,6 +2184,20 @@ def login_page() -> None:
             )
 
 
+    with st.expander("Create an individual account"):
+        st.caption("Use your employee ID. Initial password: employee ID. Password change and administrator approval are required.")
+        with st.form("register_individual_account"):
+            employee_id = st.text_input("Employee ID")
+            register = st.form_submit_button("Register account")
+        if register:
+            from tools.portal_users import enroll
+            try:
+                enroll(employee_id, [account.username for account in PORTAL_ACCOUNTS])
+                st.success("Account created. Sign in with your employee ID as login and initial password.")
+            except (ValueError, RuntimeError) as exc:
+                st.error(str(exc))
+
+
 def logout() -> None:
     revoke_token(st.session_state.get("auth_cookie_token") or st.context.cookies.get(COOKIE_NAME))
     st.session_state.clear()
@@ -2212,7 +2229,7 @@ def accessible_tabs(module: str) -> list[str]:
 
 def sync_navigation_from_query() -> None:
     module = get_query_value("module", st.session_state.module)
-    if module not in MODULES or (module == "Development Hub" and not is_admin()):
+    if module not in MODULES or (module == "Development Hub" and not development_access(st.session_state)):
         module = "Home"
 
     if module in {"SMT", "Assembly"} and get_query_value("tab") == "Model Comparison":
@@ -2238,7 +2255,7 @@ def navigation_key(value: str) -> str:
 def set_navigation(module: str, tab: str = "") -> None:
     if module in {"SMT", "Assembly"} and tab == "Model Comparison":
         module = "Model Comparison"
-    if module not in MODULES or (module == "Development Hub" and not is_admin()):
+    if module not in MODULES or (module == "Development Hub" and not development_access(st.session_state)):
         module = "Home"
     available_tabs = accessible_tabs(module)
     if available_tabs:
@@ -2292,7 +2309,7 @@ def top_navigation() -> None:
             with st.popover("More", use_container_width=True):
                 role_label = "Administrator" if is_admin() else "Viewer"
                 st.caption(f"{APP_VERSION} · {role_label} · Signed in as {st.session_state.get('authenticated_user', LOGIN_USERNAME)}")
-                if is_admin():
+                if development_access(st.session_state):
                     st.button("Development Hub", key="top_nav_development", use_container_width=True, on_click=set_navigation, args=("Development Hub", ""))
                 st.button("About", key="top_nav_about", use_container_width=True, on_click=set_navigation, args=("About", ""))
                 if st.button("Sign out", key="top_nav_logout", use_container_width=True):
@@ -11542,7 +11559,7 @@ def render_page() -> None:
     elif module == "About":
         about_page()
     elif module == "Development Hub":
-        if is_admin():
+        if development_access(st.session_state):
             from tools.development_hub import render
             render()
         else:
@@ -11560,6 +11577,9 @@ if not st.session_state.get("authenticated", False):
     st.stop()
 if (token := st.session_state.get("auth_cookie_token")) and st.context.cookies.get(COOKIE_NAME) != token:
     render_auth_cookie(token)
+
+from tools.portal_users import first_access
+first_access(next(account for account in PORTAL_ACCOUNTS if account.username == st.session_state.get("authenticated_user")), issue_token, logout)
 
 sync_navigation_from_query()
 apply_global_css()

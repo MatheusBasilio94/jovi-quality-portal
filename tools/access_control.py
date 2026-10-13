@@ -28,7 +28,7 @@ def _credential_setting(name: str, default: str) -> str:
     return str(value if value is not None else default).strip()
 
 
-def configured_accounts() -> tuple[Account, Account]:
+def configured_accounts() -> tuple[Account, ...]:
     admin = Account(
         _credential_setting("JOVI_ADMIN_USERNAME", "Matheus"),
         _credential_setting(
@@ -49,14 +49,20 @@ def configured_accounts() -> tuple[Account, Account]:
         raise ValueError("The administrator and viewer must have distinct, nonempty usernames.")
     if any(len(account.password_hash) != 64 for account in (admin, viewer)):
         raise ValueError("Portal password hashes must be SHA-256 hex digests.")
-    return admin, viewer
+    from tools.portal_users import registry
+    accounts = {account.username.casefold(): account for account in (admin, viewer)}
+    for key, user in registry()['users'].items():
+        accounts.pop(key, None)
+        if user.get('active', True):
+            accounts[key] = Account(user['username'], user['password_hash'], user['role'] if user.get('approved') else 'viewer')
+    return tuple(accounts.values())
 
 
 def authenticate(username: str, password: str, accounts: tuple[Account, ...]) -> Account | None:
-    digest = hashlib.sha256(password.encode("utf-8")).hexdigest()
+    from tools.portal_users import password_matches
     candidate = username.strip().casefold()
     for account in accounts:
-        if hmac.compare_digest(candidate, account.username.casefold()) and hmac.compare_digest(digest, account.password_hash):
+        if hmac.compare_digest(candidate, account.username.casefold()) and password_matches(password, account.password_hash):
             return account
     return None
 
