@@ -55,7 +55,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.6.15"
+APP_VERSION = "v0.6.16"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 PORTAL_ACCOUNTS = configured_accounts()
@@ -105,9 +105,11 @@ MODULES = {
     "Smart Report": {"color": "#0F766E", "tabs": []},
     "Repair Info": {"color": "#1D5FBF", "tabs": []},
     "About": {"color": "#1D5FBF", "tabs": []},
+    "Development Hub": {"color": "#1D5FBF", "tabs": []},
 }
 
 VERSION_HISTORY = [
+    ("v0.6.16", "Add administrator-only Development Hub in More with English quality document titles, original document links and area filters."),
     ("v0.6.15", "Show production target suggestions directly and refresh scenario modules on each deployed release."),
     ("v0.6.14", "Suggest editable frequency-prioritized actions to reach production KPI targets, with blocked defects and integer PCB forecasts."),
     ("v0.6.13", "Center every Scenario Summary column header while preserving the existing value alignment and KPI colors."),
@@ -2210,7 +2212,7 @@ def accessible_tabs(module: str) -> list[str]:
 
 def sync_navigation_from_query() -> None:
     module = get_query_value("module", st.session_state.module)
-    if module not in MODULES:
+    if module not in MODULES or (module == "Development Hub" and not is_admin()):
         module = "Home"
 
     if module in {"SMT", "Assembly"} and get_query_value("tab") == "Model Comparison":
@@ -2236,7 +2238,7 @@ def navigation_key(value: str) -> str:
 def set_navigation(module: str, tab: str = "") -> None:
     if module in {"SMT", "Assembly"} and tab == "Model Comparison":
         module = "Model Comparison"
-    if module not in MODULES:
+    if module not in MODULES or (module == "Development Hub" and not is_admin()):
         module = "Home"
     available_tabs = accessible_tabs(module)
     if available_tabs:
@@ -2290,6 +2292,8 @@ def top_navigation() -> None:
             with st.popover("More", use_container_width=True):
                 role_label = "Administrator" if is_admin() else "Viewer"
                 st.caption(f"{APP_VERSION} · {role_label} · Signed in as {st.session_state.get('authenticated_user', LOGIN_USERNAME)}")
+                if is_admin():
+                    st.button("Development Hub", key="top_nav_development", use_container_width=True, on_click=set_navigation, args=("Development Hub", ""))
                 st.button("About", key="top_nav_about", use_container_width=True, on_click=set_navigation, args=("About", ""))
                 if st.button("Sign out", key="top_nav_logout", use_container_width=True):
                     logout()
@@ -11537,6 +11541,12 @@ def render_page() -> None:
         model_comparison_page(MODULES[module]["color"])
     elif module == "About":
         about_page()
+    elif module == "Development Hub":
+        if is_admin():
+            from tools.development_hub import render
+            render()
+        else:
+            st.error("Administrator access is required for Development Hub.")
 
 
 init_state()
