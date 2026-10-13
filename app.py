@@ -55,7 +55,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.6.11"
+APP_VERSION = "v0.6.12"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 PORTAL_ACCOUNTS = configured_accounts()
@@ -108,6 +108,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.6.12", "Center Scenario Summary target, forecast and impact values while preserving KPI colors and left-aligned indicator names."),
     ("v0.6.11", "Color Production Preparation scenario values by KPI target and highlight improvements in the Impact column."),
     ("v0.6.10", "Match the compact action-table column widths to the approved screenshot, leaving Planned action flexible and visible."),
     ("v0.6.09", "Improve Production Preparation action-table column widths and center all values after the defect column."),

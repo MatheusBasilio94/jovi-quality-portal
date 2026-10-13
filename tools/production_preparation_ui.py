@@ -164,7 +164,14 @@ def render(load_data, directory):
         {"KPI / Indicator":"Expected classified NG PCBs", "Target":"—", "Without actions":str(before), "With actions":str(after), "Impact":f"{after-before:+d} PCBs"},
         {"KPI / Indicator":"Expected improvement", "Target":"—", "Without actions":"—", "With actions":improvement, "Impact":f"{before-after} fewer expected NG PCBs"},
     ])
-    st.dataframe(_scenario_summary_style(pd.DataFrame(summary), result, directory, area), hide_index=True, width="stretch", height=255)
+    st.dataframe(_scenario_summary_style(pd.DataFrame(summary), result, directory, area), hide_index=True, width="stretch", height=255,
+        column_config={
+            "KPI / Indicator": st.column_config.TextColumn(alignment="left"),
+            "Target": st.column_config.TextColumn(alignment="center"),
+            "Without actions": st.column_config.TextColumn(alignment="center"),
+            "With actions": st.column_config.TextColumn(alignment="center"),
+            "Impact": st.column_config.TextColumn(alignment="center"),
+        })
     st.caption("Forecasts are rounded up; KPIs use the rounded unique-PCB estimates. Overlapping defects are not added together. For mixed-defect PCBs, reductions are assumed independent and every defect must be eliminated for the PCB to pass. Estimates cannot exceed planned input.")
     controls = st.columns([4, 1])
     with controls[0]: st.markdown("### Expected defects in the next production")
