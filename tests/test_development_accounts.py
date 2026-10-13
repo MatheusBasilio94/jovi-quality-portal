@@ -153,6 +153,21 @@ render(documents())
 
 
 class AssessmentRulesTests(unittest.TestCase):
+    def test_administrator_reviews_any_other_employee_but_not_self(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = AssessmentStore(directory, cloud=False)
+            cycle = '2026-10_SMT'
+            payload = {'status':'submitted','manager':'boss','ratings':{'results':{'rating':3,'comment':'Evidence'}}}
+            own = store.save('person','person',cycle,'self',payload)
+            admin = {'authenticated':True,'auth_role':'admin','authenticated_user':'admin'}
+            review = store.save('admin','person',cycle,'manager',{**payload,'self_revision':revision(own)},session=admin)
+            self.assertTrue(comparable_manager(own,review))
+            store.save('admin','admin',cycle,'self',payload)
+            with self.assertRaises(PermissionError):
+                store.save('admin','admin',cycle,'manager',payload,session=admin)
+            with self.assertRaises(PermissionError):
+                store.save('intruder','person',cycle,'manager',payload,session=admin)
+
     def test_independent_reviews_and_access_control(self):
         with tempfile.TemporaryDirectory() as directory:
             store = AssessmentStore(directory, cloud=False)

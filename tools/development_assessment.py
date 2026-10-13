@@ -42,7 +42,7 @@ def validate_ratings(rows, submitting=False):
     return cleaned
 
 
-def authorize(actor, subject, part, self_record=None):
+def authorize(actor, subject, part, self_record=None, session=None):
     if not actor:
         raise PermissionError('An individual authenticated account is required.')
     if part == 'manager':
@@ -50,8 +50,10 @@ def authorize(actor, subject, part, self_record=None):
             raise PermissionError('You cannot complete your own manager assessment.')
         if not self_record or self_record.get('status') != 'submitted':
             raise PermissionError('A submitted self assessment is required before manager review.')
-        if actor.casefold() != str(self_record.get('manager') or '').casefold():
-            raise PermissionError('Only the assigned manager can complete this review.')
+        from tools.access_control import is_admin_session
+        administrator = is_admin_session(session or {}) and str((session or {}).get('authenticated_user', '')).casefold() == actor.casefold()
+        if not administrator and actor.casefold() != str(self_record.get('manager') or '').casefold():
+            raise PermissionError('Only the assigned manager or an administrator can complete this review.')
     elif actor.casefold() != subject.casefold():
         raise PermissionError('You can only change your own development records.')
 
@@ -87,10 +89,10 @@ class AssessmentStore:
             raise ValueError('The saved development record could not be read.')
         return record
 
-    def save(self, actor, subject, cycle, part, payload, expected_revision=''):
+    def save(self, actor, subject, cycle, part, payload, expected_revision='', session=None):
         with _LOCK:
             self_record = self.load(subject, cycle, 'self') if part == 'manager' else None
-            authorize(actor, subject, part, self_record)
+            authorize(actor, subject, part, self_record, session)
             if part == 'manager' and payload.get('self_revision') != revision(self_record):
                 raise ValueError('The self assessment changed. Reload it before saving the manager review.')
             current = self.load(subject, cycle, part)

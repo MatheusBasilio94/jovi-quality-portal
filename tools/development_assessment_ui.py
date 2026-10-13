@@ -14,7 +14,7 @@ from tools.portal_users import administration, development_access, profile, regi
 
 def _save(store, actor, subject, cycle, part, data, old):
     try:
-        store.save(actor, subject, cycle, part, data, revision(old))
+        store.save(actor, subject, cycle, part, data, revision(old), session=st.session_state)
         st.session_state['development_notice'] = 'Saved successfully.'
         st.rerun()
     except (ValueError, PermissionError, RuntimeError) as exc:
@@ -23,7 +23,8 @@ def _save(store, actor, subject, cycle, part, data, old):
 
 def _assessment_form(store, actor, subject, cycle, part, own, review, manager):
     record = own if part == 'self' else review
-    can_edit = actor == subject if part == 'self' else actor != subject and actor == manager and own.get('manager') == manager and own.get('status') == 'submitted'
+    reviewer_allowed = is_admin_session(st.session_state) or (actor == manager and own.get('manager') == manager)
+    can_edit = actor == subject if part == 'self' else actor != subject and reviewer_allowed and own.get('status') == 'submitted'
     st.caption('Self Assessment' if part == 'self' else 'Manager Assessment')
     if part == 'self' and not manager:
         st.info('Save a draft now. An administrator must assign your manager before you can submit the assessment.')
@@ -75,6 +76,8 @@ def _comparison(own, review):
     current_review = comparable_manager(own, review)
     if review and not current_review:
         st.info('The manager assessment is pending or relates to an earlier self assessment. Complete a new review to compare current evaluations.')
+    if current_review:
+        st.caption(f"Manager assessment completed by: {review.get('actor', '—')}")
     labels = [label.replace(' & ', ' &<br>') for _, label, _ in AXES]
     fig = go.Figure()
     for record, name, color in [(own, 'Self Assessment', '#2563EB'), (review if current_review else {}, 'Manager Assessment', '#7C3AED')]:
