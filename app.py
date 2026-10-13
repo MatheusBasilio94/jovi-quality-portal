@@ -55,7 +55,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.6.09"
+APP_VERSION = "v0.6.10"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 PORTAL_ACCOUNTS = configured_accounts()
@@ -108,6 +108,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.6.10", "Match the compact action-table column widths to the approved screenshot, leaving Planned action flexible and visible."),
     ("v0.6.09", "Improve Production Preparation action-table column widths and center all values after the defect column."),
     ("v0.6.08", "Add Production Preparation in Smart Report with real model history, editable action reductions, integer forecasts and unique-PCB KPI scenario summaries."),
     ("v0.6.07", "Add original, exclude-glue and comparison scenarios to weekly and monthly KPI reviews, including tables, charts and matching top issues."),

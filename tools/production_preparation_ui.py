@@ -110,13 +110,13 @@ def render(load_data, directory):
             on_change=_save_actions, args=(editor_key, context, rows["Defect"].tolist()),
             disabled=["Defect", "NG PCBs", "Historical PPM", "Last occurrence", "Without actions", "With actions"],
             column_config={"Defect":st.column_config.TextColumn(width=260,alignment="left",pinned=True),
-                "NG PCBs":st.column_config.NumberColumn(format="%d",width=100,alignment="center"),
-                "Historical PPM":st.column_config.NumberColumn(format="%d",width=150,alignment="center"),
-                "Last occurrence":st.column_config.TextColumn(width=160,alignment="center"),
-                "Without actions":st.column_config.NumberColumn("Forecast · No action",format="%d",width=200,alignment="center"),
-                "Expected reduction (%)":st.column_config.NumberColumn("Reduction (%) ✎",min_value=0,max_value=100,step=1,format="%.0f%%",width=180,alignment="center"),
-                "With actions":st.column_config.NumberColumn("Forecast · Adjusted",format="%d",width=200,alignment="center"),
-                "Planned action":st.column_config.TextColumn("Planned action ✎",width=320,alignment="center")})
+                "NG PCBs":st.column_config.NumberColumn(format="%d",width=60,alignment="center"),
+                "Historical PPM":st.column_config.NumberColumn(format="%d",width=100,alignment="center"),
+                "Last occurrence":st.column_config.TextColumn(width=105,alignment="center"),
+                "Without actions":st.column_config.NumberColumn("Forecast · No action",format="%d",width=130,alignment="center"),
+                "Expected reduction (%)":st.column_config.NumberColumn("Reduction (%) ✎",min_value=0,max_value=100,step=1,format="%.0f%%",width=135,alignment="center"),
+                "With actions":st.column_config.NumberColumn("Forecast · Adjusted",format="%d",width=125,alignment="center"),
+                "Planned action":st.column_config.TextColumn("Planned action ✎",alignment="center")})
     st.markdown(f"### Scenario summary · {area}")
     summary = []
     for item in directory:
