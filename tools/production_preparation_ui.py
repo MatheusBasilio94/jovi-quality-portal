@@ -48,6 +48,31 @@ def _reset_actions(context):
     st.session_state["_production_reset"] = st.session_state.get("_production_reset", 0) + 1
 
 
+def _scenario_summary_style(frame, result, directory, area):
+    green = "background-color: #D9FBE7; color: #08703B; font-weight: 700;"
+    red = "background-color: #FFE2E2; color: #B91C1C; font-weight: 700;"
+    styles = pd.DataFrame("", index=frame.index, columns=frame.columns)
+    items = [item for item in directory if item["area"] == area]
+    for index, item in enumerate(items):
+        metric = result["metrics"].get(item["source"])
+        if not metric:
+            continue
+        before, after = metric["values"]
+        higher_is_better = item["direction"] == "min"
+        for column, value in zip(["Without actions", "With actions"], [before, after]):
+            achieved = value >= item["target"] if higher_is_better else value <= item["target"]
+            styles.loc[index, column] = green if achieved else red
+        if before != after:
+            improved = after > before if higher_is_better else after < before
+            styles.loc[index, "Impact"] = green if improved else red
+    before, after = result["totals"]
+    if before != after:
+        color = green if after < before else red
+        styles.loc[len(items), "Impact"] = color
+        styles.loc[len(items)+1, ["With actions", "Impact"]] = color
+    return frame.style.apply(lambda _: styles, axis=None)
+
+
 @st.fragment
 def render(load_data, directory):
     st.markdown("<div class='smart-report-title'>Production Preparation</div><div class='smart-report-subtitle'>Review recent model defects and simulate the impact of your planned corrective actions.</div>", unsafe_allow_html=True)
@@ -139,7 +164,7 @@ def render(load_data, directory):
         {"KPI / Indicator":"Expected classified NG PCBs", "Target":"—", "Without actions":str(before), "With actions":str(after), "Impact":f"{after-before:+d} PCBs"},
         {"KPI / Indicator":"Expected improvement", "Target":"—", "Without actions":"—", "With actions":improvement, "Impact":f"{before-after} fewer expected NG PCBs"},
     ])
-    st.dataframe(pd.DataFrame(summary), hide_index=True, width="stretch", height=255)
+    st.dataframe(_scenario_summary_style(pd.DataFrame(summary), result, directory, area), hide_index=True, width="stretch", height=255)
     st.caption("Forecasts are rounded up; KPIs use the rounded unique-PCB estimates. Overlapping defects are not added together. For mixed-defect PCBs, reductions are assumed independent and every defect must be eliminated for the PCB to pass. Estimates cannot exceed planned input.")
     controls = st.columns([4, 1])
     with controls[0]: st.markdown("### Expected defects in the next production")
