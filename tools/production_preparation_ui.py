@@ -120,7 +120,8 @@ def render(load_data, directory):
     context = f"{area}|{model}|{start}|{end}"
     saved = st.session_state.get("_production_actions", {}).get(context, {})
     reductions = {issue: values.get("Expected reduction (%)", 0) for issue, values in saved.items()}
-    with st.expander("Suggest actions to reach target"):
+    with st.container(border=True):
+        st.markdown("#### Suggest actions to reach target")
         supported = [item for item in directory if item["area"] == area and item["source"] in baseline["scopes"]]
         st.caption("Prioritize the most frequent defects affecting the selected KPI. Suggested percentages are goals for your team to assess, not guaranteed improvements. Existing actions are preserved; blocked defects are set to 0% reduction.")
         if supported:

@@ -107,6 +107,7 @@ render(load, directory)
 '''
         app = AppTest.from_string(script).run(timeout=20)
         self.assertFalse(app.exception)
+        self.assertTrue(any("#### Suggest actions to reach target" == entry.value for entry in app.markdown))
         app.button(key="production_suggest_button").click().run(timeout=20)
         self.assertFalse(app.exception)
         self.assertTrue(app.success)

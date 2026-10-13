@@ -55,7 +55,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.6.14"
+APP_VERSION = "v0.6.15"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 PORTAL_ACCOUNTS = configured_accounts()
@@ -108,6 +108,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.6.15", "Show production target suggestions directly and refresh scenario modules on each deployed release."),
     ("v0.6.14", "Suggest editable frequency-prioritized actions to reach production KPI targets, with blocked defects and integer PCB forecasts."),
     ("v0.6.13", "Center every Scenario Summary column header while preserving the existing value alignment and KPI colors."),
     ("v0.6.12", "Center Scenario Summary target, forecast and impact values while preserving KPI colors and left-aligned indicator names."),
@@ -7027,6 +7028,15 @@ def production_preparation_sources(area, start_date, end_date):
     return {"inputs": selected_input[["Date", "Model", "Input"]], "records": records}
 
 
+@st.cache_resource(show_spinner=False)
+def _production_preparation_renderer(release):
+    """Refresh imported scenario modules once per deployed app release."""
+    import importlib
+    from tools import production_preparation, production_preparation_ui
+    importlib.reload(production_preparation)
+    return importlib.reload(production_preparation_ui).render
+
+
 def smart_report_page() -> None:
     weekly_tab, monthly_tab, defect_tab, production_tab = st.tabs(["Weekly KPI Review", "Monthly KPI Review", "Defect Action Report", "Production Preparation"])
     with weekly_tab:
@@ -7036,7 +7046,7 @@ def smart_report_page() -> None:
     with defect_tab:
         defect_action_report_page()
     with production_tab:
-        from tools.production_preparation_ui import render
+        render = _production_preparation_renderer(APP_VERSION)
         render(production_preparation_sources, configured_kpi_directory())
 
 
