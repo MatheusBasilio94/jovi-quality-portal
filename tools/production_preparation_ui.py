@@ -164,14 +164,21 @@ def render(load_data, directory):
         {"KPI / Indicator":"Expected classified NG PCBs", "Target":"—", "Without actions":str(before), "With actions":str(after), "Impact":f"{after-before:+d} PCBs"},
         {"KPI / Indicator":"Expected improvement", "Target":"—", "Without actions":"—", "With actions":improvement, "Impact":f"{before-after} fewer expected NG PCBs"},
     ])
-    st.dataframe(_scenario_summary_style(pd.DataFrame(summary), result, directory, area), hide_index=True, width="stretch", height=255,
-        column_config={
-            "KPI / Indicator": st.column_config.TextColumn(alignment="left"),
-            "Target": st.column_config.TextColumn(alignment="center"),
-            "Without actions": st.column_config.TextColumn(alignment="center"),
-            "With actions": st.column_config.TextColumn(alignment="center"),
-            "Impact": st.column_config.TextColumn(alignment="center"),
-        })
+    summary_style = _scenario_summary_style(pd.DataFrame(summary), result, directory, area)
+    summary_style = (summary_style.hide(axis="index").format(escape="html")
+        .set_properties(subset=["KPI / Indicator"], **{"text-align": "left"})
+        .set_properties(subset=["Target", "Without actions", "With actions", "Impact"], **{"text-align": "center"})
+        .set_table_styles([
+            {"selector": "", "props": [("width", "100%"), ("border-collapse", "collapse"), ("table-layout", "fixed"), ("font-size", "13px"), ("color", "#0B2D61")]},
+            {"selector": "th", "props": [("text-align", "center"), ("background", "#E8EEF7"), ("color", "#607C9F"), ("font-weight", "500"), ("padding", "10px 8px"), ("border", "1px solid #DFE7F1")]},
+            {"selector": "td", "props": [("padding", "9px 8px"), ("border", "1px solid #DFE7F1"), ("vertical-align", "middle"), ("overflow-wrap", "anywhere")]},
+            {"selector": "th:nth-child(1)", "props": [("width", "28%")]},
+            {"selector": "th:nth-child(2)", "props": [("width", "14%")]},
+            {"selector": "th:nth-child(3)", "props": [("width", "16%")]},
+            {"selector": "th:nth-child(4)", "props": [("width", "15%")]},
+            {"selector": "th:nth-child(5)", "props": [("width", "27%")]},
+        ]))
+    st.html("<div style='border-radius:8px;overflow:hidden;border:1px solid #DFE7F1;'>" + summary_style.to_html() + "</div>")
     st.caption("Forecasts are rounded up; KPIs use the rounded unique-PCB estimates. Overlapping defects are not added together. For mixed-defect PCBs, reductions are assumed independent and every defect must be eliminated for the PCB to pass. Estimates cannot exceed planned input.")
     controls = st.columns([4, 1])
     with controls[0]: st.markdown("### Expected defects in the next production")
