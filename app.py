@@ -55,7 +55,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.6.06"
+APP_VERSION = "v0.6.07"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 PORTAL_ACCOUNTS = configured_accounts()
@@ -108,6 +108,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.6.07", "Add original, exclude-glue and comparison scenarios to weekly and monthly KPI reviews, including tables, charts and matching top issues."),
     ("v0.6.06", "Identify combined KPI chart images with a centered SMT or Assembly weekly or monthly analysis title."),
     ("v0.6.05", "Extend the combined 2 by 2 chart copy to weekly Assembly and monthly SMT and Assembly reviews."),
     ("v0.6.04", "Copy all four Weekly SMT KPI charts together as one high-resolution 2 by 2 report image."),
@@ -5965,7 +5966,7 @@ def smart_report_assembly_data(start_date: date, end_date: date) -> tuple[list[d
     return smart_report_candidates(confirmed, produced), produced, repeated, ""
 
 
-def smart_report_kpi_candidates(start_date: date, end_date: date) -> dict[str, list[dict]]:
+def smart_report_kpi_candidates(start_date: date, end_date: date, *, glue_rules=None) -> dict[str, list[dict]]:
     """Rank defect phenomena within each KPI's actual calculation scope."""
     import pandas as pd
     from tools import smt_quality_dashboard
@@ -5999,6 +6000,9 @@ def smart_report_kpi_candidates(start_date: date, end_date: date) -> dict[str, l
         pass
 
     for source, frame in kpi_defect_scopes(smt_confirmed, assembly_confirmed).items():
+        if source == "smt_process" and glue_rules is not None:
+            from tools.smt_glue_scenario import glue_mask
+            frame = frame.loc[~glue_mask(frame, glue_rules)].copy()
         produced = assembly_produced if source.startswith("assembly_") or source == "smt_assembly_duty" else smt_produced
         candidates[source] = smart_report_candidates(frame, produced)
     return candidates
@@ -6308,6 +6312,7 @@ def weekly_kpi_review_data(
     end_date: date,
     *,
     require_defect_coverage: bool = False,
+    glue_rules=None,
 ) -> tuple[
     dict[str, float | None],
     dict[str, dict[date, float | None]],
@@ -6386,6 +6391,9 @@ def weekly_kpi_review_data(
             end_date.isoformat(),
             smt_quality_dashboard.SMT_FAILURE_RULE_VERSION,
         )
+        if glue_rules is not None:
+            from tools.smt_glue_scenario import apply_glue_exclusion
+            analysis = apply_glue_exclusion(analysis, glue_rules)
         smt_totals = analysis["totals"]
         smt_covered, smt_defect_start, smt_defect_end = source_dates_cover_inputs(
             analysis.get("selected_input"),
@@ -6395,6 +6403,8 @@ def weekly_kpi_review_data(
         )
         totals["smt_function"] = smt_totals.get("FunctionPassRate") if (smt_covered or not require_defect_coverage) and smt_totals.get("FunctionPassStatus") == "Valid" else None
         totals["smt_process"] = smt_totals.get("SMTProcessNGRatePPM") if (smt_covered or not require_defect_coverage) and smt_totals.get("SMTProcessStatus") == "Valid" else None
+        if glue_rules is not None and smt_totals.get("SMTProcessStatus") != "Valid":
+            total_exceptions["smt_process"] = smt_totals["SMTProcessStatus"]
         add_daily(analysis.get("trend"), "smt_function", "FunctionPassRate", "FunctionPassStatus")
         add_daily(analysis.get("trend"), "smt_process", "SMTProcessNGRatePPM", "SMTProcessStatus")
         if require_defect_coverage:
@@ -6562,12 +6572,13 @@ def weekly_kpi_slide_panels(
         return pd.DataFrame(rows)
 
     targets = {item["source"]: item["target"] for item in directory}
+    titles = {item["source"]: item["kpi"] for item in directory}
     slide_panels = []
     for title, source, value_type in panel_sources[area]:
         frame = frame_for(source)
         slide_panels.append(
             {
-                "title": title,
+                "title": titles.get(source, title),
                 "frame": frame,
                 "x_column": "Period",
                 "y_column": "Value",
@@ -6647,6 +6658,83 @@ def kpi_review_email(
     return "\n".join(lines)
 
 
+def kpi_review_glue_controls(start_date, end_date, key_prefix):
+    """Use the KPI Track glue definition with report-specific widget state."""
+    import pandas as pd
+    from tools import smt_quality_dashboard
+    from tools.smt_glue_scenario import RULE_FIELDS
+
+    modes = ["Include glue defects", "Exclude glue defects", "Compare scenarios"]
+    mode = st.segmented_control(
+        "Glue scenario", modes, default=modes[0], key=f"{key_prefix}_glue_mode",
+        format_func=lambda value: {modes[0]: "Original data", modes[1]: "Exclude glue", modes[2]: "Compare scenarios"}[value],
+    ) or modes[0]
+    defaults = {"Operation": ["SMT-Visual-Inspection"], "Phenomenon": ["Disperse glue"]}
+    records = pd.DataFrame()
+    if mode != modes[0]:
+        try:
+            inputs, defects = smt_quality_dashboard.stored_smt_sources()
+            if inputs and defects:
+                records = smt_quality_dashboard.analyze_smt_quality_paths(
+                    tuple(smt_quality_dashboard.path_signature(path) for path in inputs),
+                    tuple(smt_quality_dashboard.path_signature(path) for path in defects),
+                    start_date.isoformat(), end_date.isoformat(), smt_quality_dashboard.SMT_FAILURE_RULE_VERSION,
+                )["covered_raw"]
+        except Exception as exc:
+            st.info(f"SMT glue definition: {exc}")
+    rules = {}
+    with st.expander("Glue defect definition / Review rules", expanded=False):
+        st.caption("Same rule as SMT KPI Track: every populated field must match. Multiple values in one field are alternatives.")
+        columns = st.columns(2)
+        for index, (field, label) in enumerate(zip(RULE_FIELDS, ["TestOperation", "Fault Phenomenon", "Fault reason", "RepaireRemark"])):
+            key = f"{key_prefix}_glue_rule_{field}"
+            initial = st.session_state.get(f"smt_glue_rule_{field}", defaults.get(field, []))
+            options = sorted(set(records.get(field, pd.Series(dtype="object")).dropna().astype(str).str.strip())
+                             | set(initial) | set(st.session_state.get(key, [])))
+            options = [value for value in options if value and value.lower() != "nan"]
+            with columns[index % 2]:
+                rules[field] = st.multiselect(label, options, default=initial, key=key)
+    if mode != modes[0]:
+        st.caption("Simulation for SMT Process NG Rate only, applied to every displayed period. Input stays unchanged; mixed-defect PCBs remain NG. Uploaded data and other KPIs are unchanged.")
+        if not any(rules.values()):
+            st.warning("Choose at least one glue classification value. With no rule, both scenarios remain identical.")
+    return mode, rules
+
+
+def kpi_review_glue_directory(directory, exclude):
+    return tuple({**item, "kpi": item["kpi"] + " · Without glue"}
+                 if exclude and item["source"] == "smt_process" else item for item in directory)
+
+
+def kpi_review_glue_comparison(directory, original_columns, excluded_columns, original_daily, excluded_daily, days, original_exceptions, excluded_exceptions, key_prefix):
+    import pandas as pd
+    item = next(item for item in directory if item["source"] == "smt_process")
+    comparison_directory = (
+        {**item, "kpi": "SMT Process NG Rate (PPM) · Original data"},
+        {**item, "source": "smt_process_without_glue", "kpi": "SMT Process NG Rate (PPM) · Without glue"},
+    )
+    columns = []
+    for (label, original, exceptions), (_, excluded, excluded_errors) in zip(original_columns, excluded_columns):
+        columns.append((label, {"smt_process": original.get("smt_process"), "smt_process_without_glue": excluded.get("smt_process")},
+                        {"smt_process": exceptions.get("smt_process", ""), "smt_process_without_glue": excluded_errors.get("smt_process", "")}))
+    daily = {"smt_process": original_daily.get("smt_process", {}), "smt_process_without_glue": excluded_daily.get("smt_process", {})}
+    exceptions = {"smt_process": original_exceptions.get("smt_process", {}), "smt_process_without_glue": excluded_exceptions.get("smt_process", {})}
+    with st.expander("SMT Process NG Rate · Glue scenario comparison", expanded=True):
+        kpi_review_table(comparison_directory, columns, daily, days, exceptions)
+        panels = monthly_kpi_slide_panels(comparison_directory, columns)
+        for item, panel in zip(comparison_directory, panels):
+            source = item["source"]
+            rows = [{"Period": day.strftime("%d-%b"), "Value": daily[source].get(day), "IsException": bool(exceptions[source].get(day))}
+                    for day in days if day in original_daily.get("smt_function", {})]
+            if rows:
+                panel["frame"] = pd.concat([panel["frame"], pd.DataFrame(rows)], ignore_index=True)
+                panel["exceptions"] = panel["frame"].loc[panel["frame"]["IsException"]]
+        tabs = st.tabs(["Original data", "Without glue"])
+        for index, (tab, panel) in enumerate(zip(tabs, panels)):
+            with tab:
+                show_chart(build_kpi_panel_chart(panel), image_filename=f"{key_prefix}_glue_comparison_{index}")
+
+
 def weekly_kpi_review_page() -> None:
     import pandas as pd
 
@@ -6670,6 +6758,9 @@ def weekly_kpi_review_page() -> None:
             help="The selected columns are removed only from the displayed and copied table. Weekly KPI calculations remain unchanged.",
         )
     visible_days = [day for day in days if day not in hidden_days]
+    glue_mode, glue_rules = kpi_review_glue_controls(start_date - timedelta(days=7), week_end, "weekly_review")
+    exclude_glue = glue_mode == "Exclude glue defects"
+    active_glue_rules = glue_rules if exclude_glue else None
     with action_column:
         st.markdown("<div class='smart-control-label'>&nbsp;</div>", unsafe_allow_html=True)
         if st.button("Refresh weekly review", key="weekly_kpi_refresh", type="primary", icon=":material/refresh:", use_container_width=True):
@@ -6712,10 +6803,11 @@ def weekly_kpi_review_page() -> None:
                 except Exception as exc:
                     st.error(str(exc))
     st.markdown(f"<div class='weekly-review-period'>{escape(week_label)}</div>", unsafe_allow_html=True)
-    totals, daily, errors, total_exceptions, daily_exceptions = weekly_kpi_review_data(start_date, week_end)
+    directory = kpi_review_glue_directory(directory, exclude_glue)
+    totals, daily, errors, total_exceptions, daily_exceptions = weekly_kpi_review_data(start_date, week_end, glue_rules=active_glue_rules)
     previous_start = start_date - timedelta(days=7)
     previous_end = week_end - timedelta(days=7)
-    previous_totals, _, previous_errors, previous_total_exceptions, _ = weekly_kpi_review_data(previous_start, previous_end)
+    previous_totals, _, previous_errors, previous_total_exceptions, _ = weekly_kpi_review_data(previous_start, previous_end, glue_rules=active_glue_rules)
     kpi_review_table(
         directory,
         [
@@ -6766,6 +6858,14 @@ def weekly_kpi_review_page() -> None:
                             f"{previous_start.strftime('%Y%m%d')}_{week_end.strftime('%Y%m%d')}"
                         ),
                     )
+    if glue_mode == "Compare scenarios":
+        excluded = weekly_kpi_review_data(start_date, week_end, glue_rules=glue_rules)
+        excluded_previous = weekly_kpi_review_data(previous_start, previous_end, glue_rules=glue_rules)
+        kpi_review_glue_comparison(
+            directory, [(previous_label, previous_totals, previous_total_exceptions), (current_label, totals, total_exceptions)],
+            [(previous_label, excluded_previous[0], excluded_previous[3]), (current_label, excluded[0], excluded[3])],
+            daily, excluded[1], visible_days, daily_exceptions, excluded[4], "weekly_review",
+        )
     if hidden_days:
         st.caption(
             "Hidden from this table and its copied image: "
@@ -6777,7 +6877,7 @@ def weekly_kpi_review_page() -> None:
     for area, error in previous_errors.items():
         st.info(f"Previous week · {area}: {error}")
 
-    candidates_by_source = smart_report_kpi_candidates(start_date, week_end)
+    candidates_by_source = smart_report_kpi_candidates(start_date, week_end, glue_rules=active_glue_rules)
     below = [item for item in directory if weekly_kpi_is_below_target(totals.get(item["source"]), item["target"], item["direction"])]
     available = [item for item in directory if totals.get(item["source"]) is not None]
     st.markdown("### Major problems and action follow-up")
@@ -6818,16 +6918,22 @@ def monthly_kpi_review_page() -> None:
     previous_start = previous_end.replace(day=1)
     period_label = start_date.strftime("%b %Y")
     directory = tuple(item for item in configured_kpi_directory() if item["area"] == area)
+    two_months_ago_end = previous_start - timedelta(days=1)
+    two_months_ago_start = two_months_ago_end.replace(day=1)
+    glue_mode, glue_rules = kpi_review_glue_controls(two_months_ago_start, end_date, "monthly_review") if area == "SMT" else ("Include glue defects", {})
+    exclude_glue = glue_mode == "Exclude glue defects"
+    active_glue_rules = glue_rules if exclude_glue else None
+    directory = kpi_review_glue_directory(directory, exclude_glue)
     st.markdown(f"<div class='weekly-review-period'>{escape(area)} · {escape(period_label)} · {start_date.strftime('%d/%m')} – {end_date.strftime('%d/%m/%Y')}</div>", unsafe_allow_html=True)
     # KPI Track is authoritative for the monthly result. A defect file may have
     # no row on the final production day simply because that day had no defect;
     # its last defect timestamp is not a reliable file-coverage boundary.
-    totals, daily, errors, total_exceptions, _ = weekly_kpi_review_data(start_date, end_date)
-    previous_totals, _, previous_errors, previous_total_exceptions, _ = weekly_kpi_review_data(previous_start, previous_end)
+    totals, daily, errors, total_exceptions, _ = weekly_kpi_review_data(start_date, end_date, glue_rules=active_glue_rules)
+    previous_totals, _, previous_errors, previous_total_exceptions, _ = weekly_kpi_review_data(previous_start, previous_end, glue_rules=active_glue_rules)
     two_months_ago_end = previous_start - timedelta(days=1)
     two_months_ago_start = two_months_ago_end.replace(day=1)
     two_months_ago_totals, _, _, two_months_ago_total_exceptions, _ = weekly_kpi_review_data(
-        two_months_ago_start, two_months_ago_end
+        two_months_ago_start, two_months_ago_end, glue_rules=active_glue_rules
     )
     month_columns = [
         (two_months_ago_start.strftime("%b"), two_months_ago_totals, two_months_ago_total_exceptions),
@@ -6860,12 +6966,20 @@ def monthly_kpi_review_page() -> None:
                         f"{two_months_ago_start.strftime('%Y%m')}_{start_date.strftime('%Y%m')}"
                     ),
                 )
+    if glue_mode == "Compare scenarios":
+        excluded_columns = []
+        for (label, _, _), (period_start, period_end) in zip(month_columns, [
+            (two_months_ago_start, two_months_ago_end), (previous_start, previous_end), (start_date, end_date),
+        ]):
+            excluded = weekly_kpi_review_data(period_start, period_end, glue_rules=glue_rules)
+            excluded_columns.append((label, excluded[0], excluded[3]))
+        kpi_review_glue_comparison(directory, month_columns, excluded_columns, {}, {}, [], {}, {}, "monthly_review")
     if errors.get(area):
         st.info(f"{area}: {errors[area]}")
     if previous_errors.get(area):
         st.info(f"Previous month · {area}: {previous_errors[area]}")
 
-    candidates_by_source = smart_report_kpi_candidates(start_date, end_date)
+    candidates_by_source = smart_report_kpi_candidates(start_date, end_date, glue_rules=active_glue_rules)
     below = [item for item in directory if weekly_kpi_is_below_target(totals.get(item["source"]), item["target"], item["direction"])]
     available = [item for item in directory if totals.get(item["source"]) is not None]
     st.markdown("### Major problems and action follow-up")

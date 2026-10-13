@@ -5,6 +5,24 @@ import pandas as pd
 RULE_FIELDS = ("Operation", "Phenomenon", "FaultReason", "RepairRemark")
 
 
+def apply_glue_exclusion(analysis, rules):
+    """Return a simulation without modifying cached source data or other KPIs."""
+    scenario = build_glue_scenarios(analysis, rules)
+    result = dict(analysis)
+    result["totals"] = dict(analysis["totals"])
+    result["trend"] = scenario["trend"].copy()
+    for target, source in (
+        ("ClassifiedDefectPCBs", "WithoutGlueNG"),
+        ("SMTProcessNGRatePPM", "WithoutGluePPM"),
+        ("SMTProcessStatus", "WithoutGlueStatus"),
+    ):
+        result["totals"][target] = scenario["totals"][source]
+        result["trend"][target] = result["trend"][source]
+    ppm = result["totals"]["SMTProcessNGRatePPM"]
+    result["totals"]["SMTProcessNGRate"] = ppm / 1_000_000 if ppm is not None else None
+    return result
+
+
 def normalize_category(values):
     return values.fillna("").astype(str).str.strip().str.replace(r"\s+", " ", regex=True).str.casefold()
 
