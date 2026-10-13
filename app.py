@@ -55,7 +55,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.6.07"
+APP_VERSION = "v0.6.08"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 PORTAL_ACCOUNTS = configured_accounts()
@@ -108,6 +108,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.6.08", "Add Production Preparation in Smart Report with real model history, editable action reductions, integer forecasts and unique-PCB KPI scenario summaries."),
     ("v0.6.07", "Add original, exclude-glue and comparison scenarios to weekly and monthly KPI reviews, including tables, charts and matching top issues."),
     ("v0.6.06", "Identify combined KPI chart images with a centered SMT or Assembly weekly or monthly analysis title."),
     ("v0.6.05", "Extend the combined 2 by 2 chart copy to weekly Assembly and monthly SMT and Assembly reviews."),
@@ -6996,14 +6997,41 @@ def monthly_kpi_review_page() -> None:
     st.caption("× indicates that defects exceeded the available input for that KPI period, so the KPI was intentionally not calculated.")
 
 
+def production_preparation_sources(area, start_date, end_date):
+    """Share the validated source scope used by KPI Track and model dashboards."""
+    from tools import smt_quality_dashboard
+    if area == "SMT":
+        inputs, defects = smt_quality_dashboard.stored_smt_sources()
+        if not inputs or not defects:
+            raise RuntimeError("SMT FPY input and defect files are required.")
+        analysis = smt_quality_dashboard.analyze_smt_quality_paths(
+            tuple(smt_quality_dashboard.path_signature(path) for path in inputs),
+            tuple(smt_quality_dashboard.path_signature(path) for path in defects),
+            start_date.isoformat(), end_date.isoformat(), smt_quality_dashboard.SMT_FAILURE_RULE_VERSION,
+        )
+        records = analysis["covered_raw"].copy()
+        records["_DefectKey"] = _dashboard_defect_key(records)
+        selected_input = analysis["selected_input"].rename(columns={"BeginDate": "Date"}).copy()
+    else:
+        analysis = calculate_assembly_kpi_metrics(start_date, end_date)
+        selected_input = analysis["inputs"].copy()
+        records = analysis["defects"].copy()
+        records["_DefectKey"] = records["PCBNormalized"]
+        records["KPIDate"] = records["DefectDate"]
+    return {"inputs": selected_input[["Date", "Model", "Input"]], "records": records}
+
+
 def smart_report_page() -> None:
-    weekly_tab, monthly_tab, defect_tab = st.tabs(["Weekly KPI Review", "Monthly KPI Review", "Defect Action Report"])
+    weekly_tab, monthly_tab, defect_tab, production_tab = st.tabs(["Weekly KPI Review", "Monthly KPI Review", "Defect Action Report", "Production Preparation"])
     with weekly_tab:
         weekly_kpi_review_page()
     with monthly_tab:
         monthly_kpi_review_page()
     with defect_tab:
         defect_action_report_page()
+    with production_tab:
+        from tools.production_preparation_ui import render
+        render(production_preparation_sources, configured_kpi_directory())
 
 
 @st.cache_data(show_spinner=False)
