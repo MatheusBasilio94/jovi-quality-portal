@@ -55,7 +55,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.6.27"
+APP_VERSION = "v0.6.28"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 @st.cache_resource(show_spinner=False)
@@ -120,6 +120,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.6.28", "Keep main navigation at the same top position on every page by removing invisible style and chart-control spacing."),
     ("v0.6.27", "Standardize the main navigation across every page using the Home layout and restore the colored notification bell."),
     ("v0.6.26", "Prevent notification bell clipping with a native icon, additional button space and a visible unread count."),
     ("v0.6.25", "Add notification bell with persistent unread state, role-scoped assessment updates, account approval alerts and direct links to the relevant review."),
@@ -345,7 +346,7 @@ def apply_global_css() -> None:
         st.html(f"<style>{(BASE_DIR / 'assets' / 'approved-layout.css').read_text(encoding='utf-8')}</style>")
         st.html(f"<style>{(BASE_DIR / 'assets' / 'shared-top-navigation.css').read_text(encoding='utf-8')}</style>")
         return
-    st.markdown(
+    st.html(
         """
         <style>
         :root {
@@ -1825,7 +1826,6 @@ def apply_global_css() -> None:
         hr { border-color: var(--border) !important; }
         </style>
         """,
-        unsafe_allow_html=True,
     )
 
 

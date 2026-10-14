@@ -1,5 +1,7 @@
 /* Match the approved Home navigation on every portal page. */
 [data-testid="stMainBlockContainer"] { max-width:none!important; padding:6px 36px 12px!important; container-type:inline-size; container-name:portal; }
+[data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"] { gap:12px!important; }
+[data-testid="stElementContainer"]:has(iframe[height="0"]) { display:none!important; }
 .st-key-top_navigation { font-family:"Segoe UI",Arial,sans-serif!important; background:#08244C!important; border:1px solid #173F75!important; border-radius:14px!important; padding:9px 14px!important; min-height:62px!important; box-sizing:border-box; margin:0 -26px!important; width:calc(100% + 52px)!important; max-width:none!important; box-shadow:none!important; backdrop-filter:none!important; }
 .st-key-top_navigation [data-testid="stHorizontalBlock"] { align-items:center!important; gap:10px!important; flex-wrap:nowrap!important; }
 .st-key-top_navigation [data-testid="stVerticalBlock"] { gap:0!important; }
