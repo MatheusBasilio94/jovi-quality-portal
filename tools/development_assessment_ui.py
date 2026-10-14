@@ -204,6 +204,18 @@ def render(records):
         subjects += [u['username'] for u in users.values() if u.get('approved') and u.get('active') and u['username'] != actor]
     elif st.session_state.get('auth_role') == 'manager':
         subjects += [u['username'] for u in users.values() if u.get('approved') and u.get('active') and u.get('manager') == actor and u['username'] != actor]
+    target = st.session_state.pop('_development_notification', None)
+    if target and target.get('subject') in subjects:
+        st.session_state['development_subject'] = target['subject']
+        if target.get('cycle'):
+            year_month, scope_name = target['cycle'].split('_',1)
+            year_value, month_value = year_month.split('-')
+            st.session_state['development_scope'] = scope_name
+            st.session_state['development_year'] = int(year_value)
+            st.session_state['development_month_choice'] = int(month_value)
+        st.session_state['_development_tab_default'] = target['tab']
+        if target.get('account') and is_admin_session(st.session_state):
+            st.session_state['manage_development_user'] = target['account']
     st.markdown("<div class='smart-report-title'>Development Hub</div><div class='smart-report-subtitle'>Self assessment, manager feedback and your development plan.</div>", unsafe_allow_html=True)
     columns = st.columns([1.4,1,.65,1])
     with columns[0]: subject = st.selectbox('Employee', subjects, format_func=lambda x: users.get(x.casefold(), {}).get('display_name', x), key='development_subject')
@@ -234,7 +246,8 @@ def render(records):
     if st.session_state.pop('development_notice', None): st.success('Saved successfully.')
     names = ['Assessment Comparison','Self Assessment','Manager Assessment','Procedures','Achievements','Development Plan']
     if is_admin_session(st.session_state): names.append('User Administration')
-    tabs = dict(zip(names, st.tabs(names)))
+    default_tab = st.session_state.get('_development_tab_default')
+    tabs = dict(zip(names, st.tabs(names, default=default_tab if default_tab in names else names[0])))
     with tabs['Assessment Comparison']: _comparison(own, review)
     with tabs['Self Assessment']: _assessment_form(store, actor, subject, cycle, 'self', own, review, manager)
     with tabs['Manager Assessment']: _assessment_form(store, actor, subject, cycle, 'manager', own, review, manager)

@@ -54,6 +54,8 @@ def _write(data):
         temporary.write_bytes(raw)
         temporary.replace(LOCAL)
     registry.clear()
+    from tools.portal_notifications import invalidate
+    invalidate()
 
 
 def _admin(session):

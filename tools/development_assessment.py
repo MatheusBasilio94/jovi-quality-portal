@@ -129,6 +129,23 @@ class AssessmentStore:
                 statuses[month] = 2 if comparable_manager(own,review) else 1
         return statuses
 
+    def cycles(self, subject):
+        prefix = self.path(subject, '2000-01_SMT', 'self').rsplit('/',2)[0]
+        if self.cloud:
+            from tools.supabase_store import _storage, _remote_object_path
+            storage, _ = _storage()
+            names = []
+            offset = 0
+            while True:
+                batch = storage.list(_remote_object_path(prefix), {'limit':1000,'offset':offset})
+                names += [str(row.get('name','')) for row in batch if isinstance(row,dict)]
+                if len(batch)<1000: break
+                offset += 1000
+        else:
+            directory = self.local_root / prefix
+            names = [p.name for p in directory.iterdir() if p.is_dir()] if directory.exists() else []
+        return sorted([name for name in names if re.fullmatch(r'\d{4}-(0[1-9]|1[0-2])_(SMT|Assembly|IQC-Lab)',name) and not name.startswith('2000-01_')], reverse=True)
+
     def save(self, actor, subject, cycle, part, payload, expected_revision='', session=None):
         with _LOCK:
             self_record = self.load(subject, cycle, 'self') if part == 'manager' else None
@@ -155,6 +172,9 @@ class AssessmentStore:
                 temporary = target.with_name(target.name + '.' + uuid4().hex + '.tmp')
                 temporary.write_bytes(raw)
                 temporary.replace(target)
+            if part in {'self','manager'}:
+                from tools.portal_notifications import invalidate
+                invalidate()
             return record
 
 
