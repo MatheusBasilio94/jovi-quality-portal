@@ -11,10 +11,18 @@ from tools.access_control import configured_accounts, is_admin_session
 from tools.development_assessment import AXES, SCALE, AssessmentStore, comparable_manager, revision
 from tools.portal_users import administration, development_access, profile, registry
 
+MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December']
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def _month_statuses(subject, year, scope, cloud, root, _store):
+    return _store.month_statuses(subject, year, scope)
+
 
 def _save(store, actor, subject, cycle, part, data, old):
     try:
         store.save(actor, subject, cycle, part, data, revision(old), session=st.session_state)
+        _month_statuses.clear()
         st.session_state['development_notice'] = 'Saved successfully.'
         st.rerun()
     except (ValueError, PermissionError, RuntimeError) as exc:
@@ -197,13 +205,24 @@ def render(records):
     elif st.session_state.get('auth_role') == 'manager':
         subjects += [u['username'] for u in users.values() if u.get('approved') and u.get('active') and u.get('manager') == actor and u['username'] != actor]
     st.markdown("<div class='smart-report-title'>Development Hub</div><div class='smart-report-subtitle'>Self assessment, manager feedback and your development plan.</div>", unsafe_allow_html=True)
-    columns = st.columns([1.4,1,1])
+    columns = st.columns([1.4,1,.65,1])
     with columns[0]: subject = st.selectbox('Employee', subjects, format_func=lambda x: users.get(x.casefold(), {}).get('display_name', x), key='development_subject')
     with columns[1]: scope = st.selectbox('Role / scope', ['SMT','Assembly','IQC-Lab'], key='development_scope')
     today = datetime.now(ZoneInfo('America/Manaus')).date()
-    with columns[2]: month = st.date_input('Assessment month', value=today.replace(day=1), key='development_month')
-    cycle = f'{month:%Y-%m}_{scope}'
     store = AssessmentStore()
+    with columns[2]: year = int(st.number_input('Assessment year', min_value=1900, max_value=9999, value=today.year, step=1, key='development_year'))
+    try:
+        statuses = _month_statuses(subject, year, scope, store.cloud, str(store.local_root), store)
+    except Exception:
+        statuses = {}
+        st.warning('Assessment month statuses could not be loaded. Select a month to open its assessment.')
+    with columns[3]:
+        selected_month = st.selectbox('Assessment month', range(1,13), index=today.month-1,
+            format_func=lambda value: MONTH_NAMES[value-1] + (' ✅✅' if statuses.get(value)==2 else ' ✅' if statuses.get(value)==1 else ''),
+            key='development_month_choice', persist_state='session')
+    month = today.replace(year=year, month=selected_month, day=1)
+    cycle = f'{year:04d}-{selected_month:02d}_{scope}'
+    st.caption('✅ Self assessment submitted · ✅✅ Manager assessment completed · No check: no submitted assessment. Status applies to the selected employee, role and year.')
     try:
         own = store.load(subject, cycle, 'self')
         review = store.load(subject, cycle, 'manager')

@@ -89,6 +89,46 @@ class AssessmentStore:
             raise ValueError('The saved development record could not be read.')
         return record
 
+    def month_statuses(self, subject, year, scope):
+        """Inspect existing monthly records only; 0=draft/absent, 1=self, 2=reviewed."""
+        first = self.path(subject, f'{year:04d}-01_{scope}', 'self')
+        prefix = first.rsplit('/', 2)[0]
+        if self.cloud:
+            from tools.supabase_store import _storage, _remote_object_path, _download_with_retry
+            storage, _ = _storage()
+            folders = []
+            offset = 0
+            while True:
+                batch = storage.list(_remote_object_path(prefix), {'limit':1000, 'offset':offset})
+                folders += [str(row.get('name', '')) for row in batch if isinstance(row, dict)]
+                if len(batch) < 1000:
+                    break
+                offset += 1000
+        else:
+            directory = self.local_root / prefix
+            folders = [p.name for p in directory.iterdir() if p.is_dir()] if directory.exists() else []
+        statuses = {month:0 for month in range(1,13)}
+        for month in statuses:
+            cycle = f'{year:04d}-{month:02d}_{scope}'
+            if cycle not in folders:
+                continue
+            if self.cloud:
+                listed = storage.list(_remote_object_path(f'{prefix}/{cycle}'), {'limit':100})
+                names = {row.get('name') for row in listed if isinstance(row, dict)}
+                records = {}
+                for part in ['self','manager']:
+                    if f'{part}.json' in names:
+                        raw = _download_with_retry(storage, self.path(subject,cycle,part))
+                        records[part] = json.loads(raw)
+                    else:
+                        records[part] = {}
+            else:
+                records = {part:self.load(subject,cycle,part) for part in ['self','manager']}
+            own, review = records['self'], records['manager']
+            if own.get('status') == 'submitted':
+                statuses[month] = 2 if comparable_manager(own,review) else 1
+        return statuses
+
     def save(self, actor, subject, cycle, part, payload, expected_revision='', session=None):
         with _LOCK:
             self_record = self.load(subject, cycle, 'self') if part == 'manager' else None

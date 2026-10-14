@@ -142,6 +142,7 @@ render(documents())
             app = AppTest.from_string(script).run(timeout=20)
             app.selectbox(key='development_subject').set_value('12345').run(timeout=20)
             self.assertFalse(app.exception)
+            self.assertEqual(app.selectbox(key='development_month_choice').options[9], 'October ✅')
             review_button = next(button for button in app.button if button.label == 'Complete manager assessment')
             self.assertFalse(review_button.disabled)
             rating_key = 'manager_rating_12345_2026-10_SMT__results'
@@ -153,6 +154,7 @@ render(documents())
             saved_review = store.load('12345', '2026-10_SMT', 'manager')
             self.assertEqual(saved_review['ratings']['results']['rating'], 4)
             self.assertEqual(saved_review['status'], 'submitted')
+            self.assertEqual(app.selectbox(key='development_month_choice').options[9], 'October ✅✅')
             app.session_state['authenticated_user'] = '12345'
             app.session_state['auth_role'] = 'viewer'
             app.run(timeout=20)
@@ -162,6 +164,22 @@ render(documents())
 
 
 class AssessmentRulesTests(unittest.TestCase):
+    def test_month_statuses_follow_submission_review_scope_and_year(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = AssessmentStore(directory, cloud=False)
+            payload = {'status':'draft','manager':'boss','ratings':{'results':{'rating':3,'comment':'Evidence'}}}
+            own = store.save('person','person','2026-01_SMT','self',payload)
+            self.assertEqual(store.month_statuses('person',2026,'SMT')[1],0)
+            own = store.save('person','person','2026-01_SMT','self',{**payload,'status':'submitted'},revision(own))
+            self.assertEqual(store.month_statuses('person',2026,'SMT')[1],1)
+            store.save('boss','person','2026-01_SMT','manager',{**payload,'status':'submitted','self_revision':revision(own)})
+            self.assertEqual(store.month_statuses('person',2026,'SMT')[1],2)
+            self.assertTrue(all(value==0 for value in store.month_statuses('other',2026,'SMT').values()))
+            self.assertTrue(all(value==0 for value in store.month_statuses('person',2026,'Assembly').values()))
+            self.assertTrue(all(value==0 for value in store.month_statuses('person',2025,'SMT').values()))
+            store.save('person','person','2026-01_SMT','self',{**payload,'status':'submitted'},revision(own))
+            self.assertEqual(store.month_statuses('person',2026,'SMT')[1],1)
+
     def test_administrator_reviews_any_other_employee_but_not_self(self):
         with tempfile.TemporaryDirectory() as directory:
             store = AssessmentStore(directory, cloud=False)
