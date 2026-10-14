@@ -55,7 +55,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.6.18"
+APP_VERSION = "v0.6.19"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 @st.cache_resource(show_spinner=False)
@@ -120,6 +120,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.6.19", "Show explicit manager rating selectors and feedback fields before the submitted self-assessment reference table."),
     ("v0.6.18", "Allow administrators to complete manager assessments for any other employee while retaining the self-review restriction."),
     ("v0.6.17", "Add personal self and manager assessments, comparison radar, procedure progress and administrator-approved employee ID accounts with mandatory password changes."),
     ("v0.6.16", "Add administrator-only Development Hub in More with English quality document titles, original document links and area filters."),

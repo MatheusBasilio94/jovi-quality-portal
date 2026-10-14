@@ -36,11 +36,6 @@ def _assessment_form(store, actor, subject, cycle, part, own, review, manager):
             st.info('Your assigned manager completes this assessment using their own account.')
         elif own.get('status') != 'submitted':
             st.info('The employee must submit the self assessment before the manager can review it.')
-        if own.get('ratings'):
-            st.markdown('#### Submitted self assessment')
-            st.dataframe([{'Development area': label, 'Self rating': own['ratings'].get(key, {}).get('rating'),
-                           'Comment': own['ratings'].get(key, {}).get('comment', ''), 'Evidence': own['ratings'].get(key, {}).get('evidence', '')}
-                          for key, label, _ in AXES], hide_index=True, width='stretch')
     rows = []
     for key, label, definition in AXES:
         item = record.get('ratings', {}).get(key, {})
@@ -49,19 +44,37 @@ def _assessment_form(store, actor, subject, cycle, part, own, review, manager):
     with st.expander('What each development area covers'):
         for _, label, definition in AXES:
             st.markdown(f'**{label}:** {definition}')
+    if part == 'manager':
+        st.markdown('### Your manager assessment')
+        st.caption('Select your rating for each development area and add your feedback below. The employee ratings are available for reference at the end of this section.')
     with st.form(f'development_{part}_{subject}_{cycle}_{revision(record)}'):
-        edited = st.data_editor(pd.DataFrame(rows), hide_index=True, width='stretch', height=325,
-            disabled=True if not can_edit else ['Development area'],
-            column_config={'Development area': st.column_config.TextColumn(width=310),
-                'Rating': st.column_config.SelectboxColumn(options=SCALE, width=125, required=True),
-                'Comment / Analysis': st.column_config.TextColumn(width=390),
-                'Evidence / Results': st.column_config.TextColumn(width=390)})
+        manager_values = {}
+        if part == 'manager':
+            for index, (key, label, definition) in enumerate(AXES):
+                existing = rows[index]
+                prefix = f'manager_rating_{subject}_{cycle}_{revision(record)}_{key}'
+                left, right = st.columns([1, 2])
+                with left:
+                    rating = st.selectbox(label, SCALE, index=SCALE.index(existing['Rating']), disabled=not can_edit, key=prefix)
+                    self_rating = own.get('ratings', {}).get(key, {}).get('rating')
+                    st.caption(f"Self rating: {self_rating if self_rating is not None else 'Not assessed'}")
+                with right:
+                    comment = st.text_input('Manager feedback', value=existing['Comment / Analysis'], disabled=not can_edit, key=prefix+'_comment')
+                    evidence = st.text_input('Evidence / Results', value=existing['Evidence / Results'], disabled=not can_edit, key=prefix+'_evidence')
+                manager_values[key] = {'rating': int(rating) if rating != 'Not assessed' else None, 'comment': comment, 'evidence': evidence}
+        else:
+            edited = st.data_editor(pd.DataFrame(rows), hide_index=True, width='stretch', height=325,
+                disabled=True if not can_edit else ['Development area'],
+                column_config={'Development area': st.column_config.TextColumn(width=310),
+                    'Rating': st.column_config.SelectboxColumn(options=SCALE, width=125, required=True),
+                    'Comment / Analysis': st.column_config.TextColumn(width=390),
+                    'Evidence / Results': st.column_config.TextColumn(width=390)})
         st.caption('Add a comment or evidence for every rated area. Unrated areas remain Not assessed.')
         first, second = st.columns(2)
         with first: draft = st.form_submit_button('Save draft', disabled=not can_edit, width='stretch')
         with second: submit = st.form_submit_button('Submit self assessment' if part == 'self' else 'Complete manager assessment', disabled=not can_edit or (part == 'self' and not manager), type='primary', width='stretch')
     if draft or submit:
-        ratings = {key: {'rating': int(edited.iloc[index]['Rating']) if edited.iloc[index]['Rating'] != 'Not assessed' else None,
+        ratings = manager_values if part == 'manager' else {key: {'rating': int(edited.iloc[index]['Rating']) if edited.iloc[index]['Rating'] != 'Not assessed' else None,
                          'comment': edited.iloc[index]['Comment / Analysis'], 'evidence': edited.iloc[index]['Evidence / Results']}
                    for index, (key, _, _) in enumerate(AXES)}
         data = {'status': 'submitted' if submit else 'draft', 'ratings': ratings}
@@ -69,6 +82,11 @@ def _assessment_form(store, actor, subject, cycle, part, own, review, manager):
         else: data['self_revision'] = revision(own)
         _save(store, actor, subject, cycle, part, data, record)
     st.caption(f"Status: {record.get('status', 'Not started').title()} · Assigned manager: {manager or 'Not assigned'}")
+    if part == 'manager' and own.get('ratings'):
+        with st.expander('Submitted self assessment · reference only'):
+            st.dataframe([{'Development area': label, 'Self rating': own['ratings'].get(key, {}).get('rating'),
+                           'Comment': own['ratings'].get(key, {}).get('comment', ''), 'Evidence': own['ratings'].get(key, {}).get('evidence', '')}
+                          for key, label, _ in AXES], hide_index=True, width='stretch')
 
 
 def _comparison(own, review):

@@ -144,6 +144,15 @@ render(documents())
             self.assertFalse(app.exception)
             review_button = next(button for button in app.button if button.label == 'Complete manager assessment')
             self.assertFalse(review_button.disabled)
+            rating_key = 'manager_rating_12345_2026-10_SMT__results'
+            self.assertFalse(app.selectbox(key=rating_key).disabled)
+            app.selectbox(key=rating_key).set_value('4')
+            app.text_input(key=rating_key+'_comment').set_value('Manager reviewed the quality results.')
+            review_button.click().run(timeout=20)
+            self.assertFalse(app.exception)
+            saved_review = store.load('12345', '2026-10_SMT', 'manager')
+            self.assertEqual(saved_review['ratings']['results']['rating'], 4)
+            self.assertEqual(saved_review['status'], 'submitted')
             app.session_state['authenticated_user'] = '12345'
             app.session_state['auth_role'] = 'viewer'
             app.run(timeout=20)
