@@ -115,7 +115,7 @@ def render(navigate):
     except Exception:
         error = True
     unread = [item for item in notices if item['id'] not in read]
-    with st.popover(str(len(unread)), icon=':material/notifications:', help='Notifications',use_container_width=True):
+    with st.popover(f'🔔 {len(unread)}' if unread else '🔔',help='Notifications',use_container_width=True):
         st.markdown('### Notifications')
         if error:
             st.info('Notifications could not be loaded. Your other portal functions remain available.')

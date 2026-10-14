@@ -55,7 +55,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.6.26"
+APP_VERSION = "v0.6.27"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 @st.cache_resource(show_spinner=False)
@@ -120,6 +120,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.6.27", "Standardize the main navigation across every page using the Home layout and restore the colored notification bell."),
     ("v0.6.26", "Prevent notification bell clipping with a native icon, additional button space and a visible unread count."),
     ("v0.6.25", "Add notification bell with persistent unread state, role-scoped assessment updates, account approval alerts and direct links to the relevant review."),
     ("v0.6.24", "Select named assessment months and show green checks for submitted self assessments and completed manager reviews by employee, role and year."),
@@ -342,6 +343,7 @@ VERSION_HISTORY = [
 def apply_global_css() -> None:
     if st.session_state.get("module") in {"Home", "SMT", "Assembly", "Smart Report"}:
         st.html(f"<style>{(BASE_DIR / 'assets' / 'approved-layout.css').read_text(encoding='utf-8')}</style>")
+        st.html(f"<style>{(BASE_DIR / 'assets' / 'shared-top-navigation.css').read_text(encoding='utf-8')}</style>")
         return
     st.markdown(
         """
@@ -1828,6 +1830,7 @@ def apply_global_css() -> None:
 
 
     st.html(f"<style>{(BASE_DIR / 'assets' / 'portal-theme.css').read_text(encoding='utf-8')}</style>")
+    st.html(f"<style>{(BASE_DIR / 'assets' / 'shared-top-navigation.css').read_text(encoding='utf-8')}</style>")
 
 
 def apply_login_css() -> None:
@@ -2317,7 +2320,6 @@ def top_navigation() -> None:
         with columns[-2]:
             from tools.portal_notifications import render as render_notifications
             with st.container(key="notification_bell"):
-                st.html("<style>.st-key-notification_bell [data-testid='stPopover'] button{min-height:38px;padding:6px 8px;gap:5px;}.st-key-notification_bell [data-testid='stIconMaterial']{flex-shrink:0;font-size:22px;line-height:1.2;}.st-key-notification_bell button p{white-space:nowrap;line-height:1.3;}</style>")
                 render_notifications(set_navigation)
         with columns[-1]:
             with st.popover("More", use_container_width=True):
