@@ -55,7 +55,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.6.22"
+APP_VERSION = "v0.6.23"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 @st.cache_resource(show_spinner=False)
@@ -120,6 +120,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.6.23", "Highlight positive assessment gaps in green and negative gaps in red, keeping zero and missing ratings neutral."),
     ("v0.6.22", "Center all assessment comparison headers and every value column except the left-aligned development area."),
     ("v0.6.21", "Calculate assessment gaps as Manager Assessment minus Self Assessment and update the column label."),
     ("v0.6.20", "Classify Function-test-station1 as an Assembly functional operation and refresh cached KPI rules."),

@@ -122,7 +122,18 @@ def _comparison(own, review):
             'Gap (Manager − Self)': f'{b-a:+d}' if a is not None and b is not None else '—',
             'Self analysis': left.get('comment', ''), 'Manager feedback': right.get('comment', '')})
     frame = pd.DataFrame(rows)
+    def gap_color(value):
+        try:
+            gap = int(value)
+        except (ValueError, TypeError):
+            return ''
+        if gap > 0:
+            return 'background-color: #D9FBE7; color: #08703B; font-weight: 700;'
+        if gap < 0:
+            return 'background-color: #FFE2E2; color: #B91C1C; font-weight: 700;'
+        return ''
     table = (frame.style.hide(axis='index').format(escape='html')
+        .map(gap_color, subset=['Gap (Manager − Self)'])
         .set_properties(subset=['Development area'], **{'text-align':'left'})
         .set_properties(subset=list(frame.columns[1:]), **{'text-align':'center'})
         .set_table_styles([
