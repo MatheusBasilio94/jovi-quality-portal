@@ -55,15 +55,15 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.6.28"
+APP_VERSION = "v0.6.29"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 @st.cache_resource(show_spinner=False)
 def _development_release_modules(release):
     """Load updated account and development modules once per deployed release."""
     import importlib
-    from tools import portal_users, access_control, development_assessment, development_assessment_ui, development_hub, assembly_kpi_v2, portal_notifications
-    for module in [portal_users, access_control, development_assessment, development_assessment_ui, development_hub, assembly_kpi_v2, portal_notifications]:
+    from tools import portal_users, access_control, development_assessment, development_assessment_ui, development_hub, assembly_kpi_v2, quality_notifications, portal_notifications
+    for module in [portal_users, access_control, development_assessment, development_assessment_ui, development_hub, assembly_kpi_v2, quality_notifications, portal_notifications]:
         importlib.reload(module)
     return (access_control.configured_accounts, access_control.authenticate, access_control.account_from_token,
             access_control.is_admin_session, access_control.require_admin_access, portal_users.development_access)
@@ -120,6 +120,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.6.29", "Add quality notifications for SMT and Assembly, general and per model: daily target misses, three-day deterioration with minimum 100 input PCBs, and seven-day defect/component recurrence."),
     ("v0.6.28", "Keep main navigation at the same top position on every page by removing invisible style and chart-control spacing."),
     ("v0.6.27", "Standardize the main navigation across every page using the Home layout and restore the colored notification bell."),
     ("v0.6.26", "Prevent notification bell clipping with a native icon, additional button space and a visible unread count."),
@@ -2287,6 +2288,53 @@ def set_navigation(module: str, tab: str = "") -> None:
     st.query_params.from_dict(query_values)
 
 
+@st.cache_data(ttl=120, show_spinner=False)
+def quality_notification_events(through_text: str, release: str):
+    """Share source calculations across sessions; refresh at most every two minutes."""
+    from datetime import timedelta
+    from tools import smt_quality_dashboard
+    from tools.quality_notifications import build_points, collect_kpi_signals
+    through = date.fromisoformat(through_text)
+    start = through - timedelta(days=29)
+    points, notices, unavailable = [], [], []
+    for area in ['SMT', 'Assembly']:
+        try:
+            if area == 'SMT':
+                inputs, defects = smt_quality_dashboard.stored_smt_sources()
+                if not inputs or not defects:
+                    unavailable.append(area)
+                    continue
+                analysis = smt_quality_dashboard.analyze_smt_quality_paths(
+                    tuple(smt_quality_dashboard.path_signature(p) for p in inputs),
+                    tuple(smt_quality_dashboard.path_signature(p) for p in defects),
+                    start.isoformat(), through.isoformat(), smt_quality_dashboard.SMT_FAILURE_RULE_VERSION)
+                smt, assembly = analysis, None
+            else:
+                smt, assembly = None, calculate_assembly_kpi_metrics(start, through)
+            try:
+                inspections = load_smt_oqc_inspections(start, through) if area == 'SMT' else load_assembly_oqc_fqc_inspections(start, through)
+                inspection_sources = {area: inspections}
+            except Exception:
+                inspection_sources = {}
+                unavailable.append(area + ' inspections')
+            area_points, recurrences = build_points(smt, assembly, inspection_sources, through)
+            points.extend(area_points)
+            notices.extend(recurrences)
+        except Exception:
+            unavailable.append(area)
+    notices.extend(collect_kpi_signals(points, configured_kpi_directory(), through))
+    return sorted(notices, key=lambda item: item['date'], reverse=True), unavailable
+
+
+def load_quality_notifications(refresh=False):
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+    if refresh:
+        quality_notification_events.clear()
+    through = datetime.now(ZoneInfo('America/Manaus')).date() - timedelta(days=1)
+    return quality_notification_events(through.isoformat(), APP_VERSION)
+
+
 def top_navigation() -> None:
     """Render the full-width primary navigation without using Streamlit's sidebar."""
     nav_items = [
@@ -2320,7 +2368,7 @@ def top_navigation() -> None:
         with columns[-2]:
             from tools.portal_notifications import render as render_notifications
             with st.container(key="notification_bell"):
-                render_notifications(set_navigation)
+                render_notifications(set_navigation, load_quality_notifications)
         with columns[-1]:
             with st.popover("More", use_container_width=True):
                 role_label = "Administrator" if is_admin() else "Viewer"

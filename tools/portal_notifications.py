@@ -98,7 +98,7 @@ class ReadState:
                 temp.replace(file)
 
 
-def render(navigate):
+def render(navigate, quality_source=None):
     actor = str(st.session_state.get('authenticated_user',''))
     role = str(st.session_state.get('auth_role',''))
     notices, read, error = [], set(), False
@@ -111,24 +111,49 @@ def render(navigate):
             fields = ['username','display_name','active','approved','manager','created_at']
             permitted = {key:{field:u.get(field) for field in fields} for key,u in users.items() if role=='admin' or u['username']==actor or (role=='manager' and u.get('manager')==actor)}
             notices = _events(actor,role,json.dumps(permitted,sort_keys=True),store.cloud,str(store.local_root))
+    except Exception:
+        error = True
+    unavailable = []
+    if actor and quality_source is not None:
+        try:
+            quality, unavailable = quality_source()
+            notices.extend(quality)
+        except Exception:
+            unavailable = ['quality sources']
+    try:
+        if actor:
             read = state.read(actor)
     except Exception:
         error = True
+    notices.sort(key=lambda item: item['date'], reverse=True)
     unread = [item for item in notices if item['id'] not in read]
     with st.popover(f'🔔 {len(unread)}' if unread else '🔔',help='Notifications',use_container_width=True):
         st.markdown('### Notifications')
         if error:
-            st.info('Notifications could not be loaded. Your other portal functions remain available.')
-        elif not notices:
+            st.info('Some notifications or read statuses could not be loaded. Your other portal functions remain available.')
+        if unavailable:
+            st.caption('Quality alerts unavailable for: ' + ', '.join(unavailable) + '. Check the uploaded sources.')
+        if quality_source is not None:
+            with st.expander('Quality alert rules'):
+                st.caption('SMT and Assembly · General and per model · Completed days only. Daily KPI alerts require at least 100 input PCBs. The latest eligible day must be within the last 7 days. Trends use 3 eligible production days (2 consecutive changes).')
+                st.caption('Recurrence: at least 3 distinct PCBs in 7 calendar days, independent of input. Component alerts match the recorded ItemCode, or location when no code exists. Official KPI rules apply, including glue defects; simulations do not change alerts. Daily alerts require observed daily input, not estimated weekly/monthly input.')
+        if not notices:
             st.caption('No notifications at the moment.')
         else:
-            st.caption(f'{len(unread)} unread · Assessment updates and account approvals')
+            st.caption(f'{len(unread)} unread · Quality and assessment updates')
+            areas = ['All notifications', 'SMT', 'Assembly', 'Assessments and accounts']
+            selected = st.selectbox('Notification scope', areas, key='notification_scope') if quality_source else areas[0]
+            visible = [item for item in notices if selected == areas[0] or item.get('area') == selected or (selected == areas[-1] and not item.get('area'))]
+            limit = 30
+            if len(visible) > 30:
+                options = sorted({30, min(60, len(visible)), len(visible)})
+                limit = st.selectbox('Notifications to display', options, key='notification_display_count')
             if st.button('Mark all as read',disabled=not unread,key='notifications_read_all',width='stretch'):
                 try:
                     state.mark(actor,[item['id'] for item in notices])
                     st.rerun()
                 except Exception: st.error('Read status could not be saved. Try again.')
-            for item in sorted(notices,key=lambda n:(n['id'] in read, notices.index(n)))[:30]:
+            for item in sorted(visible,key=lambda n:(n['id'] in read, notices.index(n)))[:limit]:
                 with st.container(border=True):
                     st.markdown(('**New · '+item['title']+'**') if item['id'] not in read else item['title'])
                     st.write(item['message'])
@@ -139,12 +164,17 @@ def render(navigate):
                     if st.button('Open',key='notification_open_'+item['id'],width='stretch'):
                         try:
                             state.mark(actor,[item['id']])
-                            st.session_state['_development_notification'] = {key:item[key] for key in ['subject','cycle','tab']}
-                            if item.get('account'):
-                                st.session_state['_development_notification']['account'] = item['account']
-                            navigate('Development Hub','')
+                            if item.get('destination'):
+                                navigate(item['destination'], item['tab'])
+                            else:
+                                st.session_state['_development_notification'] = {key:item[key] for key in ['subject','cycle','tab']}
+                                if item.get('account'):
+                                    st.session_state['_development_notification']['account'] = item['account']
+                                navigate('Development Hub','')
                             st.rerun()
                         except Exception: st.error('The notification could not be opened. Try again.')
         if st.button('Refresh notifications',key='notifications_refresh',width='stretch'):
             invalidate()
+            if quality_source is not None:
+                quality_source(refresh=True)
             st.rerun()
