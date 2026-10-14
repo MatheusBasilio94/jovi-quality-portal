@@ -55,7 +55,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.6.25"
+APP_VERSION = "v0.6.26"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 @st.cache_resource(show_spinner=False)
@@ -120,6 +120,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.6.26", "Prevent notification bell clipping with a native icon, additional button space and a visible unread count."),
     ("v0.6.25", "Add notification bell with persistent unread state, role-scoped assessment updates, account approval alerts and direct links to the relevant review."),
     ("v0.6.24", "Select named assessment months and show green checks for submitted self assessments and completed manager reviews by employee, role and year."),
     ("v0.6.23", "Highlight positive assessment gaps in green and negative gaps in red, keeping zero and missing ratings neutral."),
@@ -2296,7 +2297,7 @@ def top_navigation() -> None:
         ("Learning Area", "Learning", 0.84),
     ]
     with st.container(key="top_navigation"):
-        columns = st.columns([1.42] + [item[2] for item in nav_items] + [0.42, 0.56], gap="small")
+        columns = st.columns([1.42] + [item[2] for item in nav_items] + [0.72, 0.56], gap="small")
         with columns[0]:
             st.markdown(
                 "<div class='topnav-brand'><strong><span>JOVI</span> QUALITY CENTER</strong><small>QUALITY INTELLIGENCE PORTAL</small></div>",
@@ -2315,7 +2316,9 @@ def top_navigation() -> None:
                 )
         with columns[-2]:
             from tools.portal_notifications import render as render_notifications
-            render_notifications(set_navigation)
+            with st.container(key="notification_bell"):
+                st.html("<style>.st-key-notification_bell [data-testid='stPopover'] button{min-height:38px;padding:6px 8px;gap:5px;}.st-key-notification_bell [data-testid='stIconMaterial']{flex-shrink:0;font-size:22px;line-height:1.2;}.st-key-notification_bell button p{white-space:nowrap;line-height:1.3;}</style>")
+                render_notifications(set_navigation)
         with columns[-1]:
             with st.popover("More", use_container_width=True):
                 role_label = "Administrator" if is_admin() else "Viewer"
