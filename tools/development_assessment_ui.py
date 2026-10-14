@@ -119,7 +119,7 @@ def _comparison(own, review):
         a, b = left.get('rating'), right.get('rating')
         rows.append({'Development area': label, 'Self Assessment': str(a) if a is not None else 'Not assessed',
             'Manager Assessment': str(b) if b is not None else 'Not assessed',
-            'Gap (Self − Manager)': f'{a-b:+d}' if a is not None and b is not None else '—',
+            'Gap (Manager − Self)': f'{b-a:+d}' if a is not None and b is not None else '—',
             'Self analysis': left.get('comment', ''), 'Manager feedback': right.get('comment', '')})
     st.dataframe(pd.DataFrame(rows), hide_index=True, width='stretch')
     st.caption('Differences identify topics for discussion, not automatic penalties. This radar is separate from the official company assessment and its 60/15/15/10 weighting.')

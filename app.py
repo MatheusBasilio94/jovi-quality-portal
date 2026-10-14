@@ -55,7 +55,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.6.20"
+APP_VERSION = "v0.6.21"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 @st.cache_resource(show_spinner=False)
@@ -120,6 +120,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.6.21", "Calculate assessment gaps as Manager Assessment minus Self Assessment and update the column label."),
     ("v0.6.20", "Classify Function-test-station1 as an Assembly functional operation and refresh cached KPI rules."),
     ("v0.6.19", "Show explicit manager rating selectors and feedback fields before the submitted self-assessment reference table."),
     ("v0.6.18", "Allow administrators to complete manager assessments for any other employee while retaining the self-review restriction."),
