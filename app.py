@@ -55,15 +55,15 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.6.19"
+APP_VERSION = "v0.6.20"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 @st.cache_resource(show_spinner=False)
 def _development_release_modules(release):
     """Load updated account and development modules once per deployed release."""
     import importlib
-    from tools import portal_users, access_control, development_assessment, development_assessment_ui, development_hub
-    for module in [portal_users, access_control, development_assessment, development_assessment_ui, development_hub]:
+    from tools import portal_users, access_control, development_assessment, development_assessment_ui, development_hub, assembly_kpi_v2
+    for module in [portal_users, access_control, development_assessment, development_assessment_ui, development_hub, assembly_kpi_v2]:
         importlib.reload(module)
     return (access_control.configured_accounts, access_control.authenticate, access_control.account_from_token,
             access_control.is_admin_session, access_control.require_admin_access, portal_users.development_access)
@@ -120,6 +120,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.6.20", "Classify Function-test-station1 as an Assembly functional operation and refresh cached KPI rules."),
     ("v0.6.19", "Show explicit manager rating selectors and feedback fields before the submitted self-assessment reference table."),
     ("v0.6.18", "Allow administrators to complete manager assessments for any other employee while retaining the self-review restriction."),
     ("v0.6.17", "Add personal self and manager assessments, comparison radar, procedure progress and administrator-approved employee ID accounts with mandatory password changes."),
