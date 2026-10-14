@@ -121,7 +121,22 @@ def _comparison(own, review):
             'Manager Assessment': str(b) if b is not None else 'Not assessed',
             'Gap (Manager − Self)': f'{b-a:+d}' if a is not None and b is not None else '—',
             'Self analysis': left.get('comment', ''), 'Manager feedback': right.get('comment', '')})
-    st.dataframe(pd.DataFrame(rows), hide_index=True, width='stretch')
+    frame = pd.DataFrame(rows)
+    table = (frame.style.hide(axis='index').format(escape='html')
+        .set_properties(subset=['Development area'], **{'text-align':'left'})
+        .set_properties(subset=list(frame.columns[1:]), **{'text-align':'center'})
+        .set_table_styles([
+            {'selector':'', 'props':[('width','100%'),('min-width','1000px'),('border-collapse','collapse'),('table-layout','fixed'),('font-size','13px'),('color','#0B2D61')]},
+            {'selector':'th', 'props':[('text-align','center'),('background','#E8EEF7'),('color','#607C9F'),('font-weight','500'),('padding','10px 8px'),('border','1px solid #DFE7F1')]},
+            {'selector':'td', 'props':[('padding','9px 8px'),('border','1px solid #DFE7F1'),('vertical-align','middle'),('overflow-wrap','anywhere')]},
+            {'selector':'th:nth-child(1)', 'props':[('width','24%')]},
+            {'selector':'th:nth-child(2)', 'props':[('width','14%')]},
+            {'selector':'th:nth-child(3)', 'props':[('width','16%')]},
+            {'selector':'th:nth-child(4)', 'props':[('width','16%')]},
+            {'selector':'th:nth-child(5)', 'props':[('width','15%')]},
+            {'selector':'th:nth-child(6)', 'props':[('width','15%')]},
+        ]))
+    st.html("<div style='overflow-x:auto;border-radius:8px;border:1px solid #DFE7F1;'>"+table.to_html()+"</div>")
     st.caption('Differences identify topics for discussion, not automatic penalties. This radar is separate from the official company assessment and its 60/15/15/10 weighting.')
 
 
