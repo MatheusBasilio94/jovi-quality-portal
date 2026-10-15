@@ -1,0 +1,27 @@
+
+.st-key-defect_action_head h1 {font-size:31px!important;color:#08244C!important;}
+.st-key-defect_action_head [data-testid="stCaptionContainer"] {font-size:14px;}
+.st-key-defect_action_head button {margin-top:6px;background:#2563EB!important;color:white!important;border:0!important;min-height:42px!important;}
+.st-key-defect_action_filters {background:#E8F1FF;border:1px solid #BED2F2;border-left:4px solid #2563EB;border-radius:10px;padding:12px 16px;}
+.st-key-defect_action_filters [data-testid="stWidgetLabel"] p {font-size:13px!important;font-weight:600;}
+.st-key-defect_action_filters [data-testid="stVerticalBlock"] {gap:3px!important;}
+.action-metric {background:white;border:1px solid #CFDDF0;border-radius:10px;padding:12px 17px;border-top:3px solid var(--tone);min-height:99px;box-sizing:border-box;}
+.action-metric-label {font-size:12px;font-weight:650;letter-spacing:.35px;color:#58708F;}
+.action-metric-value {font-size:28px;font-weight:750;line-height:1.35;color:var(--tone);}
+.action-metric-note {font-size:12px;color:#7187A3;}
+.kanban-head {padding:11px 12px;border-radius:9px;border-top:3px solid var(--tone);background:var(--wash);display:flex;align-items:center;justify-content:space-between;color:#17365D;font-weight:700;font-size:15px;}
+.kanban-count {border-radius:6px;background:white;min-width:26px;text-align:center;color:var(--tone);padding:1px 6px;font-size:13px;}
+div[class*="st-key-kanban_lane_"] {background:#EAF0F8;border:1px solid #D5E0EF;border-radius:10px;padding:10px;}
+div[class*="st-key-action_card_"] {background:white;border:1px solid #CCD9EB;border-radius:9px;padding:13px 14px 8px;box-shadow:0 2px 5px #163B6410;}
+div[class*="st-key-action_card_"] [data-testid="stVerticalBlock"] {gap:5px!important;}
+div[class*="st-key-action_card_"] button {min-height:29px!important;height:29px!important;background:#F1F6FF!important;border:1px solid #C5D7F0!important;color:#2359A8!important;border-radius:6px!important;padding:3px 9px!important;}
+div[class*="st-key-action_card_"] button p {font-size:12px!important;}
+.action-id {font-size:11px;color:#8193AA;letter-spacing:.4px;}
+.action-title {font-size:16px;font-weight:700;color:#13345A;line-height:1.35;min-height:44px;margin:7px 0 8px;}
+.action-tags {display:flex;justify-content:space-between;align-items:center;gap:5px;}
+.action-tag {display:inline-block;border-radius:5px;background:#EAF2FF;color:#245FB2;font-size:11px;font-weight:650;padding:3px 7px;}
+.action-model {font-size:12px;color:#6D84A2;margin-bottom:13px;}
+.action-owner {display:flex;align-items:center;gap:7px;font-size:13px;color:#254368;margin-bottom:8px;}
+.owner-circle {width:24px;height:24px;border-radius:50%;background:#E9F1FD;color:#245FB2;font-size:11px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;}
+.action-due {font-size:12px;font-weight:600;padding:4px 7px;border-radius:5px;display:inline-block;margin-bottom:3px;}
+.board-footnote {font-size:12px;color:#7187A3;margin-top:2px;}

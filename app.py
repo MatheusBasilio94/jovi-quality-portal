@@ -55,7 +55,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.6.29"
+APP_VERSION = "v0.6.30"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 @st.cache_resource(show_spinner=False)
@@ -120,6 +120,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.6.30", "Rebuild Defect Action Report as a persistent Kanban with owner, area, priority and deadline filters, action statistics, verified closure, change history and conversion of previous report actions."),
     ("v0.6.29", "Add quality notifications for SMT and Assembly, general and per model: daily target misses, three-day deterioration with minimum 100 input PCBs, and seven-day defect/component recurrence."),
     ("v0.6.28", "Keep main navigation at the same top position on every page by removing invisible style and chart-control spacing."),
     ("v0.6.27", "Standardize the main navigation across every page using the Home layout and restore the colored notification bell."),
@@ -6275,72 +6276,23 @@ def smart_report_kpi_cards(selected_by_area: dict[str, list[dict]], inputs: dict
             )
 
 
+@st.cache_resource(show_spinner=False)
+def _defect_action_renderer(release):
+    """Load the action board modules once per published version."""
+    import importlib
+    from tools import defect_actions, defect_actions_ui
+    importlib.reload(defect_actions)
+    return defect_actions.ActionStore, importlib.reload(defect_actions_ui).render
+
+
 def defect_action_report_page() -> None:
-    st.markdown("<div class='smart-report-title'>Smart Report</div><div class='smart-report-subtitle'>Fast, actionable reports generated from the stored SMT and Assembly inputs.</div>", unsafe_allow_html=True)
-    control_column, area_column, action_column = st.columns([1.8, 1.55, 0.85])
-    with control_column:
-        st.markdown("<div class='smart-control-label'>Report period</div>", unsafe_allow_html=True)
-        report_type, start_date, end_date, period_label, period_key = smart_report_period_selector(smart_report_reference_date())
-    with area_column:
-        st.markdown("<div class='smart-control-label'>Area</div>", unsafe_allow_html=True)
-        area_filter = st.segmented_control(
-            "Area",
-            ["All", "SMT", "Assembly"],
-            default="All",
-            selection_mode="single",
-            key="smart_report_area_filter",
-            persist_state="session",
-            label_visibility="collapsed",
-        ) or "All"
-    with action_column:
-        st.markdown("<div class='smart-control-label'>&nbsp;</div>", unsafe_allow_html=True)
-        if st.button("Generate report", use_container_width=True, type="primary"):
-            st.toast("Report suggestions refreshed from the stored input data.")
-
-    area_results = {}
-    for area, loader in [("SMT", smart_report_smt_data), ("Assembly", smart_report_assembly_data)]:
-        try:
-            area_results[area] = loader(start_date, end_date)
-        except Exception as exc:
-            area_results[area] = ([], 0, 0, str(exc))
-    areas = ["SMT", "Assembly"] if area_filter == "All" else [area_filter]
-    for area in areas:
-        error = area_results[area][3]
-        if error:
-            st.warning(f"{area} data could not be calculated for this period: {error}")
-
-    selected_by_area: dict[str, list[dict]] = {}
-    actions_by_area: dict[str, dict] = {}
-    inputs = {area: area_results[area][1] for area in areas}
-    repeats = {area: area_results[area][2] for area in areas}
-    for area in areas:
-        selected_by_area[area] = smart_report_selected_items(area, area_results[area][0], period_key)
-        actions_by_area[area] = load_smart_report_actions(area, period_key)
-    smart_report_kpi_cards(selected_by_area, inputs, repeats, actions_by_area)
-    st.write("")
-    message = smart_report_message(report_type, period_label, selected_by_area, actions_by_area)
-    if len(areas) == 2:
-        smt_column, assembly_column, preview_column = st.columns([1.05, 1.05, 1.0])
-        with smt_column:
-            smart_report_area_panel("SMT", MODULES["SMT"]["color"], area_results["SMT"][0], period_key)
-        with assembly_column:
-            smart_report_area_panel("Assembly", MODULES["Assembly"]["color"], area_results["Assembly"][0], period_key)
-        with preview_column:
-            st.markdown("<div class='smart-whatsapp-panel'><div class='smart-area-head'><span class='smart-area-icon' style='background:#16A05D;'>◔</span><span class='smart-area-title'>WhatsApp Preview</span></div><div class='smart-preview-copy'>" + escape(message) + "</div><div class='smart-preview-footnote'>Preview based on selected real-data defects.</div></div>", unsafe_allow_html=True)
-            if st.button("Copy for WhatsApp", key="smart_report_copy_all", use_container_width=True):
-                st.toast("Select the preview text and copy it to WhatsApp.")
-    else:
-        report_column, preview_column = st.columns([1.3, 1.0])
-        area = areas[0]
-        with report_column:
-            smart_report_area_panel(area, MODULES[area]["color"], area_results[area][0], period_key)
-        with preview_column:
-            st.markdown("<div class='smart-whatsapp-panel'><div class='smart-area-head'><span class='smart-area-icon' style='background:#16A05D;'>◔</span><span class='smart-area-title'>WhatsApp Preview</span></div><div class='smart-preview-copy'>" + escape(message) + "</div><div class='smart-preview-footnote'>Preview based on selected real-data defects.</div></div>", unsafe_allow_html=True)
-            if st.button("Copy for WhatsApp", key="smart_report_copy_single", use_container_width=True):
-                st.toast("Select the preview text and copy it to WhatsApp.")
-    with st.expander("Copyable report text"):
-        st.code(message, language=None)
-    st.caption("The report reads the existing stored data. Only action details are saved separately in the local quality database.")
+    try:
+        init_quality_store()
+        store_class, render = _defect_action_renderer(APP_VERSION)
+        store = store_class(QUALITY_DB_PATH, require_persistent_store_for_writes, sync_quality_database_to_cloud)
+        render(store)
+    except (RuntimeError, sqlite3.Error) as exc:
+        st.error(f"Action board could not be loaded: {exc}")
 
 
 WEEKLY_KPI_DIRECTORY = (
