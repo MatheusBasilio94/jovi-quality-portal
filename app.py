@@ -56,7 +56,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.6.34"
+APP_VERSION = "v0.6.35"
 
 
 @st.cache_resource(show_spinner=False)
@@ -141,6 +141,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.6.35", "Remove the action ID and the closing owner follow-up request from copied action summaries."),
     ("v0.6.34", "Add confirmed action deletion for the action creator, managers and administrators, with retained deletion history and stale-edit protection."),
     ("v0.6.33", "Add Copy Summary to action card details: copy a WhatsApp-ready saved summary with owner, deadline, countermeasure and verification, without reloading the page."),
     ("v0.6.32", "Standardize displayed dates and exports to DD/MM/YY and timestamps to DD/MM/YY HH:mm; convert timezone-aware records to Manaus, preserve MES source times and use Brazilian calendar controls."),

@@ -9,7 +9,7 @@ from tools.defect_actions import local_today
 def build_action_summary(record, today=None):
     today = today or local_today()
     text = lambda key: str(record.get(key) or '').strip()
-    lines = ['📋 *QUALITY ACTION' + (f" — {text('id')}" if text('id') else '') + '*', '']
+    lines = ['📋 *QUALITY ACTION*', '']
     for key, label in [('title','Action'), ('area','Area'), ('model','Model'), ('owner','Owner'),
                        ('priority','Priority'), ('status','Status')]:
         if text(key): lines.append(f'*{label}:* {text(key)}')
@@ -29,10 +29,6 @@ def build_action_summary(record, today=None):
     else:
         lines.append('Pending — record the validation results before closing the action.')
         if text('evidence'): lines.append(text('evidence'))
-    if text('status') != 'Closed':
-        owner = text('owner')
-        lines.extend(['', (owner + ', please' if owner else 'Please') +
-                      ' update the action progress and confirm whether the deadline can be met.'])
     return '\n'.join(lines)
 
 

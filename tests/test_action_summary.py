@@ -15,11 +15,12 @@ class ActionSummaryTests(unittest.TestCase):
 
     def test_open_summary_has_approved_content_br_date_and_overdue(self):
         text = build_action_summary(self.record(), date(2026,10,16))
-        for expected in ['📋 *QUALITY ACTION — ACT-ABC123*', '*Owner:* Felipe', '*Due date:* 15/10/26',
+        for expected in ['📋 *QUALITY ACTION*', '*Owner:* Felipe', '*Due date:* 15/10/26',
                          '🔴 *Overdue:* 1 day', 'Disperse glue', 'Inspect affected boards',
-                         'Adjust parameters and validate the next batch', 'Pending —',
-                         'Felipe, please update the action progress']:
+                         'Adjust parameters and validate the next batch', 'Pending —']:
             self.assertIn(expected, text)
+        self.assertNotIn('ACT-ABC123', text)
+        self.assertNotIn('please update', text)
 
     def test_closed_summary_uses_verification_and_never_requests_progress(self):
         record = self.record(status='Closed', verified=True, closed_at='2026-10-16T01:30:45+00:00', evidence='300 PCBs validated')
