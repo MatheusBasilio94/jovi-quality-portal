@@ -149,7 +149,9 @@ def _previous(store):
             details(store, record, legacy_source=row['source_key'])
 
 
+@st.fragment(key='defect_action_board')
 def render(store):
+    """Keep card, view and filter interactions out of the full Smart Report rerun."""
     st.html('<style>' + (Path(__file__).resolve().parents[1]/'assets'/'defect-actions.css').read_text(encoding='utf-8') + '</style>')
     try:
         actions = store.all()
@@ -167,7 +169,7 @@ def render(store):
                 require_admin_access(st.session_state)
                 store.persist()
                 del st.session_state['_defect_action_unsynced']
-                st.rerun()
+                st.rerun(scope='fragment')
             except Exception: st.error('Cloud synchronization is still unavailable. Please try again.')
     with st.container(key='defect_action_head'):
         heading, new = st.columns([5, 1])
@@ -230,7 +232,7 @@ def render(store):
                     if st.button('＋ Add action', key='defect_add_'+str(idx), disabled=not editable, width='stretch'):
                         details(store, initial_status=status)
         export = _table(filtered).to_csv(index=False).encode('utf-8-sig')
-        st.download_button('Export filtered actions · CSV', export, file_name='defect-actions.csv', mime='text/csv', key='defect_export', disabled=not filtered)
+        st.download_button('Export filtered actions · CSV', export, file_name='defect-actions.csv', mime='text/csv', key='defect_export', disabled=not filtered, on_click='ignore')
     with statistics: _statistics(filtered, today)
     with previous: _previous(store)
     st.caption('All indicators follow the selected filters. Status changes are made inside each card. ' + ('Only administrators can create or update actions.' if not editable else 'Closure requires a countermeasure and effectiveness verification.'))

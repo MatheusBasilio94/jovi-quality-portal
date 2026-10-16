@@ -55,7 +55,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.6.30"
+APP_VERSION = "v0.6.31"
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 @st.cache_resource(show_spinner=False)
@@ -120,6 +120,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.6.31", "Isolate Defect Action Report interactions so opening cards, filters and Kanban/Table changes do not rerun KPI reports or cloud initialization; export CSV without a rerun."),
     ("v0.6.30", "Rebuild Defect Action Report as a persistent Kanban with owner, area, priority and deadline filters, action statistics, verified closure, change history and conversion of previous report actions."),
     ("v0.6.29", "Add quality notifications for SMT and Assembly, general and per model: daily target misses, three-day deterioration with minimum 100 input PCBs, and seven-day defect/component recurrence."),
     ("v0.6.28", "Keep main navigation at the same top position on every page by removing invisible style and chart-control spacing."),
