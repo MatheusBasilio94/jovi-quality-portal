@@ -160,7 +160,7 @@ def mini_trend_svg(daily: pd.DataFrame, target: float, color: str) -> str:
             tooltip_y = max(2, py - tooltip_height - 8) if above else py + 9
             pointer_y = tooltip_y + tooltip_height if above else tooltip_y
             pointer_tip = pointer_y + 6 if above else pointer_y - 6
-            label = pd.Timestamp(row["Date"]).strftime("%d/%m/%Y")
+            label = pd.Timestamp(row["Date"]).strftime('%d/%m/%y')
             short_label = pd.Timestamp(row["Date"]).strftime("%d/%m")
             defect_pcbs = int(row.get("Defects", 0))
             input_pcbs = int(row.get("Input", 0))

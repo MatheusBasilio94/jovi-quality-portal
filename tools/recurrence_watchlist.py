@@ -126,7 +126,7 @@ def build_recurrence_watchlist(
                 "CurrentWeekPCBs": current_week_pcbs,
                 "RecidivistPCBs": recidivist_pcbs,
                 "Trend": trend,
-                "LastSeen": issue_data["_RecurrenceDate"].max().strftime("%d/%m/%Y"),
+                "LastSeen": issue_data["_RecurrenceDate"].max().strftime('%d/%m/%y'),
                 "Stations": _distinct_context(issue_data.get("Operation", pd.Series("", index=issue_data.index))),
                 "Models": _distinct_context(issue_data.get("Model", pd.Series("", index=issue_data.index))),
             }

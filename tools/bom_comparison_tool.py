@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tools.br_datetime import br_frame, br_date, br_datetime
 
 import hashlib
 from html import escape
@@ -1070,18 +1071,18 @@ def gerar_excel(
     )
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        summary_df.to_excel(writer, index=False, sheet_name="Summary")
-        traduzir_issues_df(issues_df).to_excel(writer, index=False, sheet_name="Issues")
-        itens_conferencia.to_excel(writer, index=False, sheet_name="PQC_Check")
-        traduzir_resultado_df(match_df).to_excel(writer, index=False, sheet_name="Match")
-        traduzir_resultado_df(missing_df).to_excel(writer, index=False, sheet_name="Missing")
-        traduzir_resultado_df(extra_df).to_excel(writer, index=False, sheet_name="Extra")
-        traduzir_resultado_df(mismatch_df).to_excel(writer, index=False, sheet_name="PN_Mismatch")
-        traduzir_duplicate_df(dup_tabela1).to_excel(writer, index=False, sheet_name="Duplicate_Ref_T1")
-        traduzir_duplicate_df(dup_tabela2).to_excel(writer, index=False, sheet_name="Duplicate_Ref_T2")
-        traduzir_resultado_df(resultado).to_excel(writer, index=False, sheet_name="All_Results")
-        traduzir_normalizada_df(tabela1_normalizada).to_excel(writer, index=False, sheet_name="Table1_Normalized")
-        traduzir_normalizada_df(tabela2_normalizada).to_excel(writer, index=False, sheet_name="Table2_Normalized")
+        br_frame(summary_df).to_excel(writer, index=False, sheet_name="Summary")
+        br_frame(traduzir_issues_df(issues_df)).to_excel(writer, index=False, sheet_name="Issues")
+        br_frame(itens_conferencia).to_excel(writer, index=False, sheet_name="PQC_Check")
+        br_frame(traduzir_resultado_df(match_df)).to_excel(writer, index=False, sheet_name="Match")
+        br_frame(traduzir_resultado_df(missing_df)).to_excel(writer, index=False, sheet_name="Missing")
+        br_frame(traduzir_resultado_df(extra_df)).to_excel(writer, index=False, sheet_name="Extra")
+        br_frame(traduzir_resultado_df(mismatch_df)).to_excel(writer, index=False, sheet_name="PN_Mismatch")
+        br_frame(traduzir_duplicate_df(dup_tabela1)).to_excel(writer, index=False, sheet_name="Duplicate_Ref_T1")
+        br_frame(traduzir_duplicate_df(dup_tabela2)).to_excel(writer, index=False, sheet_name="Duplicate_Ref_T2")
+        br_frame(traduzir_resultado_df(resultado)).to_excel(writer, index=False, sheet_name="All_Results")
+        br_frame(traduzir_normalizada_df(tabela1_normalizada)).to_excel(writer, index=False, sheet_name="Table1_Normalized")
+        br_frame(traduzir_normalizada_df(tabela2_normalizada)).to_excel(writer, index=False, sheet_name="Table2_Normalized")
 
         workbook = writer.book
         for sheet_name in workbook.sheetnames:
@@ -1346,9 +1347,9 @@ def render_bom_comparison_tool(color: str) -> None:
             if auto_split_t1:
                 st.caption("Table 1 comma-separated refs will be split before comparison.")
             st.write(TEXT["table1"])
-            st.dataframe(df1.head(20), use_container_width=True)
+            st.dataframe(br_frame(df1.head(20)), use_container_width=True)
             st.write(TEXT["table2"])
-            st.dataframe(df2.head(20), use_container_width=True)
+            st.dataframe(br_frame(df2.head(20)), use_container_width=True)
 
         action_col, button_col = st.columns([3, 1.15])
         with action_col:
@@ -1408,9 +1409,9 @@ def render_bom_comparison_tool(color: str) -> None:
             st.markdown("<div class='bom-section-title'>Upload / Preview</div>", unsafe_allow_html=True)
             preview = st.session_state.get("bom_source_preview", {"df1": df1, "df2": df2})
             st.write(TEXT["table1"])
-            st.dataframe(preview["df1"].head(20), use_container_width=True)
+            st.dataframe(br_frame(preview["df1"].head(20)), use_container_width=True)
             st.write(TEXT["table2"])
-            st.dataframe(preview["df2"].head(20), use_container_width=True)
+            st.dataframe(br_frame(preview["df2"].head(20)), use_container_width=True)
 
         with issues_tab:
             issues_filtradas = issues_df.copy()
@@ -1431,7 +1432,7 @@ def render_bom_comparison_tool(color: str) -> None:
                     st.info(TEXT["no_result"])
                 else:
                     issues_display = traduzir_issues_df(issues_filtradas)
-                    st.dataframe(estilizar_issues_df(issues_display), use_container_width=True)
+                    st.dataframe(br_frame(estilizar_issues_df(issues_display)), use_container_width=True)
 
         with pqc_tab:
             st.markdown(f"<div class='bom-section-title'>{escape(TEXT['pqc_check_title'])}</div>", unsafe_allow_html=True)
@@ -1439,7 +1440,7 @@ def render_bom_comparison_tool(color: str) -> None:
                 st.success(TEXT["pqc_check_empty"])
             else:
                 st.warning(f"{len(itens_conferencia)} {TEXT['pqc_check_warning']}")
-                st.dataframe(itens_conferencia, use_container_width=True)
+                st.dataframe(br_frame(itens_conferencia), use_container_width=True)
 
         with result_tab:
             comp_col1, comp_col2, comp_col3 = st.columns([2, 3, 3])
@@ -1465,16 +1466,16 @@ def render_bom_comparison_tool(color: str) -> None:
             if resultado_filtrado.empty:
                 st.info(TEXT["no_result"])
             else:
-                st.dataframe(traduzir_resultado_df(resultado_filtrado), use_container_width=True)
+                st.dataframe(br_frame(traduzir_resultado_df(resultado_filtrado)), use_container_width=True)
 
         with duplicates_tab:
             d1, d2 = st.columns(2)
             with d1:
                 st.markdown(f"**{TEXT['table1']}**")
-                st.dataframe(traduzir_duplicate_df(dup_tabela1), use_container_width=True)
+                st.dataframe(br_frame(traduzir_duplicate_df(dup_tabela1)), use_container_width=True)
             with d2:
                 st.markdown(f"**{TEXT['table2']}**")
-                st.dataframe(traduzir_duplicate_df(dup_tabela2), use_container_width=True)
+                st.dataframe(br_frame(traduzir_duplicate_df(dup_tabela2)), use_container_width=True)
 
         with report_tab:
             st.markdown(

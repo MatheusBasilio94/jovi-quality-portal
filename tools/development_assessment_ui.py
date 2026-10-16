@@ -1,4 +1,5 @@
 """Individual self assessment, assigned-manager review and comparison."""
+from tools.br_datetime import br_frame, br_date, br_datetime
 from datetime import datetime
 from html import escape
 from zoneinfo import ZoneInfo
@@ -92,9 +93,9 @@ def _assessment_form(store, actor, subject, cycle, part, own, review, manager):
     st.caption(f"Status: {record.get('status', 'Not started').title()} · Assigned manager: {manager or 'Not assigned'}")
     if part == 'manager' and own.get('ratings'):
         with st.expander('Submitted self assessment · reference only'):
-            st.dataframe([{'Development area': label, 'Self rating': own['ratings'].get(key, {}).get('rating'),
+            st.dataframe(br_frame([{'Development area': label, 'Self rating': own['ratings'].get(key, {}).get('rating'),
                            'Comment': own['ratings'].get(key, {}).get('comment', ''), 'Evidence': own['ratings'].get(key, {}).get('evidence', '')}
-                          for key, label, _ in AXES], hide_index=True, width='stretch')
+                          for key, label, _ in AXES]), hide_index=True, width='stretch')
 
 
 def _comparison(own, review):
@@ -256,11 +257,11 @@ def render(records):
         record = store.load(subject, cycle, 'achievements')
         entries = record.get('entries', [])
         st.caption('Record completed achievements and supporting evidence. These records do not automatically change your ratings.')
-        if entries: st.dataframe(entries, hide_index=True, width='stretch')
+        if entries: st.dataframe(br_frame(entries), hide_index=True, width='stretch')
         with st.form(f'add_development_achievement_{subject}_{cycle}'):
             title = st.text_input('Achievement title')
             axis = st.selectbox('Development area', [label for _,label,_ in AXES])
-            date = st.date_input('Completion date', value=today)
+            date = st.date_input('Completion date', value=today, format='DD/MM/YYYY')
             evidence = st.text_area('Result and evidence')
             add = st.form_submit_button('Add achievement', disabled=actor != subject)
         if add:

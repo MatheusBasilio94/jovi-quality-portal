@@ -18,7 +18,7 @@ class QualityNotificationTests(unittest.TestCase):
                   for d, n, v in [(9, 100, 0), (10, 99, 90000), (11, 100, 1000), (12, 0, 0), (13, 100, 6000), (14, 100, 0)]]
         events = collect_kpi_signals(points, DIRECTORY, DAY)
         self.assertEqual({e['kind'] for e in events}, {'target', 'trend'})
-        self.assertIn('09 Oct: 0 PPM', next(e for e in events if e['kind']=='trend')['message'])
+        self.assertIn('09/10: 0 PPM', next(e for e in events if e['kind']=='trend')['message'])
         self.assertEqual(events, collect_kpi_signals(points, DIRECTORY, DAY))
         points[-2]['value'] = 5000
         self.assertEqual([e['kind'] for e in collect_kpi_signals(points, DIRECTORY, DAY)], ['trend'])

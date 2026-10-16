@@ -159,7 +159,7 @@ def render(navigate, quality_source=None):
                     st.write(item['message'])
                     try:
                         date = datetime.fromisoformat(item['date']).astimezone(ZoneInfo('America/Manaus'))
-                        st.caption(date.strftime('%d/%m/%Y %H:%M'))
+                        st.caption(date.strftime('%d/%m/%y %H:%M'))
                     except (ValueError,TypeError): pass
                     if st.button('Open',key='notification_open_'+item['id'],width='stretch'):
                         try:

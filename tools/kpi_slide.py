@@ -72,7 +72,7 @@ def build_presentation_timeline(
     for day in sorted(source.loc[source["WeekStart"].eq(latest_week), "_Date"].drop_duplicates()):
         rows.append(
             {
-                "Period": pd.Timestamp(day).strftime("%d-%b"),
+                "Period": pd.Timestamp(day).strftime('%d/%m'),
                 "Kind": "day",
                 "WeekStart": latest_week,
                 "Date": day,

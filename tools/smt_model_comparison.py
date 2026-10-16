@@ -66,7 +66,7 @@ def build_comparison_workbook(
     breakdown = workbook.create_sheet("Defect Breakdown")
     last_summary_col = get_column_letter(len(models) + 2)
     last_breakdown_col = get_column_letter(2 + 2 * len(models))
-    period_text = f"Analysis period: {start_date:%d/%m/%Y} – {end_date:%d/%m/%Y}"
+    period_text = f"Analysis period: {start_date:%d/%m/%y} – {end_date:%d/%m/%y}"
 
     def title_band(sheet, last_col: str, title: str) -> None:
         for row in sheet.iter_rows(min_row=1, max_row=2, min_col=1, max_col=sheet[last_col + "1"].column):

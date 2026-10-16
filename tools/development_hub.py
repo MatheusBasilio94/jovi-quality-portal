@@ -1,4 +1,5 @@
 """Administrator-only quality procedure reference library."""
+from tools.br_datetime import br_frame, br_date, br_datetime
 import json
 from pathlib import Path
 
@@ -38,7 +39,7 @@ def render_catalog():
              **{name: '✓' if name in item['areas'] else '—' for name in ['SMT', 'Assembly', 'IQC', 'Lab']}}
             for item in selected]
     frame = pd.DataFrame(rows, columns=['No.', 'Document title', 'Document', 'SMT', 'Assembly', 'IQC', 'Lab'])
-    st.dataframe(frame, hide_index=True, width='stretch', height=608, row_height=37,
+    st.dataframe(br_frame(frame), hide_index=True, width='stretch', height=608, row_height=37,
         column_config={
             'No.': st.column_config.NumberColumn(width=55, alignment='center', format='%d'),
             'Document title': st.column_config.TextColumn(width=765),

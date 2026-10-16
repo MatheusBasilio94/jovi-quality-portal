@@ -84,7 +84,7 @@ def render(load_data, directory):
     with st.container(key="production_filters"):
         columns = st.columns([.65, 1.2, 1.55, .85, 1])
         with columns[0]: area = st.selectbox("Area", ["SMT", "Assembly"], key="production_area", persist_state="session")
-        with columns[2]: period = st.date_input("Historical period", key="production_period", format="DD/MM/YYYY", on_change=_remember_period, persist_state="session")
+        with columns[2]: period = st.date_input("Historical period", key="production_period", format='DD/MM/YYYY', on_change=_remember_period, persist_state="session")
         with columns[3]: planned = int(st.number_input("Next production quantity", min_value=1, max_value=100000000, value=5000, step=100, key="production_quantity", persist_state="session"))
         with columns[4]: st.selectbox("Quick selection", ["Last 2 months", "Last 30 days", "Last 7 days", "This month", "Custom period"], key="production_quick", on_change=_select_period, persist_state="session")
         if len(period) != 2:
@@ -113,7 +113,7 @@ def render(load_data, directory):
     except ValueError as exc:
         st.warning(str(exc))
         return
-    latest = pd.Timestamp(selected_input["Date"].max()).strftime("%d %b %Y")
+    latest = pd.Timestamp(selected_input["Date"].max()).strftime('%d/%m/%y')
     st.caption(f"Historical input: {total_input:,} PCBs · {baseline['records']['_DefectKey'].nunique():,} unique classified NG PCBs · Latest input: {latest}")
     st.markdown("### Action simulation by defect")
     st.caption("Edit Expected reduction (%) and Planned action. Results update after confirming an edit. 0% = no improvement · 100% = expected elimination.")
@@ -149,7 +149,7 @@ def render(load_data, directory):
                     st.warning("Target cannot be reached with the blocked defects, even eliminating the remaining issues. " + detail)
     result = simulate(baseline, planned, reductions)
     rows = result["issues"].copy()
-    rows["Last occurrence"] = pd.to_datetime(rows["Last occurrence"]).dt.strftime("%d %b %Y").fillna("Unavailable")
+    rows["Last occurrence"] = pd.to_datetime(rows["Last occurrence"]).dt.strftime('%d/%m/%y').fillna("Unavailable")
     rows["Historical PPM"] = rows["Historical PPM"].round().astype(int)
     rows["Planned action"] = [saved.get(issue, {}).get("Planned action", "") for issue in rows["Defect"]]
     rows = rows[["Defect", "NG PCBs", "Historical PPM", "Last occurrence", "Without actions", "Expected reduction (%)", "With actions", "Planned action"]]

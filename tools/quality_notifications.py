@@ -42,7 +42,7 @@ def collect_kpi_signals(points, directory, through):
         worse = value > target if item['direction'] == 'max' else value < target
         if worse:
             notices.append(_notice('target', item['area'], model, 'KPI outside target',
-                f"{context}: {_label(value, item['direction'])} on {latest['day']:%d %b}. "
+                f"{context}: {_label(value, item['direction'])} on {latest['day']:%d/%m}. "
                 f"Target {'≤' if item['direction']=='max' else '≥'} {_label(target, item['direction'])}; "
                 f"input {int(latest['input']):,} PCBs.", latest['day'],
                 [source, latest['day'], value, target]))
@@ -51,7 +51,7 @@ def collect_kpi_signals(points, directory, through):
             changes = last['value'].diff().iloc[1:]
             deteriorating = changes.gt(1e-12).all() if item['direction'] == 'max' else changes.lt(-1e-12).all()
             if deteriorating:
-                sequence = ' → '.join(f"{r.day:%d %b}: {_label(r.value, item['direction'])}" for r in last.itertuples())
+                sequence = ' → '.join(f"{r.day:%d/%m}: {_label(r.value, item['direction'])}" for r in last.itertuples())
                 notices.append(_notice('trend', item['area'], model, 'KPI worsening over 3 production days',
                     f'{context}: {sequence}. Each day has at least {MIN_INPUT} input PCBs.',
                     latest['day'], [source, list(zip(last['day'], last['value'])), target]))
@@ -87,7 +87,7 @@ def collect_recurrences(records, area, through):
                 notices.append(_notice('component' if component_scope else 'recurrence', area, model,
                     'Repeated defect on the same component' if component_scope else 'Recurring defect',
                     f'{area} · {model}: {defect}' + (f' · {component}' if component else '') +
-                    f' — {count} distinct PCBs, {start:%d %b}–{end:%d %b} (last 7 calendar days). '
+                    f' — {count} distinct PCBs, {start:%d/%m}–{end:%d/%m} (last 7 calendar days). '
                     'Review the cause; recurrence alone does not confirm an epidemic.',
                     end, [defect.casefold(), component.casefold(), sorted(set(group['board'])), start, end],
                     'Quality Dashboard'))

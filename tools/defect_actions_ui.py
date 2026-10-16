@@ -1,4 +1,5 @@
 """Kanban, filters and action statistics using native Streamlit controls."""
+from tools.br_datetime import br_frame, br_date, br_datetime
 from datetime import date, datetime, timedelta
 from html import escape
 from pathlib import Path
@@ -12,7 +13,7 @@ from tools.defect_actions import AREAS, PRIORITIES, STATUSES, ActionSyncError, f
 
 
 def _timestamp(value):
-    return datetime.fromisoformat(value).astimezone(ZoneInfo('America/Manaus')).strftime('%d %b %Y %H:%M')
+    return datetime.fromisoformat(value).astimezone(ZoneInfo('America/Manaus')).strftime('%d/%m/%y %H:%M')
 
 
 @st.dialog('Action details', width='large')
@@ -58,9 +59,9 @@ def details(store, record=None, initial_status='Open', legacy_source=None):
             events = store.history(record['id'])
             for event in events:
                 st.markdown(f"**{event['event']} · {_timestamp(event['changed_at'])} · {escape(event['actor'])}**")
-                changes = [{'Field': key.replace('_', ' ').title(), 'Before': str(value['before'] if value['before'] is not None else '—'),
-                            'After': str(value['after'])} for key, value in event['changes'].items()]
-                st.dataframe(pd.DataFrame(changes), hide_index=True, width='stretch')
+                changes = [{'Field': key.replace('_', ' ').title(), 'Before': br_date(value['before']) if key == 'due_date' else str(value['before'] if value['before'] is not None else '—'),
+                            'After': br_date(value['after']) if key == 'due_date' else str(value['after'])} for key, value in event['changes'].items()]
+                st.dataframe(br_frame(pd.DataFrame(changes)), hide_index=True, width='stretch')
 
 
 def _card(store, action, today):
@@ -71,9 +72,9 @@ def _card(store, action, today):
         if action['status'] == 'Closed':
             text, color, bg = '✓ Closed · effectiveness verified', '#07854B', '#E1F6EB'
         elif overdue(action, today):
-            text, color, bg = f'◷ {due:%d %b} · {(today-due).days}d overdue', '#B91C1C', '#FEE7E7'
+            text, color, bg = f'◷ {due:%d/%m} · {(today-due).days}d overdue', '#B91C1C', '#FEE7E7'
         else:
-            text, color, bg = f'◷ Due {due:%d %b %Y}', '#496A8D', '#EFF4FA'
+            text, color, bg = f'◷ Due {due:%d/%m/%y}', '#496A8D', '#EFF4FA'
         st.markdown(f'<div class="action-due" style="color:{color};background:{bg}">{text}</div>', unsafe_allow_html=True)
         if st.button('Open action ↗', key='defect_open_'+action['id'], width='stretch'):
             details(store, store.get(action['id']))
@@ -108,7 +109,7 @@ def _statistics(records, today):
         result = summary(scoped, today)
         owners.append({'Owner': owner, 'Created': result['created'], 'Active': result['active'], 'Overdue': result['overdue'], 'Closed': result['closed']})
     st.markdown('**Actions by owner**')
-    st.dataframe(pd.DataFrame(owners), hide_index=True, width='stretch')
+    st.dataframe(br_frame(pd.DataFrame(owners)), hide_index=True, width='stretch')
     created, closed = {}, {}
     for record in records:
         day = datetime.fromisoformat(record['created_at']).astimezone(ZoneInfo('America/Manaus')).date()
@@ -128,9 +129,9 @@ def _previous(store):
     if not rows:
         st.info('No previous report actions were found.')
         return
-    display = pd.DataFrame([{key: row.get(key) for key in ['area', 'period_key', 'defect_name', 'owner', 'due_date', 'root_cause', 'containment', 'countermeasure', 'imported']} for row in rows])
-    st.dataframe(display.rename(columns={'area': 'Area', 'period_key': 'Report period', 'defect_name': 'Defect', 'owner': 'Owner', 'due_date': 'Original due date',
-        'root_cause': 'Root cause', 'containment': 'Containment', 'countermeasure': 'Countermeasure', 'imported': 'Card created'}), hide_index=True, width='stretch')
+    display = pd.DataFrame([{key: (br_date(row.get(key), dayfirst=False) if key == 'due_date' else row.get(key)) for key in ['area', 'period_key', 'defect_name', 'owner', 'due_date', 'root_cause', 'containment', 'countermeasure', 'imported']} for row in rows])
+    st.dataframe(br_frame(display.rename(columns={'area': 'Area', 'period_key': 'Report period', 'defect_name': 'Defect', 'owner': 'Owner', 'due_date': 'Original due date',
+        'root_cause': 'Root cause', 'containment': 'Containment', 'countermeasure': 'Countermeasure', 'imported': 'Card created'})), hide_index=True, width='stretch')
     available = [r for r in rows if not r['imported']]
     if available and is_admin_session(st.session_state):
         chosen = st.selectbox('Previous action to convert', range(len(available)), format_func=lambda i: f"{available[i]['area']} · {available[i]['period_key']} · {available[i]['defect_name']}", key='defect_legacy_choice')
@@ -215,7 +216,7 @@ def render(store):
         elif not filtered:
             st.info('No actions match the selected filters.')
         if view == 'Table':
-            st.dataframe(_table(filtered), hide_index=True, width='stretch')
+            st.dataframe(br_frame(_table(filtered)), hide_index=True, width='stretch')
             if filtered:
                 chosen = st.selectbox('Action details', [r['id'] for r in filtered], format_func=lambda value: next(r['title'] for r in filtered if r['id']==value), key='defect_table_choice')
                 if st.button('Open selected action', key='defect_table_open'):
@@ -231,7 +232,7 @@ def render(store):
                     if not selected: st.caption('No actions in this status.')
                     if st.button('＋ Add action', key='defect_add_'+str(idx), disabled=not editable, width='stretch'):
                         details(store, initial_status=status)
-        export = _table(filtered).to_csv(index=False).encode('utf-8-sig')
+        export = br_frame(_table(filtered)).to_csv(index=False).encode('utf-8-sig')
         st.download_button('Export filtered actions · CSV', export, file_name='defect-actions.csv', mime='text/csv', key='defect_export', disabled=not filtered, on_click='ignore')
     with statistics: _statistics(filtered, today)
     with previous: _previous(store)

@@ -97,7 +97,7 @@ class KpiSlideTests(unittest.TestCase):
 
         self.assertEqual(
             list(timeline["Period"]),
-            ["WK38", "WK39", "21-Sep", "22-Sep", "23-Sep", "24-Sep", "25-Sep"],
+            ["WK38", "WK39", "21/09", "22/09", "23/09", "24/09", "25/09"],
         )
         self.assertAlmostEqual(trend.loc[0, "Value"], 0.996)
         self.assertAlmostEqual(trend.loc[1, "Value"], 0.994)

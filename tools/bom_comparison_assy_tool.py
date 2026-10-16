@@ -1,3 +1,4 @@
+from tools.br_datetime import br_frame, br_date, br_datetime
 import hashlib
 import re
 import unicodedata
@@ -254,13 +255,13 @@ def generate_excel(analysis: dict) -> bytes:
     output = BytesIO()
     summary = pd.DataFrame({"Item": list(analysis["summary"].keys()), "Qty / Value": list(analysis["summary"].values())})
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        summary.to_excel(writer, index=False, sheet_name="Summary")
-        analysis["issues"].to_excel(writer, index=False, sheet_name="Issues")
+        br_frame(summary).to_excel(writer, index=False, sheet_name="Summary")
+        br_frame(analysis["issues"]).to_excel(writer, index=False, sheet_name="Issues")
         for issue_type, sheet_name in (("Missing in Microsiga", "Missing"), ("Extra in Microsiga", "Extra"), ("Quantity Mismatch", "Qty_Mismatch")):
-            analysis["issues"][analysis["issues"]["Issue Type"].eq(issue_type)].to_excel(writer, index=False, sheet_name=sheet_name)
-        analysis["result"].to_excel(writer, index=False, sheet_name="All_Results")
-        analysis["microsiga"].to_excel(writer, index=False, sheet_name="Microsiga_Normalized")
-        analysis["jovi"].to_excel(writer, index=False, sheet_name="Jovi_Normalized")
+            br_frame(analysis["issues"][analysis["issues"]["Issue Type"].eq(issue_type)]).to_excel(writer, index=False, sheet_name=sheet_name)
+        br_frame(analysis["result"]).to_excel(writer, index=False, sheet_name="All_Results")
+        br_frame(analysis["microsiga"]).to_excel(writer, index=False, sheet_name="Microsiga_Normalized")
+        br_frame(analysis["jovi"]).to_excel(writer, index=False, sheet_name="Jovi_Normalized")
         rules = pd.DataFrame([
             {"Item": "Tool Version", "Definition": TOOL_VERSION},
             {"Item": "Reference BOM", "Definition": "Jovi official BOM"},
@@ -272,12 +273,12 @@ def generate_excel(analysis: dict) -> bytes:
             {"Item": "Jovi Exclusion", "Definition": "Ignore Child material code beginning with HQHQ"},
             {"Item": "Microsiga Exclusion", "Definition": "Ignore exact codes G701 and G999"},
         ])
-        rules.to_excel(writer, index=False, sheet_name="Comparison_Rules")
+        br_frame(rules).to_excel(writer, index=False, sheet_name="Comparison_Rules")
         audit = pd.DataFrame([
             {"Source": "Microsiga", "Rule": "Exact code G701 or G999", "Ignored Rows": analysis["ignored_microsiga"]},
             {"Source": "Jovi", "Rule": "Child material code starts with HQHQ", "Ignored Rows": analysis["ignored_jovi"]},
         ])
-        audit.to_excel(writer, index=False, sheet_name="Filter_Audit")
+        br_frame(audit).to_excel(writer, index=False, sheet_name="Filter_Audit")
         for worksheet in writer.book.worksheets:
             worksheet.freeze_panes = "A2"
             if worksheet.max_row > 1 and worksheet.max_column > 1:
@@ -351,8 +352,8 @@ def render_bom_comparison_assy_tool(color: str) -> None:
         jovi_raw = read_uploaded_file(jovi_file, "jovi")
         with st.expander("Preview uploaded files"):
             preview_left, preview_right = st.columns(2)
-            preview_left.dataframe(microsiga_raw.head(20), use_container_width=True)
-            preview_right.dataframe(jovi_raw.head(20), use_container_width=True)
+            preview_left.dataframe(br_frame(microsiga_raw.head(20)), use_container_width=True)
+            preview_right.dataframe(br_frame(jovi_raw.head(20)), use_container_width=True)
 
         if st.button("Compare Assembly BOM", type="primary", use_container_width=True, key="bom_assy_compare"):
             microsiga_filtered, ignored_microsiga = filter_microsiga_ignored_items(microsiga_raw)
@@ -401,7 +402,7 @@ def render_bom_comparison_assy_tool(color: str) -> None:
                 issue_types = ["All", *sorted(analysis["issues"]["Issue Type"].unique())]
                 selected_issue = st.selectbox("Issue type", issue_types, key="bom_assy_issue_filter", persist_state="session")
                 issue_view = analysis["issues"] if selected_issue == "All" else analysis["issues"][analysis["issues"]["Issue Type"].eq(selected_issue)]
-                st.dataframe(issue_view, use_container_width=True, height=390)
+                st.dataframe(br_frame(issue_view), use_container_width=True, height=390)
         with results_tab:
             statuses = ["All", *sorted(analysis["result"]["Status"].unique())]
             selected_status = st.selectbox("Status", statuses, key="bom_assy_status_filter", persist_state="session")
@@ -411,13 +412,13 @@ def render_bom_comparison_assy_tool(color: str) -> None:
                 term = re.escape(search.strip())
                 mask = result_view.astype(str).apply(lambda column: column.str.contains(term, case=False, na=False, regex=True)).any(axis=1)
                 result_view = result_view[mask]
-            st.dataframe(result_view, use_container_width=True, height=430)
+            st.dataframe(br_frame(result_view), use_container_width=True, height=430)
         with normalized_tab:
             normalized_left, normalized_right = st.columns(2)
             normalized_left.markdown("#### Microsiga normalized")
-            normalized_left.dataframe(analysis["microsiga"], use_container_width=True, height=390)
+            normalized_left.dataframe(br_frame(analysis["microsiga"]), use_container_width=True, height=390)
             normalized_right.markdown("#### Jovi normalized")
-            normalized_right.dataframe(analysis["jovi"], use_container_width=True, height=390)
+            normalized_right.dataframe(br_frame(analysis["jovi"]), use_container_width=True, height=390)
         with report_tab:
             st.caption("Includes summary, issues, missing/extra/quantity views, normalized BOMs and a filter audit.")
             st.download_button(

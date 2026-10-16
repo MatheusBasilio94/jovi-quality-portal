@@ -1,3 +1,4 @@
+from tools.br_datetime import br_frame, br_date, br_datetime
 import base64
 import json
 import math
@@ -55,7 +56,27 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.6.31"
+APP_VERSION = "v0.6.32"
+
+
+@st.cache_resource(show_spinner=False)
+def _display_release_modules(release):
+    """Refresh display adapters once, without rereading source data on interactions."""
+    import sys
+    names = ['tools.br_datetime', 'tools.bom_comparison_assy_tool', 'tools.bom_comparison_tool',
+             'tools.defect_actions_ui', 'tools.development_assessment_ui', 'tools.development_hub',
+             'tools.home_model_performance', 'tools.kpi_slide', 'tools.portal_notifications',
+             'tools.portal_users', 'tools.production_preparation_ui', 'tools.quality_notifications',
+             'tools.recurrence_watchlist', 'tools.smt_input_tool', 'tools.smt_model_comparison',
+             'tools.smt_quality_dashboard']
+    for name in names:
+        if name in sys.modules:
+            importlib.reload(sys.modules[name])
+    from tools.br_datetime import br_frame, br_date, br_datetime
+    return br_frame, br_date, br_datetime
+
+
+br_frame, br_date, br_datetime = _display_release_modules(APP_VERSION)
 DEVELOPER = "Matheus Augusto de Lima Basilio"
 ROLE = "Quality Specialist"
 @st.cache_resource(show_spinner=False)
@@ -120,6 +141,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.6.32", "Standardize displayed dates and exports to DD/MM/YY and timestamps to DD/MM/YY HH:mm; convert timezone-aware records to Manaus, preserve MES source times and use Brazilian calendar controls."),
     ("v0.6.31", "Isolate Defect Action Report interactions so opening cards, filters and Kanban/Table changes do not rerun KPI reports or cloud initialization; export CSV without a rerun."),
     ("v0.6.30", "Rebuild Defect Action Report as a persistent Kanban with owner, area, priority and deadline filters, action statistics, verified closure, change history and conversion of previous report actions."),
     ("v0.6.29", "Add quality notifications for SMT and Assembly, general and per model: daily target misses, three-day deterioration with minimum 100 input PCBs, and seven-day defect/component recurrence."),
@@ -2748,7 +2770,7 @@ def analysis_period_control(
     with st.container(key=f"analysis_period_{navigation_key(key)}", width=260):
         selected_period = st.date_input(
             "Analysis period", min_value=minimum_date, max_value=maximum_date,
-            format="DD/MM/YYYY", key=range_key, persist_state="session",
+            format='DD/MM/YYYY', key=range_key, persist_state="session",
             on_change=_remember_period_range, args=(range_key, remembered_range_key), width=260,
         )
         if show_presets:
@@ -3532,13 +3554,13 @@ def record_dashboard_performance(
     st.session_state[PERFORMANCE_DIAGNOSTICS_KEY] = {
         **st.session_state.get(PERFORMANCE_DIAGNOSTICS_KEY, {}),
         dashboard: {
-            "period": f"{start_date.strftime('%d/%m/%Y')} – {end_date.strftime('%d/%m/%Y')}",
+            "period": f"{start_date.strftime('%d/%m/%y')} – {end_date.strftime('%d/%m/%y')}",
             "source_seconds": source_seconds,
             "analysis_seconds": analysis_seconds,
             "composition_seconds": max(total_seconds - source_seconds - analysis_seconds, 0.0),
             "total_seconds": total_seconds,
             "source_files": int(source_files),
-            "measured_at": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+            "measured_at": datetime.now().strftime('%d/%m/%y %H:%M'),
         },
     }
 
@@ -4188,7 +4210,7 @@ def render_assembly_source_manager() -> None:
                 for record in records
             ]
         )
-        st.dataframe(table, use_container_width=True, hide_index=True, height="content")
+        st.dataframe(br_frame(table), use_container_width=True, hide_index=True, height="content")
 
         record_by_id = {record["id"]: record for record in records}
         selected_id = st.selectbox(
@@ -4196,7 +4218,7 @@ def render_assembly_source_manager() -> None:
             options=list(record_by_id),
             format_func=lambda record_id: (
                 f"{file_types.get(record_by_id[record_id]['data_type'], record_by_id[record_id]['data_type'])} · "
-                f"{record_by_id[record_id]['original_name']} · imported {record_by_id[record_id]['imported_at']}"
+                f"{record_by_id[record_id]['original_name']} · imported {br_datetime(record_by_id[record_id]['imported_at'])}"
             ),
             key="assembly_source_delete_selection",
         )
@@ -4568,7 +4590,7 @@ def fmt_compact(value: float) -> str:
 def styled_table(df, max_rows: int | None = None, table_class: str = "") -> None:
     import pandas as pd
 
-    view = df.head(max_rows).copy() if max_rows else df.copy()
+    view = br_frame(df.head(max_rows).copy() if max_rows else df.copy())
     headers = "".join(f"<th>{escape(str(col))}</th>" for col in view.columns)
     body_rows = []
     for _, row in view.iterrows():
@@ -4691,30 +4713,30 @@ def make_skd_export(analysis: dict) -> BytesIO:
         "SourceFiles",
     ]
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        analysis["monthly"].to_excel(writer, index=False, sheet_name="Monthly Summary")
-        analysis["trend"].to_excel(writer, index=False, sheet_name="Trend")
-        analysis["model_summary"].to_excel(writer, index=False, sheet_name="Model Summary")
-        analysis["defect_pareto"].to_excel(writer, index=False, sheet_name="Defect Pareto")
-        analysis["monthly"][["Month", "TotalRecords", "RejudgeOK", "ConfirmedDefects"]].to_excel(
+        br_frame(analysis["monthly"]).to_excel(writer, index=False, sheet_name="Monthly Summary")
+        br_frame(analysis["trend"]).to_excel(writer, index=False, sheet_name="Trend")
+        br_frame(analysis["model_summary"]).to_excel(writer, index=False, sheet_name="Model Summary")
+        br_frame(analysis["defect_pareto"]).to_excel(writer, index=False, sheet_name="Defect Pareto")
+        br_frame(analysis["monthly"][["Month", "TotalRecords", "RejudgeOK", "ConfirmedDefects"]]).to_excel(
             writer, index=False, sheet_name="Rejudge Summary"
         )
-        analysis["monthly"][["Month", "Produced", "ManDoDefects", "ManDoPPM"]].to_excel(
+        br_frame(analysis["monthly"][["Month", "Produced", "ManDoDefects", "ManDoPPM"]]).to_excel(
             writer, index=False, sheet_name="ManDo Monthly"
         )
-        analysis["model_summary"][["Model", "Produced", "ManDoDefects", "ManDoPPM", "ImpactScore"]].to_excel(
+        br_frame(analysis["model_summary"][["Model", "Produced", "ManDoDefects", "ManDoPPM", "ImpactScore"]]).to_excel(
             writer, index=False, sheet_name="ManDo Model"
         )
-        analysis["mando_pareto"].to_excel(writer, index=False, sheet_name="ManDo Defects")
-        analysis["raw"][[col for col in raw_cols if col in analysis["raw"].columns]].to_excel(
+        br_frame(analysis["mando_pareto"]).to_excel(writer, index=False, sheet_name="ManDo Defects")
+        br_frame(analysis["raw"][[col for col in raw_cols if col in analysis["raw"].columns]]).to_excel(
             writer, index=False, sheet_name="Raw Filtered Data"
         )
-        pd.DataFrame([analysis.get("defect_merge_stats", {})]).to_excel(
+        br_frame(pd.DataFrame([analysis.get("defect_merge_stats", {})])).to_excel(
             writer, index=False, sheet_name="Consolidation"
         )
-        pd.DataFrame([analysis.get("production_input_stats", {})]).to_excel(
+        br_frame(pd.DataFrame([analysis.get("production_input_stats", {})])).to_excel(
             writer, index=False, sheet_name="Input Consolidation"
         )
-        analysis.get("production_input_audit", pd.DataFrame()).to_excel(
+        br_frame(analysis.get("production_input_audit", pd.DataFrame())).to_excel(
             writer, index=False, sheet_name="Input Period Audit"
         )
     output.seek(0)
@@ -4726,7 +4748,7 @@ def make_table_export(df, sheet_name: str = "Displayed Data") -> BytesIO:
 
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name=sheet_name[:31])
+        br_frame(df).to_excel(writer, index=False, sheet_name=sheet_name[:31])
     output.seek(0)
     return output
 
@@ -5454,7 +5476,7 @@ def assembly_period_selector(rules: dict, color: str) -> dict:
         default_end=end_default,
     )
     st.caption(
-        f"Active filter: {start_date.strftime('%d/%m/%Y')} to {end_date.strftime('%d/%m/%Y')}. "
+        f"Active filter: {start_date.strftime('%d/%m/%y')} to {end_date.strftime('%d/%m/%y')}. "
         "The period is read from file data columns, not from file names."
     )
 
@@ -5606,8 +5628,8 @@ def assembly_quality_dashboard(color: str) -> None:
     model_summary = analysis["model_summary"].copy()
     merge_stats = analysis.get("defect_merge_stats", {})
     production_input_stats = analysis.get("production_input_stats", {})
-    period_start = coerce_timestamp(rules.get("date_start", "2026-01-01"), "2026-01-01").strftime("%d/%m/%Y")
-    period_end = coerce_timestamp(rules.get("date_end", "2026-12-31"), "2026-12-31").strftime("%d/%m/%Y")
+    period_start = coerce_timestamp(rules.get("date_start", "2026-01-01"), "2026-01-01").strftime('%d/%m/%y')
+    period_end = coerce_timestamp(rules.get("date_end", "2026-12-31"), "2026-12-31").strftime('%d/%m/%y')
     period_note = f"{period_start} to {period_end}"
 
     if trend_settings.get("summarized_input_rows", 0):
@@ -5872,7 +5894,7 @@ def assembly_quality_dashboard(color: str) -> None:
             st.session_state.pop("assembly_detail_csv", None)
             st.session_state["assembly_detail_signature"] = detail_signature
         if st.button("Prepare filtered detail CSV", use_container_width=True):
-            st.session_state["assembly_detail_csv"] = visible_view.to_csv(index=False).encode("utf-8-sig")
+            st.session_state["assembly_detail_csv"] = br_frame(visible_view).to_csv(index=False).encode("utf-8-sig")
             st.success("Filtered detail CSV is ready to download.")
         if "assembly_detail_csv" in st.session_state:
             st.download_button(
@@ -5959,14 +5981,14 @@ def smart_report_period_selector(reference_date: date) -> tuple[str, date, date,
         key="smart_report_reference_date",
         persist_state="session",
         label_visibility="collapsed",
-    )
+    format='DD/MM/YYYY', )
     if report_type == "Daily":
         start = end = selected
-        label = selected.strftime("%m/%d/%Y")
+        label = selected.strftime('%d/%m/%y')
     elif report_type == "Weekly":
         start = selected - timedelta(days=selected.weekday())
         end = start + timedelta(days=6)
-        label = f"{start.strftime('%m/%d/%Y')} – {end.strftime('%m/%d/%Y')}"
+        label = f"{start.strftime('%d/%m/%y')} – {end.strftime('%d/%m/%y')}"
     else:
         start = selected.replace(day=1)
         following_month = (start.replace(day=28) + timedelta(days=4)).replace(day=1)
@@ -6610,7 +6632,7 @@ def weekly_kpi_slide_panels(
         for day in daily_days:
             rows.append(
                 {
-                    "Period": day.strftime("%d-%b"),
+                    "Period": day.strftime('%d/%m'),
                     "Value": daily.get(source, {}).get(day),
                     "IsException": bool(daily_exceptions.get(source, {}).get(day)),
                 }
@@ -6770,7 +6792,7 @@ def kpi_review_glue_comparison(directory, original_columns, excluded_columns, or
         panels = monthly_kpi_slide_panels(comparison_directory, columns)
         for item, panel in zip(comparison_directory, panels):
             source = item["source"]
-            rows = [{"Period": day.strftime("%d-%b"), "Value": daily[source].get(day), "IsException": bool(exceptions[source].get(day))}
+            rows = [{"Period": day.strftime('%d/%m'), "Value": daily[source].get(day), "IsException": bool(exceptions[source].get(day))}
                     for day in days if day in original_daily.get("smt_function", {})]
             if rows:
                 panel["frame"] = pd.concat([panel["frame"], pd.DataFrame(rows)], ignore_index=True)
@@ -6789,16 +6811,16 @@ def weekly_kpi_review_page() -> None:
     with st.container(key="weekly_report_filters"):
         controls, visibility_column, action_column = st.columns([1.1, 1.55, 0.75])
     with controls:
-        week_end = st.date_input("Week ending", value=default_week_end, key="weekly_kpi_week_end", persist_state="session", width=180, help="Select the Sunday that closes the report week.")
+        week_end = st.date_input("Week ending", value=default_week_end, key="weekly_kpi_week_end", persist_state="session", width=180, help="Select the Sunday that closes the report week.", format='DD/MM/YYYY')
     start_date = week_end - timedelta(days=6)
     days = [start_date + timedelta(days=offset) for offset in range(7)]
-    week_label = f"WK{week_end.isocalendar().week:02d} · {start_date.strftime('%d/%m')} – {week_end.strftime('%d/%m/%Y')}"
+    week_label = f"WK{week_end.isocalendar().week:02d} · {start_date.strftime('%d/%m')} – {week_end.strftime('%d/%m/%y')}"
     with visibility_column:
         hidden_days = st.multiselect(
             "Hide daily columns (print only)",
             options=days,
             default=[],
-            format_func=lambda value: value.strftime("%d-%b"),
+            format_func=lambda value: value.strftime('%d/%m'),
             key=f"weekly_kpi_hidden_days_{week_end.isoformat()}",
             persist_state="session",
             help="The selected columns are removed only from the displayed and copied table. Weekly KPI calculations remain unchanged.",
@@ -6915,7 +6937,7 @@ def weekly_kpi_review_page() -> None:
     if hidden_days:
         st.caption(
             "Hidden from this table and its copied image: "
-            + ", ".join(day.strftime("%d-%b") for day in hidden_days)
+            + ", ".join(day.strftime('%d/%m') for day in hidden_days)
             + ". WK calculations still use the full seven-day week."
         )
     for area, error in errors.items():
@@ -6970,7 +6992,7 @@ def monthly_kpi_review_page() -> None:
     exclude_glue = glue_mode == "Exclude glue defects"
     active_glue_rules = glue_rules if exclude_glue else None
     directory = kpi_review_glue_directory(directory, exclude_glue)
-    st.markdown(f"<div class='weekly-review-period'>{escape(area)} · {escape(period_label)} · {start_date.strftime('%d/%m')} – {end_date.strftime('%d/%m/%Y')}</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='weekly-review-period'>{escape(area)} · {escape(period_label)} · {start_date.strftime('%d/%m')} – {end_date.strftime('%d/%m/%y')}</div>", unsafe_allow_html=True)
     # KPI Track is authoritative for the monthly result. A defect file may have
     # no row on the final production day simply because that day had no defect;
     # its last defect timestamp is not a reliable file-coverage boundary.
@@ -7175,7 +7197,7 @@ def repair_info_page() -> None:
         dated = dated[dated["Repairer"].eq(repairer)].copy()
 
     st.caption(
-        f"Stored repair dates: {first_day:%d/%m/%Y} – {last_day:%d/%m/%Y} · "
+        f"Stored repair dates: {first_day:%d/%m/%y} – {last_day:%d/%m/%y} · "
         f"{audit['files']} source file(s) · {audit['duplicates']:,} repeated snapshot rows reconciled · "
         f"{audit['undated']:,} records without RepairDate excluded."
     )
@@ -7224,7 +7246,7 @@ def repair_info_page() -> None:
                     text=[f"{value:,}" if value else "" for value in daily[label]],
                     textposition="outside", textfont=dict(size=11, color="#17345C"),
                     cliponaxis=False,
-                    hovertemplate="%{x|%d/%m/%Y}<br>%{y:,} unique PCBs<extra>" + label + "</extra>",
+                    hovertemplate="%{x|%d/%m/%y}<br>%{y:,} unique PCBs<extra>" + label + "</extra>",
                 )
         tick_stride = max(1, (len(daily) + 8) // 9)
         tick_days = daily["Date"].iloc[::tick_stride].tolist()
@@ -7235,7 +7257,7 @@ def repair_info_page() -> None:
                              paper_bgcolor="#FFFFFF", plot_bgcolor="#FFFFFF", legend_orientation="h",
                              legend_y=1.14, font_color="#17345C", dragmode="zoom")
         volume.update_xaxes(
-            tickmode="array", tickvals=tick_days, ticktext=[day.strftime("%d %b") for day in tick_days],
+            tickmode="array", tickvals=tick_days, ticktext=[day.strftime('%d/%m') for day in tick_days],
             range=[daily["Date"].iloc[0] - pd.Timedelta(days=1),
                    daily["Date"].iloc[-1] + pd.Timedelta(days=1)],
             showgrid=False,
@@ -7263,13 +7285,13 @@ def repair_info_page() -> None:
 
     st.markdown("#### Daily detail")
     daily_view = daily.copy().sort_values("Date", ascending=False)
-    daily_view["Date"] = daily_view["Date"].dt.strftime("%d/%m/%Y")
+    daily_view["Date"] = daily_view["Date"].dt.strftime('%d/%m/%y')
     for name in ("Avg elapsed (h)", "Median (h)", "P90 (h)"):
         daily_view[name] = daily_view[name].map(_repair_info_hours)
     daily_view["Coverage (%)"] = daily_view["Coverage (%)"].map(lambda value: f"{value:.0f}%" if pd.notna(value) else "N/A")
-    st.dataframe(daily_view, hide_index=True, use_container_width=True, height=250)
+    st.dataframe(br_frame(daily_view), hide_index=True, use_container_width=True, height=250)
     st.download_button(
-        "Download daily detail", daily.to_csv(index=False).encode("utf-8-sig"),
+        "Download daily detail", br_frame(daily).to_csv(index=False).encode("utf-8-sig"),
         file_name=f"repair_daily_{start_date:%Y-%m-%d}_{end_date:%Y-%m-%d}.csv", mime="text/csv",
         key="repair_info_daily_download",
     )
@@ -7284,7 +7306,7 @@ def repair_info_page() -> None:
     with day_column:
         selected_day = st.selectbox(
             "Repair day", day_options, key="repair_info_detail_day", persist_state="session",
-            format_func=lambda value: "All selected days" if value is None else value.strftime("%d/%m/%Y"),
+            format_func=lambda value: "All selected days" if value is None else value.strftime('%d/%m/%y'),
         )
     with search_column:
         search = st.text_input("Search PCB SN / Barcode", key="repair_info_search", persist_state="session")
@@ -7301,12 +7323,12 @@ def repair_info_page() -> None:
     st.caption(f"{len(details):,} repair event(s) · {details[['Area', 'PCB SN']].drop_duplicates().shape[0]:,} unique Area + PCB SN")
     detail_view = details[repair_info.DISPLAY_COLUMNS].copy()
     for name in ("Defect entry", "Repair date"):
-        detail_view[name] = detail_view[name].dt.strftime("%d/%m/%Y %H:%M").fillna("—")
+        detail_view[name] = detail_view[name].dt.strftime('%d/%m/%y %H:%M').fillna("—")
     detail_view["Elapsed (h)"] = detail_view["Elapsed (h)"].map(_repair_info_hours)
     detail_view["Repair #"] = detail_view["Repair #"].map(lambda value: str(int(value)) if pd.notna(value) else "—")
     visible = ["PCB SN", "Device Barcode", "Area", "Model", "Defect entry", "Repair date", "Elapsed (h)", "Repairer", "Repair #"]
     selection = st.dataframe(
-        detail_view[visible], hide_index=True, use_container_width=True, height=300,
+        br_frame(detail_view[visible]), hide_index=True, use_container_width=True, height=300,
         on_select="rerun", selection_mode="single-row", key="repair_info_records",
     )
     selected_rows = selection.selection.rows
@@ -7324,7 +7346,7 @@ def repair_info_page() -> None:
                 st.write(f"**DutyType:** {record['DutyType'] or '—'}")
                 st.write(f"**Repairer:** {record['Repairer'] or '—'}")
     st.download_button(
-        "Download matching repair records", detail_view.to_csv(index=False).encode("utf-8-sig"),
+        "Download matching repair records", br_frame(detail_view).to_csv(index=False).encode("utf-8-sig"),
         file_name=f"repair_pcb_details_{start_date:%Y-%m-%d}_{end_date:%Y-%m-%d}.csv",
         mime="text/csv", key="repair_info_records_download",
     )
@@ -7426,7 +7448,7 @@ def _home_detail_table(frames: dict[str, object], models: list[str], grain: str,
     export = combined.copy()
     export["PeriodDate"] = pd.to_datetime(export["PeriodDate"]).dt.strftime("%Y-%m-%d")
     with export_col:
-        st.download_button("↓  Export detail", export.to_csv(index=False).encode("utf-8-sig"),
+        st.download_button("↓  Export detail", br_frame(export).to_csv(index=False).encode("utf-8-sig"),
                            file_name="jovi-home-kpi-detail.csv", mime="text/csv", key="home_detail_export", width="stretch")
     parts = ["<div class='home-detail-scroll'><table class='home-detail-table'><thead><tr>",
              "<th class='sticky-model'>Model</th><th class='sticky-kpi'>Area / KPI</th>"]
@@ -7534,7 +7556,7 @@ def home_model_performance(smt_context: dict, assembly_context: dict, smt_target
         else:
             badge = "Awaiting KPI data"
             badge_bg, badge_color, row_color = "#EEF2F7", "#61758F", "#8A9AB0"
-        latest_label = pd.Timestamp(item["LatestInput"]).strftime("%d/%m/%Y")
+        latest_label = pd.Timestamp(item["LatestInput"]).strftime('%d/%m/%y')
         html_rows.append(
             f'<div class="home-model-row" style="--row-color:{row_color};'
             f'--badge-bg:{badge_bg};--badge-color:{badge_color}">'
@@ -7581,7 +7603,7 @@ def home_period_summary(analyses: dict, models: list[str], targets: dict, start_
     with st.container(key="home_period_summary"):
         st.markdown(
             '<div class="summary-table-title">Selected KPI details'
-            f'<small>{start_date.strftime("%d %b")} – {end_date.strftime("%d %b %Y")} · full analysis period</small></div>'
+            f'<small>{start_date.strftime('%d/%m')} – {end_date.strftime('%d/%m/%y')} · full analysis period</small></div>'
             '<div class="summary-table-scroll"><table class="summary-table"><thead><tr>'
             '<th>Model</th><th>SMT input</th><th>SMT PPM</th><th>Assembly input</th><th>Mando PPM</th><th>Status</th>'
             '</tr></thead><tbody>' + ''.join(rows) + '</tbody></table></div>',
@@ -7850,11 +7872,11 @@ def smt_kpi_line_chart(
         for input_column in input_columns:
             plot_frame = plot_frame.loc[pd.to_numeric(plot_frame[input_column], errors="coerce").gt(0)]
     if daily_axis and date_column is not None:
-        x_values = plot_frame[date_column].dt.strftime("%d/%m/%Y")
+        x_values = plot_frame[date_column].dt.strftime('%d/%m/%y')
         hover_x = "%{x}"
     elif date_column is not None and period_start is not None:
         x_values = pd.to_datetime(plot_frame[date_column])
-        hover_x = "%{x|%d/%m/%Y}"
+        hover_x = "%{x|%d/%m/%y}"
     else:
         x_values = plot_frame[x_column]
         hover_x = "%{x}"
@@ -7952,7 +7974,7 @@ def smt_kpi_line_chart(
         chart.add_trace(
             go.Scatter(
                 x=(
-                    exception_rows[date_column].dt.strftime("%d/%m/%Y")
+                    exception_rows[date_column].dt.strftime('%d/%m/%y')
                     if daily_axis and date_column is not None
                     else pd.to_datetime(exception_rows[date_column])
                     if date_column is not None and period_start is not None
@@ -8266,13 +8288,13 @@ def smt_glue_scenario_details(analysis, mode, scenario):
         if details.empty:
             st.info("No classified glue defects match this definition in the selected period.")
         else:
-            st.dataframe(details, hide_index=True, width="stretch", height=260)
+            st.dataframe(br_frame(details), hide_index=True, width="stretch", height=260)
         rule_text = " AND ".join(f"{field}: {', '.join(values)}" for field, values in rules.items() if values)
         export = scenario["trend"][["Period", "Input", "WithGlueNG", "WithoutGlueNG", "GlueOnlyNG", "GlueMixedNG", "WithGluePPM", "WithoutGluePPM", "WithGlueStatus", "WithoutGlueStatus"]].copy()
         export["Glue definition"] = rule_text
-        st.download_button("Download scenario comparison", export.to_csv(index=False).encode("utf-8-sig"), file_name="smt_process_glue_simulation.csv", mime="text/csv", key="smt_glue_scenario_csv")
+        st.download_button("Download scenario comparison", br_frame(export).to_csv(index=False).encode("utf-8-sig"), file_name="smt_process_glue_simulation.csv", mime="text/csv", key="smt_glue_scenario_csv")
         details["Glue definition"] = rule_text
-        st.download_button("Download PCB / SN audit", details.to_csv(index=False).encode("utf-8-sig"), file_name="smt_glue_pcb_audit.csv", mime="text/csv", key="smt_glue_audit_csv")
+        st.download_button("Download PCB / SN audit", br_frame(details).to_csv(index=False).encode("utf-8-sig"), file_name="smt_glue_pcb_audit.csv", mime="text/csv", key="smt_glue_audit_csv")
 
 def smt_kpi_track_page(color: str) -> None:
     import pandas as pd
@@ -8344,7 +8366,7 @@ def smt_kpi_track_page(color: str) -> None:
     duty_target = configured_targets["smt_assembly_duty"]["target"]
     oqc_target = configured_targets["smt_oqc"]["target"]
 
-    period_note = f"{start_date.strftime('%d/%m/%Y')} to {end_date.strftime('%d/%m/%Y')}"
+    period_note = f"{start_date.strftime('%d/%m/%y')} to {end_date.strftime('%d/%m/%y')}"
     with st.container(key="kpi_cards"):
         cards = st.columns(4)
     with cards[0]:
@@ -8675,7 +8697,7 @@ def assembly_kpi_track_page(color: str) -> None:
     appearance_target = configured_targets["assembly_appearance"]["target"]
     mando_target = configured_targets["assembly_mando"]["target"]
     oqc_fqc_target = configured_targets["assembly_oqc_fqc"]["target"]
-    period_note = f"{start_date.strftime('%d/%m/%Y')} to {end_date.strftime('%d/%m/%Y')}"
+    period_note = f"{start_date.strftime('%d/%m/%y')} to {end_date.strftime('%d/%m/%y')}"
 
     with st.container(key="kpi_cards"):
         cards = st.columns(4)
@@ -8849,7 +8871,7 @@ def assembly_kpi_track_page(color: str) -> None:
 
     with st.expander("Detalhamento dos dados e qualidade", expanded=False):
         daily_view = metrics["daily"].copy()
-        daily_view["Date"] = pd.to_datetime(daily_view["Date"]).dt.strftime("%d/%m/%Y")
+        daily_view["Date"] = pd.to_datetime(daily_view["Date"]).dt.strftime('%d/%m/%y')
         daily_view["Function Pass Rate"] = (daily_view["FunctionPassRate"] * 100).round(2)
         daily_view["Appearance Pass Rate"] = (daily_view["AppearancePassRate"] * 100).round(2)
         daily_view["Function Mando PPM"] = daily_view["FunctionMandoPPM"].round(2)
@@ -9501,7 +9523,7 @@ def render_breakdown_chart_builder(confirmed, area: str) -> None:
         st.caption("Uses the same unique Defect PCB counts as this card, including filters from other cards. Hidden categories affect only this chart. Use ⧉ to copy a high-resolution image or PPT to export SVG.")
         show_chart(build_breakdown_chart(visible, title, angle=angle, show_values=show_values), f"{prefix}_defect_breakdown")
         st.download_button(
-            "Download chart data", visible.rename("Defect PCB").rename_axis(card).to_csv().encode("utf-8-sig"),
+            "Download chart data", br_frame(visible.rename("Defect PCB").rename_axis(card)).to_csv().encode("utf-8-sig"),
             file_name=f"{prefix}_defect_breakdown.csv", mime="text/csv", key=f"{prefix}_breakdown_chart_data",
         )
 
@@ -10077,10 +10099,10 @@ def smt_quality_dashboard_v2(color: str) -> None:
         if details.empty:
             st.info("No confirmed defects match this combination. Clear a selection to broaden the view.")
         else:
-            st.dataframe(details, hide_index=True, width="stretch", height=310)
+            st.dataframe(br_frame(details), hide_index=True, width="stretch", height=310)
             st.download_button(
                 "Download matching defect records",
-                data=details.to_csv(index=False).encode("utf-8-sig"),
+                data=br_frame(details).to_csv(index=False).encode("utf-8-sig"),
                 file_name="smt_breakdown_selection.csv", mime="text/csv",
                 width="stretch", key="smt_breakdown_download",
             )
@@ -10904,7 +10926,7 @@ def _smt_oqc_data_management() -> None:
     with st.form("smt_oqc_input_form", clear_on_submit=True):
         form_columns = st.columns(5)
         with form_columns[0]:
-            oqc_date = st.date_input("Inspection date", value=date.today(), key="smt_oqc_inspection_date")
+            oqc_date = st.date_input("Inspection date", value=date.today(), key="smt_oqc_inspection_date", format='DD/MM/YYYY')
         with form_columns[1]:
             oqc_model = st.text_input("Model (optional)", key="smt_oqc_model")
         with form_columns[2]:
@@ -10931,8 +10953,8 @@ def _smt_oqc_data_management() -> None:
         st.info("No SMT OQC inspection records have been entered yet.")
         return
     oqc_view = oqc_records.copy()
-    oqc_view["InspectionDate"] = oqc_view["InspectionDate"].dt.strftime("%d/%m/%Y")
-    oqc_view["CreatedAt"] = pd.to_datetime(oqc_view["CreatedAt"], errors="coerce").dt.strftime("%d/%m/%y %H:%M")
+    oqc_view["InspectionDate"] = oqc_view["InspectionDate"].dt.strftime('%d/%m/%y')
+    oqc_view["CreatedAt"] = oqc_view["CreatedAt"].map(br_datetime)
     oqc_view["PassRatePct"] = (pd.to_numeric(oqc_view["PassRate"], errors="coerce").astype("float64") * 100).round(2)
     oqc_view["Sampling"] = oqc_view["Inspected"].map(lambda value: "No sampling" if int(value) == 0 else "Sampled")
     styled_table(
@@ -10941,7 +10963,7 @@ def _smt_oqc_data_management() -> None:
     )
     st.download_button(
         "Download OQC history CSV",
-        data=oqc_view.to_csv(index=False).encode("utf-8-sig"),
+        data=br_frame(oqc_view).to_csv(index=False).encode("utf-8-sig"),
         file_name="smt_oqc_inspection_history.csv",
         mime="text/csv",
         use_container_width=True,
@@ -10971,7 +10993,7 @@ def _assembly_oqc_fqc_data_management() -> None:
     with st.form("assembly_oqc_fqc_input_form", clear_on_submit=True):
         header_columns = st.columns(2)
         with header_columns[0]:
-            inspection_date = st.date_input("Inspection date", value=date.today(), key="assembly_oqc_fqc_inspection_date")
+            inspection_date = st.date_input("Inspection date", value=date.today(), key="assembly_oqc_fqc_inspection_date", format='DD/MM/YYYY')
         with header_columns[1]:
             inspection_model = st.text_input("Model (optional)", key="assembly_oqc_fqc_model")
         oqc_column, fqc_column = st.columns(2)
@@ -11008,8 +11030,8 @@ def _assembly_oqc_fqc_data_management() -> None:
         st.info("No Assembly OQC or FQC inspection records have been entered yet.")
         return
     view = records.copy()
-    view["InspectionDate"] = view["InspectionDate"].dt.strftime("%d/%m/%Y")
-    view["CreatedAt"] = pd.to_datetime(view["CreatedAt"], errors="coerce").dt.strftime("%d/%m/%y %H:%M")
+    view["InspectionDate"] = view["InspectionDate"].dt.strftime('%d/%m/%y')
+    view["CreatedAt"] = view["CreatedAt"].map(br_datetime)
     for source, output in [("OQCPassRate", "OQCPassRatePct"), ("FQCPassRate", "FQCPassRatePct"), ("CombinedPassRate", "OQCxFQCPassRatePct")]:
         view[output] = (pd.to_numeric(view[source], errors="coerce").astype("float64") * 100).round(2)
     view["OQCSampling"] = view["OQCInspected"].map(lambda value: "No sampling" if int(value) == 0 else "Sampled")
@@ -11018,7 +11040,7 @@ def _assembly_oqc_fqc_data_management() -> None:
     styled_table(view[visible], table_class="inspection-history-table assembly-inspection-history-table")
     st.download_button(
         "Download Assembly OQC and FQC history CSV",
-        data=view.to_csv(index=False).encode("utf-8-sig"),
+        data=br_frame(view).to_csv(index=False).encode("utf-8-sig"),
         file_name="assembly_oqc_fqc_inspection_history.csv",
         mime="text/csv",
         use_container_width=True,
@@ -11211,10 +11233,10 @@ def assembly_quality_dashboard_v2(color: str) -> None:
         if details.empty:
             st.info("No confirmed defects match this combination. Clear a selection to broaden the view.")
         else:
-            st.dataframe(details, hide_index=True, width="stretch", height=310)
+            st.dataframe(br_frame(details), hide_index=True, width="stretch", height=310)
             st.download_button(
                 "Download matching defect records",
-                data=details.to_csv(index=False).encode("utf-8-sig"),
+                data=br_frame(details).to_csv(index=False).encode("utf-8-sig"),
                 file_name="assembly_breakdown_selection.csv", mime="text/csv",
                 width="stretch", key="assembly_breakdown_download",
             )
@@ -11492,7 +11514,7 @@ def render_cloud_storage_panel() -> None:
                 except RuntimeError as exc:
                     st.error(str(exc))
                 else:
-                    st.session_state["supabase_full_refresh_at"] = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                    st.session_state["supabase_full_refresh_at"] = datetime.now().strftime('%d/%m/%y %H:%M')
                     st.success(f"Full cloud refresh complete: {result['files']:,} files refreshed ({result['bytes'] / 1024 / 1024:.2f} MB).")
             return
 

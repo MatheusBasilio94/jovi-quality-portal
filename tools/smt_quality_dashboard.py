@@ -1,3 +1,4 @@
+from tools.br_datetime import br_frame, br_date, br_datetime
 import hashlib
 import json
 import re
@@ -476,7 +477,7 @@ def smt_store_status() -> dict:
     sources = stored_smt_sources_v2()
     files = [*sources["input"], *sources["defects"], *sources["repair"]]
     latest = max((path.stat().st_mtime for path in files), default=None)
-    latest_text = pd.Timestamp(latest, unit="s").strftime("%d/%m/%Y %H:%M") if latest else "-"
+    latest_text = br_datetime(pd.Timestamp(latest, unit="s", tz="UTC")) if latest else "-"
     return {
         "inputs": len(sources["input"]),
         "defects": len(sources["defects"]),
@@ -531,7 +532,7 @@ def smt_source_records() -> list[dict]:
                     "stored_name": path.name,
                     "original_name": re.sub(r"^[0-9a-f]{12}_", "", path.name),
                     "file_size": int(stat.st_size),
-                    "modified_at": pd.Timestamp(stat.st_mtime, unit="s").strftime("%d/%m/%Y %H:%M"),
+                    "modified_at": br_datetime(pd.Timestamp(stat.st_mtime, unit="s", tz="UTC")),
                     "modified_sort": float(stat.st_mtime),
                 }
             )
@@ -589,7 +590,7 @@ def render_smt_source_manager() -> None:
                 for record in records
             ]
         )
-        st.dataframe(table, use_container_width=True, hide_index=True, height="content")
+        st.dataframe(br_frame(table), use_container_width=True, hide_index=True, height="content")
 
         record_by_key = {record["key"]: record for record in records}
         selected_key = st.selectbox(
@@ -748,7 +749,7 @@ def _collapse_date_gaps(start: pd.Timestamp, end_exclusive: pd.Timestamp, interv
         previous = value
     groups.append((group_start, previous))
     return [
-        start_value.strftime("%d/%m/%Y") if start_value == end_value else f"{start_value.strftime('%d/%m/%Y')}–{end_value.strftime('%d/%m/%Y')}"
+        start_value.strftime('%d/%m/%y') if start_value == end_value else f"{start_value.strftime('%d/%m/%y')}–{end_value.strftime('%d/%m/%y')}"
         for start_value, end_value in groups
     ]
 
@@ -1105,7 +1106,7 @@ def show_table(frame: pd.DataFrame) -> None:
     for column in ["ConfirmedPPM", "FunctionalPPM", "AppearancePPM"]:
         if column in view.columns:
             view[column] = view[column].round(0)
-    st.dataframe(view, use_container_width=True, hide_index=True, height="content")
+    st.dataframe(br_frame(view), use_container_width=True, hide_index=True, height="content")
 
 
 def trend_chart(frame: pd.DataFrame, color: str):
@@ -1310,7 +1311,7 @@ def _upload_section(color: str) -> None:
     if "smt_last_import_results" in st.session_state:
         imported = st.session_state["smt_last_import_results"]
         st.dataframe(
-            pd.DataFrame(imported),
+            br_frame(pd.DataFrame(imported)),
             use_container_width=True,
             hide_index=True,
             height="content",
@@ -1347,9 +1348,9 @@ def render_smt_quality_dashboard(color: str) -> None:
 
     date_columns = st.columns(2)
     with date_columns[0]:
-        start_date = st.date_input("Start date", value=minimum_date.date(), min_value=minimum_date.date(), max_value=maximum_date.date(), key="smt_quality_start", persist_state="session")
+        start_date = st.date_input("Start date", value=minimum_date.date(), min_value=minimum_date.date(), max_value=maximum_date.date(), key="smt_quality_start", persist_state="session", format='DD/MM/YYYY')
     with date_columns[1]:
-        end_date = st.date_input("End date", value=maximum_date.date(), min_value=minimum_date.date(), max_value=maximum_date.date(), key="smt_quality_end", persist_state="session")
+        end_date = st.date_input("End date", value=maximum_date.date(), min_value=minimum_date.date(), max_value=maximum_date.date(), key="smt_quality_end", persist_state="session", format='DD/MM/YYYY')
     if end_date < start_date:
         st.error("End date must be on or after start date.")
         return
@@ -1368,7 +1369,7 @@ def render_smt_quality_dashboard(color: str) -> None:
     analysis = {**analysis, "trend": refresh_chart_period_labels(analysis["trend"])}
     totals = analysis["totals"]
     quality = analysis["quality"]
-    period_note = f"{start_date.strftime('%d/%m/%Y')} to {end_date.strftime('%d/%m/%Y')}"
+    period_note = f"{start_date.strftime('%d/%m/%y')} to {end_date.strftime('%d/%m/%y')}"
     st.caption(f"Source: {len(input_paths)} stored input files · {len(defect_paths)} consolidated defect file(s) · dashboard tool {TOOL_VERSION}")
     st.caption("MES-aligned rule: confirmed defects exclude Re-Judge OK, Re-Download, Re-Calibration, Retest OK, Last NG Opcode = AOI-Checking, repeat repairs (RepairTimes > 1), and DutyType = SMT Mando.")
     if quality["CoverageGaps"]:
@@ -1600,8 +1601,8 @@ def render_smt_quality_dashboard(color: str) -> None:
             page_number = 1
         page_start = (page_number - 1) * page_size
         page_view = visible.iloc[page_start : page_start + page_size]
-        st.dataframe(page_view, use_container_width=True, hide_index=True, height="content")
-        st.download_button("Download filtered SMT detail CSV", data=visible.to_csv(index=False).encode("utf-8-sig"), file_name="smt_quality_filtered_detail.csv", mime="text/csv", use_container_width=True)
+        st.dataframe(br_frame(page_view), use_container_width=True, hide_index=True, height="content")
+        st.download_button("Download filtered SMT detail CSV", data=br_frame(visible).to_csv(index=False).encode("utf-8-sig"), file_name="smt_quality_filtered_detail.csv", mime="text/csv", use_container_width=True)
 
     if active_section == "About":
         st.markdown(

@@ -1,4 +1,5 @@
 """Private personal account registry, enrollment and credential lifecycle."""
+from tools.br_datetime import br_frame, br_date, br_datetime
 from datetime import datetime, timezone
 import hashlib
 import hmac
@@ -187,7 +188,7 @@ def administration(accounts):
               'Access level': u['role'], 'Approved': u.get('approved', False),
               'Password change required': u.get('must_change_password', False), 'Active': u.get('active', True)}
              for key, u in users.items() if key not in listed]
-    st.dataframe(rows, hide_index=True, width='stretch')
+    st.dataframe(br_frame(rows), hide_index=True, width='stretch')
     with st.form('create_individual_account'):
         employee_id = st.text_input('New employee ID')
         create = st.form_submit_button('Create pending account')

@@ -1,3 +1,4 @@
+from tools.br_datetime import br_frame, br_date, br_datetime
 import re
 from datetime import datetime
 from io import BytesIO
@@ -198,7 +199,7 @@ def input_chart(frame: pd.DataFrame, color: str):
         textposition="outside",
         textfont=dict(size=11, color="#0B1F3A"),
         cliponaxis=False,
-        hovertemplate="%{x|%d/%m/%Y}<br>Input: %{y:,}<extra></extra>",
+        hovertemplate="%{x|%d/%m/%y}<br>Input: %{y:,}<extra></extra>",
     )
     chart.update_layout(
         title="Unique SMT input by day",
@@ -257,9 +258,9 @@ def render_smt_quality_dashboard(color: str) -> None:
             max_value=maximum_time.date(),
             key="smt_input_start_date",
             persist_state="session",
-        )
+        format='DD/MM/YYYY', )
     with date_columns[1]:
-        start_clock = st.time_input("Start time", value=minimum_time.time(), key="smt_input_start_time", persist_state="session")
+        start_clock = st.time_input("Start time", value=minimum_time.time(), key="smt_input_start_time", persist_state="session", format='24h')
     with date_columns[2]:
         end_date = st.date_input(
             "End date",
@@ -268,9 +269,9 @@ def render_smt_quality_dashboard(color: str) -> None:
             max_value=maximum_time.date(),
             key="smt_input_end_date",
             persist_state="session",
-        )
+        format='DD/MM/YYYY', )
     with date_columns[3]:
-        end_clock = st.time_input("End time", value=maximum_time.time(), key="smt_input_end_time", persist_state="session")
+        end_clock = st.time_input("End time", value=maximum_time.time(), key="smt_input_end_time", persist_state="session", format='24h')
 
     selected_start = pd.Timestamp(datetime.combine(start_date, start_clock))
     selected_end = pd.Timestamp(datetime.combine(end_date, end_clock))
@@ -281,8 +282,8 @@ def render_smt_quality_dashboard(color: str) -> None:
     period_analysis = summarize_smt_period(source_analysis["valid_detail"], selected_start, selected_end)
     analysis = {**source_analysis, **period_analysis}
     st.caption(
-        f"Active period: {selected_start.strftime('%d/%m/%Y %H:%M:%S')} to "
-        f"{selected_end.strftime('%d/%m/%Y %H:%M:%S')} · duplicates are removed only inside this interval."
+        f"Active period: {selected_start.strftime('%d/%m/%y %H:%M')} to "
+        f"{selected_end.strftime('%d/%m/%y %H:%M')} · duplicates are removed only inside this interval."
     )
 
     columns = st.columns(4)
@@ -310,13 +311,13 @@ def render_smt_quality_dashboard(color: str) -> None:
     with overview_tab:
         st.plotly_chart(input_chart(analysis["daily"], color), use_container_width=True, config={"displayModeBar": False})
         daily_view = analysis["daily"].copy()
-        daily_view["Input Date"] = daily_view["Input Date"].dt.strftime("%d/%m/%Y")
-        st.dataframe(daily_view, use_container_width=True, hide_index=True)
+        daily_view["Input Date"] = daily_view["Input Date"].dt.strftime('%d/%m/%y')
+        st.dataframe(br_frame(daily_view), use_container_width=True, hide_index=True)
     with model_tab:
-        st.dataframe(analysis["by_model"], use_container_width=True, hide_index=True, height=390)
+        st.dataframe(br_frame(analysis["by_model"]), use_container_width=True, hide_index=True, height=390)
         model_daily_view = analysis["daily_by_model"].copy()
-        model_daily_view["Input Date"] = model_daily_view["Input Date"].dt.strftime("%d/%m/%Y")
-        st.dataframe(model_daily_view, use_container_width=True, hide_index=True, height=390)
+        model_daily_view["Input Date"] = model_daily_view["Input Date"].dt.strftime('%d/%m/%y')
+        st.dataframe(br_frame(model_daily_view), use_container_width=True, hide_index=True, height=390)
     with duplicates_tab:
         if analysis["duplicate_detail"].empty:
             st.success("No repeated PCB No. values were found.")
@@ -324,10 +325,10 @@ def render_smt_quality_dashboard(color: str) -> None:
             duplicate_view = analysis["duplicate_detail"].copy()
             for column in ["Operate Time", "First Operate Time"]:
                 duplicate_view[column] = duplicate_view[column].dt.strftime("%Y-%m-%d %H:%M:%S")
-            st.dataframe(duplicate_view, use_container_width=True, hide_index=True, height=430)
+            st.dataframe(br_frame(duplicate_view), use_container_width=True, hide_index=True, height=430)
             st.download_button(
                 "Download duplicate audit CSV",
-                data=duplicate_view.to_csv(index=False).encode("utf-8-sig"),
+                data=br_frame(duplicate_view).to_csv(index=False).encode("utf-8-sig"),
                 file_name="smt_input_duplicate_audit.csv",
                 mime="text/csv",
                 use_container_width=True,
@@ -336,10 +337,10 @@ def render_smt_quality_dashboard(color: str) -> None:
         unique_view = analysis["unique_detail"].copy()
         unique_view["Operate Time"] = unique_view["Operate Time"].dt.strftime("%Y-%m-%d %H:%M:%S")
         unique_view["Input Date"] = unique_view["Input Date"].dt.strftime("%Y-%m-%d")
-        st.dataframe(unique_view, use_container_width=True, hide_index=True, height=430)
+        st.dataframe(br_frame(unique_view), use_container_width=True, hide_index=True, height=430)
         st.download_button(
             "Download unique SMT input CSV",
-            data=unique_view.to_csv(index=False).encode("utf-8-sig"),
+            data=br_frame(unique_view).to_csv(index=False).encode("utf-8-sig"),
             file_name="smt_unique_daily_input.csv",
             mime="text/csv",
             use_container_width=True,
