@@ -12,10 +12,20 @@ from tools.access_control import require_admin_access
 
 STATUSES = ['Open', 'In progress', 'Pending verification', 'Closed']
 AREAS = ['SMT', 'Assembly', 'IQC', 'Lab', 'Other']
+AREA_CODES = {'SMT': 'SMT', 'Assembly': 'ASSY', 'IQC': 'IQC', 'Lab': 'LAB', 'Other': 'OTH'}
 PRIORITIES = ['High', 'Medium', 'Low']
 FIELDS = ['title', 'area', 'model', 'defect', 'owner', 'priority', 'due_date', 'status',
           'root_cause', 'containment', 'countermeasure', 'evidence', 'verified']
 _LOCK = RLock()
+
+
+def action_code(record):
+    return str(record.get('code') or record.get('id') or '')
+
+
+def _creation_time(value):
+    timestamp = datetime.fromisoformat(value)
+    return timestamp.replace(tzinfo=ZoneInfo('America/Manaus')) if timestamp.tzinfo is None else timestamp
 
 
 def can_move_action(session):
@@ -48,7 +58,7 @@ def filter_actions(records, today, area='All areas', owner='All owners', priorit
         if priority != 'All priorities' and item['priority'] != priority: continue
         if models and item['model'] not in models: continue
         if statuses is not None and item['status'] not in statuses: continue
-        if search.strip().casefold() not in ' '.join(str(item.get(key, '')) for key in ['id', 'title', 'model', 'defect', 'owner', 'root_cause', 'countermeasure']).casefold(): continue
+        if search.strip().casefold() not in ' '.join(str(item.get(key, '')) for key in ['code', 'id', 'title', 'model', 'defect', 'owner', 'root_cause', 'countermeasure']).casefold(): continue
         delta = (date.fromisoformat(item['due_date']) - today).days
         if deadline == 'Overdue' and not overdue(item, today): continue
         if deadline == 'Next 7 days' and (item['status'] == 'Closed' or not 0 <= delta <= 7): continue
@@ -87,12 +97,38 @@ class ActionStore:
         self.prepare_move = prepare_move or prepare_write
         self.database.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as conn:
+            conn.execute('BEGIN IMMEDIATE')
             conn.execute('''CREATE TABLE IF NOT EXISTS defect_action_cards (
                 id TEXT PRIMARY KEY, revision TEXT NOT NULL, legacy_source TEXT UNIQUE,
                 payload TEXT NOT NULL)''')
             conn.execute('''CREATE TABLE IF NOT EXISTS defect_action_history (
                 revision TEXT PRIMARY KEY, action_id TEXT NOT NULL, actor TEXT NOT NULL,
                 changed_at TEXT NOT NULL, payload TEXT NOT NULL)''')
+            conn.execute('''CREATE TABLE IF NOT EXISTS defect_action_codes (
+                action_id TEXT PRIMARY KEY, area_code TEXT NOT NULL, period TEXT NOT NULL,
+                number INTEGER NOT NULL, code TEXT NOT NULL UNIQUE,
+                UNIQUE(area_code, period, number))''')
+            # Preserve UUIDs, revisions and history. Deterministic backfill also
+            # avoids an extra cloud upload on a read-only visit after deployment.
+            missing = [json.loads(row[0]) for row in conn.execute('''
+                SELECT c.payload FROM defect_action_cards c
+                LEFT JOIN defect_action_codes n ON n.action_id=c.id WHERE n.action_id IS NULL''')]
+            for record in sorted(missing, key=lambda r: (_creation_time(r['created_at']), r['id'])):
+                self._assign_code(conn, record['id'], record['area'], _creation_time(record['created_at']))
+
+    @staticmethod
+    def _assign_code(conn, action_id, area, created_at):
+        existing = conn.execute('SELECT code FROM defect_action_codes WHERE action_id=?', (action_id,)).fetchone()
+        if existing:
+            return existing[0]
+        prefix = AREA_CODES.get(area, 'OTH')
+        local = created_at.astimezone(ZoneInfo('America/Manaus'))
+        period = local.strftime('%Y-%m')
+        number = conn.execute('SELECT COALESCE(MAX(number),0)+1 FROM defect_action_codes WHERE area_code=? AND period=?',
+                              (prefix, period)).fetchone()[0]
+        code = f'{prefix}-{number:03d}/{local:%m%y}'
+        conn.execute('INSERT INTO defect_action_codes VALUES (?,?,?,?,?)', (action_id, prefix, period, number, code))
+        return code
 
     @contextmanager
     def connect(self):
@@ -105,7 +141,8 @@ class ActionStore:
 
     def all(self, include_deleted=False):
         with self.connect() as conn:
-            records = [json.loads(row[0]) for row in conn.execute('SELECT payload FROM defect_action_cards')]
+            records = [{**json.loads(row[0]), 'code': row[1]} for row in conn.execute('''
+                SELECT c.payload, n.code FROM defect_action_cards c JOIN defect_action_codes n ON n.action_id=c.id''')]
             return records if include_deleted else [row for row in records if not row.get('deleted_at')]
 
     def deleted(self):
@@ -114,8 +151,9 @@ class ActionStore:
 
     def get(self, action_id):
         with self.connect() as conn:
-            row = conn.execute('SELECT payload FROM defect_action_cards WHERE id=?', (action_id,)).fetchone()
-            record = json.loads(row[0]) if row else {}
+            row = conn.execute('''SELECT c.payload, n.code FROM defect_action_cards c
+                JOIN defect_action_codes n ON n.action_id=c.id WHERE c.id=?''', (action_id,)).fetchone()
+            record = {**json.loads(row[0]), 'code': row[1]} if row else {}
             return {} if record.get('deleted_at') else record
 
     def history(self, action_id):
@@ -164,7 +202,8 @@ class ActionStore:
                 raise ValueError('Another update was saved after this card was opened. Close it, refresh the board and try again.')
             now = datetime.now(timezone.utc).isoformat(timespec='microseconds')
             identifier = action_id or 'ACT-' + uuid4().hex[:12].upper()
-            record = {**clean, 'id': identifier, 'revision': uuid4().hex,
+            code = self._assign_code(conn, identifier, clean['area'], datetime.fromisoformat(current.get('created_at', now)))
+            record = {**clean, 'id': identifier, 'code': code, 'revision': uuid4().hex,
                       'created_at': current.get('created_at', now), 'created_by': current.get('created_by', actor),
                       'updated_at': now, 'updated_by': actor,
                       'closed_at': (current.get('closed_at') or now) if clean['status'] == 'Closed' else None,
@@ -221,7 +260,8 @@ class ActionStore:
             actor = str(session['authenticated_user']).strip()
             now = datetime.now(timezone.utc).isoformat(timespec='microseconds')
             if status == 'Closed': changes['closed_at'] = now
-            record = {**current, **changes, 'revision': uuid4().hex, 'updated_at': now, 'updated_by': actor}
+            code = self._assign_code(conn, action_id, current['area'], _creation_time(current['created_at']))
+            record = {**current, **changes, 'code': code, 'revision': uuid4().hex, 'updated_at': now, 'updated_by': actor}
             conn.execute('UPDATE defect_action_cards SET revision=?, payload=? WHERE id=?',
                          (record['revision'], json.dumps(record, ensure_ascii=False), action_id))
             event = {'revision': record['revision'], 'actor': actor, 'changed_at': now, 'event': 'Updated',
@@ -253,6 +293,7 @@ class ActionStore:
                 raise ValueError('Another update was saved after this card was opened. Close it, refresh the board and try again.')
             now = datetime.now(timezone.utc).isoformat(timespec='microseconds')
             actor = str(session['authenticated_user']).strip()
+            current['code'] = self._assign_code(conn, action_id, current['area'], _creation_time(current['created_at']))
             record = {**current, 'revision': uuid4().hex, 'deleted_at': now, 'deleted_by': actor,
                       'updated_at': now, 'updated_by': actor}
             conn.execute('UPDATE defect_action_cards SET revision=?, legacy_source=NULL, payload=? WHERE id=?',

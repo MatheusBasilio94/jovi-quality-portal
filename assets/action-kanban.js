@@ -83,7 +83,7 @@ export default function(component) {
       const open = make('button','open-action','Open action ↗');
       open.type = 'button';
       open.addEventListener('click',() => send({kind:'open', id:card.id}));
-      article.append(tags,make('div','action-title',card.title),make('div','action-model',(card.model || 'All models')+' · '+card.id),
+      article.append(tags,make('div','action-title',card.title),make('div','action-model',(card.model || 'All models')+' · '+(card.code || card.id)),
                      owner,make('div','action-due '+card.due_kind,card.due_label),open);
       if(data.movable){
         const select = make('select','move-action');

@@ -54,7 +54,7 @@ def handle_event(store):
 def render_board(store, records, today):
     cards = []
     for record in records:
-        card = {key: record.get(key, '') for key in ['id','revision','title','area','model','owner','priority','status']}
+        card = {key: record.get(key, '') for key in ['id','code','revision','title','area','model','owner','priority','status']}
         due = br_date(record['due_date'])
         if record['status'] == 'Closed':
             card.update(due_label='✓ Closed · effectiveness verified', due_kind='closed')

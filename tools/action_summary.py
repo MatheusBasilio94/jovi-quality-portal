@@ -3,13 +3,14 @@ import base64
 from datetime import date
 
 from tools.br_datetime import br_date
-from tools.defect_actions import local_today
+from tools.defect_actions import action_code, local_today
 
 
 def build_action_summary(record, today=None):
     today = today or local_today()
     text = lambda key: str(record.get(key) or '').strip()
     lines = ['📋 *QUALITY ACTION*', '']
+    if action_code(record): lines.append(f'*Code:* {action_code(record)}')
     for key, label in [('title','Action'), ('area','Area'), ('model','Model'), ('owner','Owner'),
                        ('priority','Priority'), ('status','Status')]:
         if text(key): lines.append(f'*{label}:* {text(key)}')

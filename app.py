@@ -56,7 +56,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.6.38"
+APP_VERSION = "v0.6.39"
 
 
 @st.cache_resource(show_spinner=False)
@@ -141,6 +141,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.6.39", "Assign readable area-based monthly action codes, preserve existing cards and history, and include the code in copied summaries."),
     ("v0.6.38", "Allow all signed-in users to move action cards between statuses and record verified closure, with restricted card editing and unchanged deletion rules."),
     ("v0.6.37", "Load report, action and development tabs on demand; reuse notification reads and source-aware alerts; coalesce chart copy scans."),
     ("v0.6.36", "Drag action cards between Kanban statuses with automatic saving, revision protection and verified closure."),

@@ -8,14 +8,14 @@ from tools.action_summary import build_action_summary, copy_summary_html
 
 class ActionSummaryTests(unittest.TestCase):
     def record(self, **changes):
-        return {**dict(id='ACT-ABC123', title='Adjust glue dispensing parameters', area='SMT', model='PD2607LF_BR',
+        return {**dict(id='ACT-ABC123', code='SMT-001/1026', title='Adjust glue dispensing parameters', area='SMT', model='PD2607LF_BR',
             owner='Felipe', status='In progress', priority='High', due_date='2026-10-15',
             defect='Disperse glue', root_cause='Under investigation', containment='Inspect affected boards',
             countermeasure='Adjust parameters and validate the next batch', verified=False, evidence=''), **changes}
 
     def test_open_summary_has_approved_content_br_date_and_overdue(self):
         text = build_action_summary(self.record(), date(2026,10,16))
-        for expected in ['📋 *QUALITY ACTION*', '*Owner:* Felipe', '*Due date:* 15/10/26',
+        for expected in ['📋 *QUALITY ACTION*', '*Code:* SMT-001/1026', '*Owner:* Felipe', '*Due date:* 15/10/26',
                          '🔴 *Overdue:* 1 day', 'Disperse glue', 'Inspect affected boards',
                          'Adjust parameters and validate the next batch', 'Pending —']:
             self.assertIn(expected, text)

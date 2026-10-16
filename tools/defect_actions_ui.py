@@ -11,7 +11,7 @@ import streamlit as st
 from tools.access_control import is_admin_session, require_admin_access
 from tools.action_summary import copy_summary_html
 from tools.action_kanban import render_board
-from tools.defect_actions import AREAS, PRIORITIES, STATUSES, ActionSyncError, can_delete_action, can_move_action, filter_actions, local_today, overdue, summary
+from tools.defect_actions import AREAS, PRIORITIES, STATUSES, ActionSyncError, action_code, can_delete_action, can_move_action, filter_actions, local_today, overdue, summary
 
 
 def _timestamp(value):
@@ -21,7 +21,7 @@ def _timestamp(value):
 @st.dialog('Close action', width='large')
 def close_action(store, record):
     st.markdown('### ' + escape(record['title']))
-    st.caption(f"{record['area']} · {record['owner']} · Current status: {record['status']}")
+    st.caption(f"{action_code(record)} · {record['area']} · {record['owner']} · Current status: {record['status']}")
     st.info('Record the countermeasure and evidence, then confirm effectiveness to close this action.')
     with st.form('close_action_'+record['id']+'_'+record['revision']):
         countermeasure = st.text_area('Countermeasure / planned action', record.get('countermeasure', ''), max_chars=10000)
@@ -52,7 +52,7 @@ def details(store, record=None, initial_status='Open', legacy_source=None, reque
         with delete_control, st.container(key='defect_action_delete'):
             with st.popover('Delete action', icon=':material/delete:', use_container_width=True):
                 st.markdown('**Delete this action?**')
-                st.write(f"{record['id']} · {record['title']}")
+                st.write(f"{action_code(record)} · {record['title']}")
                 st.caption('The card will be removed from the board, statistics and exports. A deletion record will remain in the history. Previous report records are preserved.')
                 with st.form('delete_action_'+record['id']+'_'+record['revision']):
                     confirmed = st.checkbox('I confirm that I want to delete this action.')
@@ -72,7 +72,9 @@ def details(store, record=None, initial_status='Open', legacy_source=None, reque
         metadata, copy_control = st.columns([3.6, 1.4], vertical_alignment='center')
     with metadata:
         if record.get('id'):
-            st.caption(f"{record['id']} · Created {_timestamp(record['created_at'])} by {record['created_by']}")
+            st.caption(f"{action_code(record)} · Created {_timestamp(record['created_at'])} by {record['created_by']}")
+        else:
+            st.caption('The action code is generated automatically when the card is first saved.')
     with copy_control:
         st.html(copy_summary_html(record))
     import streamlit.components.v1 as components
@@ -125,7 +127,7 @@ def details(store, record=None, initial_status='Open', legacy_source=None, reque
 def _card(store, action, today):
     with st.container(key='action_card_'+action['id']):
         pcolor, pbg = {'High': ('#B91C1C', '#FEE7E7'), 'Medium': ('#93600B', '#FFF2D8'), 'Low': ('#496A8D', '#EDF3F9')}[action['priority']]
-        st.markdown(f'<div class="action-tags"><span class="action-tag">{escape(action["area"])}</span><span class="action-tag" style="color:{pcolor};background:{pbg}">{escape(action["priority"])} priority</span></div><div class="action-title">{escape(action["title"])}</div><div class="action-model">{escape(action["model"] or "All models")} · {escape(action["id"])}</div><div class="action-owner"><span class="owner-circle">{escape(action["owner"][0].upper())}</span>{escape(action["owner"])}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="action-tags"><span class="action-tag">{escape(action["area"])}</span><span class="action-tag" style="color:{pcolor};background:{pbg}">{escape(action["priority"])} priority</span></div><div class="action-title">{escape(action["title"])}</div><div class="action-model">{escape(action["model"] or "All models")} · {escape(action_code(action))}</div><div class="action-owner"><span class="owner-circle">{escape(action["owner"][0].upper())}</span>{escape(action["owner"])}</div>', unsafe_allow_html=True)
         due = date.fromisoformat(action['due_date'])
         if action['status'] == 'Closed':
             text, color, bg = '✓ Closed · effectiveness verified', '#07854B', '#E1F6EB'
@@ -139,7 +141,7 @@ def _card(store, action, today):
 
 
 def _table(records):
-    columns = {'id': 'Action ID', 'title': 'Action', 'area': 'Area', 'model': 'Model', 'defect': 'Defect', 'owner': 'Owner',
+    columns = {'code': 'Action code', 'title': 'Action', 'area': 'Area', 'model': 'Model', 'defect': 'Defect', 'owner': 'Owner',
                'priority': 'Priority', 'status': 'Status', 'due_date': 'Due date', 'created_at': 'Created', 'closed_at': 'Closed',
                'root_cause': 'Root cause', 'containment': 'Containment', 'countermeasure': 'Countermeasure', 'evidence': 'Evidence'}
     return pd.DataFrame([{columns[key]: record.get(key) or '' for key in columns} for record in records], columns=list(columns.values()))
@@ -187,7 +189,7 @@ def _deleted_history(store):
     rows = [r for r in store.deleted() if privileged or str(r.get('created_by', '')).casefold() == actor]
     if rows:
         with st.expander('Deleted actions · History'):
-            st.dataframe([{'Action ID': r['id'], 'Action': r['title'], 'Area': r['area'],
+            st.dataframe([{'Action code': action_code(r), 'Action': r['title'], 'Area': r['area'],
                            'Deleted at': br_datetime(r['deleted_at']), 'Deleted by': r['deleted_by']}
                           for r in rows], hide_index=True, width='stretch')
             st.caption('Deleted cards are excluded from the current board, statistics and exports. Their change history is retained.')
@@ -299,7 +301,7 @@ def render(store):
             if view == 'Table':
                 st.dataframe(br_frame(_table(filtered)), hide_index=True, width='stretch')
                 if filtered:
-                    chosen = st.selectbox('Action details', [r['id'] for r in filtered], format_func=lambda value: next(r['title'] for r in filtered if r['id']==value), key='defect_table_choice')
+                    chosen = st.selectbox('Action details', [r['id'] for r in filtered], format_func=lambda value: next(f"{action_code(r)} · {r['title']}" for r in filtered if r['id']==value), key='defect_table_choice')
                     if st.button('Open selected action', key='defect_table_open'):
                         details(store, store.get(chosen))
             else:
