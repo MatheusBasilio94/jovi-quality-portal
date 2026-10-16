@@ -56,7 +56,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.6.33"
+APP_VERSION = "v0.6.34"
 
 
 @st.cache_resource(show_spinner=False)
@@ -141,6 +141,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.6.34", "Add confirmed action deletion for the action creator, managers and administrators, with retained deletion history and stale-edit protection."),
     ("v0.6.33", "Add Copy Summary to action card details: copy a WhatsApp-ready saved summary with owner, deadline, countermeasure and verification, without reloading the page."),
     ("v0.6.32", "Standardize displayed dates and exports to DD/MM/YY and timestamps to DD/MM/YY HH:mm; convert timezone-aware records to Manaus, preserve MES source times and use Brazilian calendar controls."),
     ("v0.6.31", "Isolate Defect Action Report interactions so opening cards, filters and Kanban/Table changes do not rerun KPI reports or cloud initialization; export CSV without a rerun."),
@@ -6310,11 +6311,21 @@ def _defect_action_renderer(release):
     return defect_actions.ActionStore, importlib.reload(defect_actions_ui).render
 
 
+def prepare_action_deletion_storage() -> None:
+    """Check durable storage after ActionStore has authorized this deletion."""
+    if st.session_state.get('authenticated') is not True or not st.session_state.get('authenticated_user'):
+        raise PermissionError('Sign in before deleting an action.')
+    status = cloud_store_status()
+    if bool(status['configured']) and not bool(status['active']):
+        raise RuntimeError('Persistent storage is not ready. Ask an administrator to complete the cloud data migration before deleting actions.')
+
+
 def defect_action_report_page() -> None:
     try:
         init_quality_store()
         store_class, render = _defect_action_renderer(APP_VERSION)
-        store = store_class(QUALITY_DB_PATH, require_persistent_store_for_writes, sync_quality_database_to_cloud)
+        store = store_class(QUALITY_DB_PATH, require_persistent_store_for_writes, sync_quality_database_to_cloud,
+                            prepare_delete=prepare_action_deletion_storage)
         render(store)
     except (RuntimeError, sqlite3.Error) as exc:
         st.error(f"Action board could not be loaded: {exc}")

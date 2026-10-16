@@ -10,7 +10,7 @@ import streamlit as st
 
 from tools.access_control import is_admin_session, require_admin_access
 from tools.action_summary import copy_summary_html
-from tools.defect_actions import AREAS, PRIORITIES, STATUSES, ActionSyncError, filter_actions, local_today, overdue, summary
+from tools.defect_actions import AREAS, PRIORITIES, STATUSES, ActionSyncError, can_delete_action, filter_actions, local_today, overdue, summary
 
 
 def _timestamp(value):
@@ -21,7 +21,29 @@ def _timestamp(value):
 def details(store, record=None, initial_status='Open', legacy_source=None):
     record = record or {}
     editable = is_admin_session(st.session_state)
-    metadata, copy_control = st.columns([3.6, 1.4], vertical_alignment='center')
+    deletable = can_delete_action(st.session_state, record)
+    if deletable:
+        metadata, delete_control, copy_control = st.columns([3.1, 1.25, 1.4], vertical_alignment='center')
+        with delete_control, st.container(key='defect_action_delete'):
+            with st.popover('Delete action', icon=':material/delete:', use_container_width=True):
+                st.markdown('**Delete this action?**')
+                st.write(f"{record['id']} · {record['title']}")
+                st.caption('The card will be removed from the board, statistics and exports. A deletion record will remain in the history. Previous report records are preserved.')
+                with st.form('delete_action_'+record['id']+'_'+record['revision']):
+                    confirmed = st.checkbox('I confirm that I want to delete this action.')
+                    if st.form_submit_button('Confirm deletion', type='primary', width='stretch'):
+                        try:
+                            store.delete(st.session_state, record['id'], record['revision'], confirmed=confirmed)
+                            st.session_state['_defect_action_flash'] = 'Action deleted.'
+                            st.rerun()
+                        except ActionSyncError as exc:
+                            st.session_state['_defect_action_unsynced'] = str(exc)
+                            st.session_state['_defect_action_sync_actor'] = st.session_state['authenticated_user']
+                            st.rerun()
+                        except (ValueError, PermissionError, RuntimeError) as exc:
+                            st.error(str(exc))
+    else:
+        metadata, copy_control = st.columns([3.6, 1.4], vertical_alignment='center')
     with metadata:
         if record.get('id'):
             st.caption(f"{record['id']} · Created {_timestamp(record['created_at'])} by {record['created_by']}")
@@ -61,7 +83,7 @@ def details(store, record=None, initial_status='Open', legacy_source=None):
             except (ValueError, PermissionError, RuntimeError) as exc:
                 st.error(str(exc))
     if not editable:
-        st.caption('Read-only access. An administrator can create and update action cards.')
+        st.caption('An administrator can edit action cards.' if deletable else 'Read-only access. An administrator can create and update action cards.')
     if record.get('id'):
         with st.expander('Change history'):
             events = store.history(record['id'])
@@ -131,7 +153,20 @@ def _statistics(records, today):
     st.bar_chart(trend, color=['#2563EB', '#07854B'])
 
 
+def _deleted_history(store):
+    actor = str(st.session_state.get('authenticated_user', '')).casefold()
+    privileged = st.session_state.get('authenticated') is True and st.session_state.get('auth_role') in {'admin', 'manager'}
+    rows = [r for r in store.deleted() if privileged or str(r.get('created_by', '')).casefold() == actor]
+    if rows:
+        with st.expander('Deleted actions · History'):
+            st.dataframe([{'Action ID': r['id'], 'Action': r['title'], 'Area': r['area'],
+                           'Deleted at': br_datetime(r['deleted_at']), 'Deleted by': r['deleted_by']}
+                          for r in rows], hide_index=True, width='stretch')
+            st.caption('Deleted cards are excluded from the current board, statistics and exports. Their change history is retained.')
+
+
 def _previous(store):
+    _deleted_history(store)
     rows = store.legacy()
     st.caption('Original report records are preserved. Converting a record creates an independent card; it does not change the original report.')
     if not rows:
@@ -169,15 +204,19 @@ def render(store):
         return
     today = local_today()
     editable = is_admin_session(st.session_state)
-    if st.session_state.pop('_defect_action_flash', None):
-        st.success('Action saved.')
+    flash = st.session_state.pop('_defect_action_flash', None)
+    if flash:
+        st.success(flash)
     if st.session_state.get('_defect_action_unsynced'):
         st.warning(st.session_state['_defect_action_unsynced'])
-        if editable and st.button('Retry cloud synchronization', key='defect_retry_sync'):
+        can_retry = editable or (st.session_state.get('authenticated') is True and st.session_state.get('_defect_action_sync_actor') == st.session_state.get('authenticated_user'))
+        if can_retry and st.button('Retry cloud synchronization', key='defect_retry_sync'):
             try:
-                require_admin_access(st.session_state)
+                if editable: require_admin_access(st.session_state)
+                else: store.prepare_delete()
                 store.persist()
                 del st.session_state['_defect_action_unsynced']
+                st.session_state.pop('_defect_action_sync_actor', None)
                 st.rerun(scope='fragment')
             except Exception: st.error('Cloud synchronization is still unavailable. Please try again.')
     with st.container(key='defect_action_head'):

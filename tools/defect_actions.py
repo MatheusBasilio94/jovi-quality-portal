@@ -18,6 +18,14 @@ FIELDS = ['title', 'area', 'model', 'defect', 'owner', 'priority', 'due_date', '
 _LOCK = RLock()
 
 
+def can_delete_action(session, record):
+    actor = str(session.get('authenticated_user', '')).strip()
+    return bool(session.get('authenticated') is True and actor and record.get('id')
+                and not record.get('deleted_at') and (
+                    session.get('auth_role') in {'admin', 'manager'}
+                    or str(record.get('created_by', '')).strip().casefold() == actor.casefold()))
+
+
 def local_today():
     return datetime.now(ZoneInfo('America/Manaus')).date()
 
@@ -62,10 +70,11 @@ class ActionSyncError(RuntimeError):
 
 
 class ActionStore:
-    def __init__(self, database, prepare_write=lambda: None, persist=lambda: None):
+    def __init__(self, database, prepare_write=lambda: None, persist=lambda: None, prepare_delete=None):
         self.database = Path(database)
         self.prepare_write = prepare_write
         self.persist = persist
+        self.prepare_delete = prepare_delete or prepare_write
         self.database.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as conn:
             conn.execute('''CREATE TABLE IF NOT EXISTS defect_action_cards (
@@ -84,14 +93,20 @@ class ActionStore:
         finally:
             conn.close()
 
-    def all(self):
+    def all(self, include_deleted=False):
         with self.connect() as conn:
-            return [json.loads(row[0]) for row in conn.execute('SELECT payload FROM defect_action_cards')]
+            records = [json.loads(row[0]) for row in conn.execute('SELECT payload FROM defect_action_cards')]
+            return records if include_deleted else [row for row in records if not row.get('deleted_at')]
+
+    def deleted(self):
+        return sorted([row for row in self.all(include_deleted=True) if row.get('deleted_at')],
+                      key=lambda row: row['deleted_at'], reverse=True)
 
     def get(self, action_id):
         with self.connect() as conn:
             row = conn.execute('SELECT payload FROM defect_action_cards WHERE id=?', (action_id,)).fetchone()
-            return json.loads(row[0]) if row else {}
+            record = json.loads(row[0]) if row else {}
+            return {} if record.get('deleted_at') else record
 
     def history(self, action_id):
         with self.connect() as conn:
@@ -134,6 +149,7 @@ class ActionStore:
             row = conn.execute('SELECT payload FROM defect_action_cards WHERE id=?', (action_id,)).fetchone() if action_id else None
             current = json.loads(row[0]) if row else {}
             if action_id and not current: raise ValueError('This action no longer exists. Refresh the board.')
+            if current.get('deleted_at'): raise ValueError('This action was deleted. Refresh the board.')
             if current.get('revision', '') != expected_revision:
                 raise ValueError('Another update was saved after this card was opened. Close it, refresh the board and try again.')
             now = datetime.now(timezone.utc).isoformat(timespec='microseconds')
@@ -160,4 +176,36 @@ class ActionStore:
             self.persist()
         except Exception as exc:
             raise ActionSyncError('The action was saved locally, but cloud synchronization was not confirmed. Retry synchronization before leaving this page.') from exc
+        return record
+
+    def delete(self, session, action_id, expected_revision, *, confirmed=False):
+        # Re-read the persisted creator; the browser's copy cannot grant permission.
+        current = self.get(action_id)
+        if not can_delete_action(session, current):
+            raise PermissionError('Only the action creator, a manager or an administrator can delete this action.')
+        if confirmed is not True:
+            raise ValueError('Confirm that you want to delete this action.')
+        self.prepare_delete()
+        with _LOCK, self.connect() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            row = conn.execute('SELECT payload FROM defect_action_cards WHERE id=?', (action_id,)).fetchone()
+            current = json.loads(row[0]) if row else {}
+            if not can_delete_action(session, current):
+                raise PermissionError('This action was deleted or you no longer have permission to delete it.')
+            if not expected_revision or current.get('revision') != expected_revision:
+                raise ValueError('Another update was saved after this card was opened. Close it, refresh the board and try again.')
+            now = datetime.now(timezone.utc).isoformat(timespec='microseconds')
+            actor = str(session['authenticated_user']).strip()
+            record = {**current, 'revision': uuid4().hex, 'deleted_at': now, 'deleted_by': actor,
+                      'updated_at': now, 'updated_by': actor}
+            conn.execute('UPDATE defect_action_cards SET revision=?, legacy_source=NULL, payload=? WHERE id=?',
+                         (record['revision'], json.dumps(record, ensure_ascii=False), action_id))
+            event = {'revision': record['revision'], 'actor': actor, 'changed_at': now, 'event': 'Deleted',
+                     'changes': {'deleted': {'before': False, 'after': True}}, 'snapshot': current}
+            conn.execute('INSERT INTO defect_action_history VALUES (?,?,?,?,?)',
+                         (record['revision'], action_id, actor, now, json.dumps(event, ensure_ascii=False)))
+        try:
+            self.persist()
+        except Exception as exc:
+            raise ActionSyncError('The action was removed locally, but cloud synchronization was not confirmed. Retry synchronization before leaving this page.') from exc
         return record

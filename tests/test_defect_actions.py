@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from tools.defect_actions import ActionStore, ActionSyncError, filter_actions, summary
+from tools.defect_actions import ActionStore, ActionSyncError, can_delete_action, filter_actions, summary
 
 ADMIN = {'authenticated': True, 'auth_role': 'admin', 'authenticated_user': 'admin'}
 VIEWER = {'authenticated': True, 'auth_role': 'viewer', 'authenticated_user': 'jovi'}
@@ -79,6 +79,63 @@ class ActionTests(unittest.TestCase):
         self.persist.side_effect = RuntimeError('Unavailable')
         with self.assertRaises(ActionSyncError): self.store.save(ADMIN, payload())
         self.assertEqual(len(self.store.all()), 1)
+
+    def test_deletion_permissions_creator_manager_admin_only(self):
+        for actor in [{**VIEWER, 'authenticated_user':'creator'},
+                      {**VIEWER, 'auth_role':'manager', 'authenticated_user':'manager'}, ADMIN]:
+            with self.subTest(actor=actor):
+                record = self.store.save({**ADMIN, 'authenticated_user':'creator'}, payload())
+                self.assertTrue(can_delete_action(actor, record))
+                deleted = self.store.delete(actor, record['id'], record['revision'], confirmed=True)
+                self.assertEqual(deleted['deleted_by'], actor['authenticated_user'])
+                self.assertEqual(self.store.get(record['id']), {})
+        record = self.store.save(ADMIN, payload())
+        for actor in [VIEWER, {**ADMIN, 'authenticated':False}, {**ADMIN, 'authenticated_user':''}]:
+            self.assertFalse(can_delete_action(actor, record))
+            with self.assertRaises(PermissionError):
+                self.store.delete(actor, record['id'], record['revision'], confirmed=True)
+        self.assertTrue(self.store.get(record['id']))
+
+    def test_deletion_confirmation_revision_audit_and_no_resurrection(self):
+        record = self.store.save(ADMIN, payload())
+        with self.assertRaisesRegex(ValueError, 'Confirm'):
+            self.store.delete(ADMIN, record['id'], record['revision'])
+        updated = self.store.save(ADMIN, {**record, 'owner':'New owner'}, record['id'], record['revision'])
+        with self.assertRaisesRegex(ValueError, 'Another update'):
+            self.store.delete(ADMIN, record['id'], record['revision'], confirmed=True)
+        deleted = self.store.delete(ADMIN, updated['id'], updated['revision'], confirmed=True)
+        self.assertEqual(ActionStore(self.path).all(), [])
+        self.assertEqual(len(self.store.deleted()), 1)
+        event = self.store.history(record['id'])[0]
+        self.assertEqual(event['event'], 'Deleted')
+        self.assertEqual(event['snapshot'], updated)
+        self.assertEqual(event['actor'], 'admin')
+        with self.assertRaisesRegex(ValueError, 'was deleted'):
+            self.store.save(ADMIN, updated, updated['id'], updated['revision'])
+        self.assertEqual(self.store.deleted()[0], deleted)
+
+    def test_delete_uses_separate_preflight_and_preserves_previous_report(self):
+        with self.store.connect() as conn:
+            conn.execute('CREATE TABLE smart_report_actions (id INTEGER, area TEXT, period_key TEXT, defect_name TEXT, failure_type TEXT, updated_at TEXT)')
+            conn.execute("INSERT INTO smart_report_actions VALUES (1,'SMT','WK41','Glue','Appearance','2026-10-10')")
+        source = self.store.legacy()[0]['source_key']
+        record = self.store.save(ADMIN, payload(), legacy_source=source)
+        self.store.prepare_write = Mock(side_effect=PermissionError('Administrator required'))
+        self.store.prepare_delete = Mock()
+        manager = {**VIEWER, 'auth_role':'manager'}
+        self.store.delete(manager, record['id'], record['revision'], confirmed=True)
+        self.store.prepare_delete.assert_called_once()
+        self.store.prepare_write.assert_not_called()
+        self.assertFalse(self.store.legacy()[0]['imported'])
+        self.assertEqual(self.store.legacy()[0]['defect_name'], 'Glue')
+
+    def test_failed_delete_sync_retains_auditable_deletion(self):
+        record = self.store.save(ADMIN, payload())
+        self.persist.side_effect = RuntimeError('Unavailable')
+        with self.assertRaises(ActionSyncError):
+            self.store.delete(ADMIN, record['id'], record['revision'], confirmed=True)
+        self.assertEqual(self.store.all(), [])
+        self.assertEqual(self.store.history(record['id'])[0]['event'], 'Deleted')
 
     def test_ui_filters_and_viewer_read_only_access(self):
         from streamlit.testing.v1 import AppTest
