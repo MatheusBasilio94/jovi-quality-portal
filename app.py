@@ -56,7 +56,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.6.32"
+APP_VERSION = "v0.6.33"
 
 
 @st.cache_resource(show_spinner=False)
@@ -141,6 +141,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.6.33", "Add Copy Summary to action card details: copy a WhatsApp-ready saved summary with owner, deadline, countermeasure and verification, without reloading the page."),
     ("v0.6.32", "Standardize displayed dates and exports to DD/MM/YY and timestamps to DD/MM/YY HH:mm; convert timezone-aware records to Manaus, preserve MES source times and use Brazilian calendar controls."),
     ("v0.6.31", "Isolate Defect Action Report interactions so opening cards, filters and Kanban/Table changes do not rerun KPI reports or cloud initialization; export CSV without a rerun."),
     ("v0.6.30", "Rebuild Defect Action Report as a persistent Kanban with owner, area, priority and deadline filters, action statistics, verified closure, change history and conversion of previous report actions."),
@@ -6303,8 +6304,9 @@ def smart_report_kpi_cards(selected_by_area: dict[str, list[dict]], inputs: dict
 def _defect_action_renderer(release):
     """Load the action board modules once per published version."""
     import importlib
-    from tools import defect_actions, defect_actions_ui
+    from tools import defect_actions, action_summary, defect_actions_ui
     importlib.reload(defect_actions)
+    importlib.reload(action_summary)
     return defect_actions.ActionStore, importlib.reload(defect_actions_ui).render
 
 

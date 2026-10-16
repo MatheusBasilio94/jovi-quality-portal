@@ -9,6 +9,7 @@ import pandas as pd
 import streamlit as st
 
 from tools.access_control import is_admin_session, require_admin_access
+from tools.action_summary import copy_summary_html
 from tools.defect_actions import AREAS, PRIORITIES, STATUSES, ActionSyncError, filter_actions, local_today, overdue, summary
 
 
@@ -20,8 +21,15 @@ def _timestamp(value):
 def details(store, record=None, initial_status='Open', legacy_source=None):
     record = record or {}
     editable = is_admin_session(st.session_state)
-    if record.get('id'):
-        st.caption(f"{record['id']} · Created {_timestamp(record['created_at'])} by {record['created_by']}")
+    metadata, copy_control = st.columns([3.6, 1.4], vertical_alignment='center')
+    with metadata:
+        if record.get('id'):
+            st.caption(f"{record['id']} · Created {_timestamp(record['created_at'])} by {record['created_by']}")
+    with copy_control:
+        st.html(copy_summary_html(record))
+    import streamlit.components.v1 as components
+    script = (Path(__file__).resolve().parents[1]/'assets'/'action-summary-copy.js').read_text(encoding='utf-8')
+    components.html('<script>' + script + '</script>', height=0, scrolling=False)
     with st.form('defect_action_form'):
         title = st.text_input('Action title *', record.get('title', ''), max_chars=160, disabled=not editable)
         left, right = st.columns(2)
