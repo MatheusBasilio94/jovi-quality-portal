@@ -10,6 +10,7 @@ import streamlit as st
 
 from tools.access_control import is_admin_session, require_admin_access
 from tools.action_summary import copy_summary_html
+from tools.action_statistics import CHART_CONFIG, count_chart, timeline_chart
 from tools.action_kanban import render_board
 from tools.defect_actions import AREAS, PRIORITIES, STATUSES, ActionSyncError, action_code, can_delete_action, can_move_action, filter_actions, local_today, overdue, summary
 
@@ -152,35 +153,31 @@ def _statistics(records, today):
         st.info('No actions match the selected filters.')
         return
     stats = summary(records, today)
-    left, right = st.columns(2)
-    left.metric('Closure rate', f"{stats['closure_rate']:.0%}")
-    right.metric('Closed on time', f"{stats['on_time_rate']:.0%}" if stats['on_time_rate'] is not None else '—')
+    rate_cards = [('CLOSURE RATE',f"{stats['closure_rate']:.0%}",'Closed actions / actions created','#2563EB'),
+                  ('CLOSED ON TIME',f"{stats['on_time_rate']:.0%}" if stats['on_time_rate'] is not None else '—',
+                   'Closed by their current due date','#07854B')]
+    for column,(label,value,note,tone) in zip(st.columns(2),rate_cards):
+        column.markdown(f'<div class="action-metric" style="--tone:{tone}"><div class="action-metric-label">{label}</div><div class="action-metric-value">{value}</div><div class="action-metric-note">{note}</div></div>',unsafe_allow_html=True)
     st.caption('Statistics follow the current filters. Closed on time compares the latest closure date to the current due date. Reopened actions are counted as active.')
     by_status, by_area = st.columns(2)
     with by_status:
-        st.markdown('**Actions by status**')
-        st.bar_chart(pd.Series({status: sum(r['status']==status for r in records) for status in STATUSES}, name='Actions'), color='#2563EB')
+        st.plotly_chart(count_chart(records,'status'),width='stretch',theme=None,
+                        config=CHART_CONFIG,key='defect_stats_status')
     with by_area:
-        st.markdown('**Actions by area**')
-        st.bar_chart(pd.Series({area: sum(r['area']==area for r in records) for area in AREAS if any(r['area']==area for r in records)}, name='Actions'), color='#7752D9')
+        st.plotly_chart(count_chart(records,'area'),width='stretch',theme=None,
+                        config=CHART_CONFIG,key='defect_stats_area')
     owners = []
     for owner in sorted({r['owner'] for r in records}):
         scoped = [r for r in records if r['owner']==owner]
         result = summary(scoped, today)
         owners.append({'Owner': owner, 'Created': result['created'], 'Active': result['active'], 'Overdue': result['overdue'], 'Closed': result['closed']})
     st.markdown('**Actions by owner**')
-    st.dataframe(br_frame(pd.DataFrame(owners)), hide_index=True, width='stretch')
-    created, closed = {}, {}
-    for record in records:
-        day = datetime.fromisoformat(record['created_at']).astimezone(ZoneInfo('America/Manaus')).date()
-        created[day] = created.get(day, 0) + 1
-        if record['closed_at']:
-            day = datetime.fromisoformat(record['closed_at']).astimezone(ZoneInfo('America/Manaus')).date()
-            closed[day] = closed.get(day, 0) + 1
-    days = pd.date_range(min([*created, *closed]), max([*created, *closed]))
-    trend = pd.DataFrame({'Created': [created.get(d.date(), 0) for d in days], 'Closed': [closed.get(d.date(), 0) for d in days]}, index=days)
-    st.markdown('**Actions created and closed over time**')
-    st.bar_chart(trend, color=['#2563EB', '#07854B'])
+    st.dataframe(br_frame(pd.DataFrame(owners)), hide_index=True, width='stretch',
+                 column_config={name:st.column_config.NumberColumn(alignment='center',format='%d')
+                                for name in ['Created','Active','Overdue','Closed']})
+    st.plotly_chart(timeline_chart(records),width='stretch',theme=None,
+                    config=CHART_CONFIG,key='defect_stats_timeline')
+    st.caption('Daily and weekly dates use DD/MM/YY; monthly labels use MM/YY. Longer histories are grouped by week or month. Closed counts use each action’s latest closure; reopening removes it from the closed series.')
 
 
 def _deleted_history(store):

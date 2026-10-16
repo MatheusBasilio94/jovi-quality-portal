@@ -56,7 +56,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.6.39"
+APP_VERSION = "v0.6.40"
 
 
 @st.cache_resource(show_spinner=False)
@@ -141,6 +141,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.6.40", "Standardize action statistics charts, status colors, integer scales, data labels and Brazilian date axes with compact chart copying."),
     ("v0.6.39", "Assign readable area-based monthly action codes, preserve existing cards and history, and include the code in copied summaries."),
     ("v0.6.38", "Allow all signed-in users to move action cards between statuses and record verified closure, with restricted card editing and unchanged deletion rules."),
     ("v0.6.37", "Load report, action and development tabs on demand; reuse notification reads and source-aware alerts; coalesce chart copy scans."),
@@ -6342,9 +6343,10 @@ def smart_report_kpi_cards(selected_by_area: dict[str, list[dict]], inputs: dict
 def _defect_action_renderer(release):
     """Load the action board modules once per published version."""
     import importlib
-    from tools import defect_actions, action_summary, action_kanban, defect_actions_ui
+    from tools import defect_actions, action_summary, action_statistics, action_kanban, defect_actions_ui
     importlib.reload(defect_actions)
     importlib.reload(action_summary)
+    importlib.reload(action_statistics)
     importlib.reload(action_kanban)
     return defect_actions.ActionStore, importlib.reload(defect_actions_ui).render
 
