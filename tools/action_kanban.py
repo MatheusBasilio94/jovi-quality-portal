@@ -5,14 +5,14 @@ import streamlit as st
 
 from tools.access_control import is_admin_session
 from tools.br_datetime import br_date
-from tools.defect_actions import STATUSES, ActionSyncError, ActionVerificationRequired, overdue
+from tools.defect_actions import STATUSES, ActionSyncError, ActionVerificationRequired, can_move_action, overdue
 
 ASSETS = Path(__file__).resolve().parents[1]/'assets'
 KEY = 'defect_drag_board'
 
 
 @st.cache_resource(show_spinner=False)
-def component():
+def component(js_version, css_version):
     import streamlit.components.v2 as components
     return components.component('jovi_action_kanban', html='<div class="kanban-root"></div>',
         css=(ASSETS/'action-kanban.css').read_text(encoding='utf-8'),
@@ -45,6 +45,8 @@ def handle_event(store):
         st.session_state['_defect_kanban_dialog'] = {'id': event['id'], 'requested_status': 'Closed'}
     except ActionSyncError as exc:
         st.session_state['_defect_action_unsynced'] = str(exc)
+        st.session_state['_defect_action_sync_actor'] = st.session_state['authenticated_user']
+        st.session_state['_defect_action_sync_kind'] = 'move'
     except (ValueError, PermissionError, RuntimeError) as exc:
         st.session_state['_defect_kanban_notice'] = ('error', str(exc))
 
@@ -63,6 +65,8 @@ def render_board(store, records, today):
         else:
             card.update(due_label='◷ Due '+due, due_kind='normal')
         cards.append(card)
-    component()(data={'cards': cards, 'statuses': STATUSES, 'editable': is_admin_session(st.session_state),
+    component((ASSETS/'action-kanban.js').stat().st_mtime_ns, (ASSETS/'action-kanban.css').stat().st_mtime_ns)(
+                data={'cards': cards, 'statuses': STATUSES, 'editable': is_admin_session(st.session_state),
+                      'movable': can_move_action(st.session_state),
                       'ack': st.session_state.get('_defect_kanban_ack')}, key=KEY,
                 on_event_change=lambda: handle_event(store))

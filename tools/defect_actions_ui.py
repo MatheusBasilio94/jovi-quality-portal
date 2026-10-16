@@ -11,11 +11,35 @@ import streamlit as st
 from tools.access_control import is_admin_session, require_admin_access
 from tools.action_summary import copy_summary_html
 from tools.action_kanban import render_board
-from tools.defect_actions import AREAS, PRIORITIES, STATUSES, ActionSyncError, can_delete_action, filter_actions, local_today, overdue, summary
+from tools.defect_actions import AREAS, PRIORITIES, STATUSES, ActionSyncError, can_delete_action, can_move_action, filter_actions, local_today, overdue, summary
 
 
 def _timestamp(value):
     return datetime.fromisoformat(value).astimezone(ZoneInfo('America/Manaus')).strftime('%d/%m/%y %H:%M')
+
+
+@st.dialog('Close action', width='large')
+def close_action(store, record):
+    st.markdown('### ' + escape(record['title']))
+    st.caption(f"{record['area']} · {record['owner']} · Current status: {record['status']}")
+    st.info('Record the countermeasure and evidence, then confirm effectiveness to close this action.')
+    with st.form('close_action_'+record['id']+'_'+record['revision']):
+        countermeasure = st.text_area('Countermeasure / planned action', record.get('countermeasure', ''), max_chars=10000)
+        evidence = st.text_area('Effectiveness verification / evidence', record.get('evidence', ''), max_chars=10000)
+        verified = st.checkbox('Effectiveness verified — required to close the action')
+        if st.form_submit_button('Close action', type='primary', disabled=not can_move_action(st.session_state), width='stretch'):
+            try:
+                store.move(st.session_state, record['id'], 'Closed', record['revision'],
+                           countermeasure=countermeasure, evidence=evidence, verified=verified)
+                st.session_state['_defect_action_flash'] = 'Action closed.'
+                st.rerun()
+            except ActionSyncError as exc:
+                st.session_state['_defect_action_unsynced'] = str(exc)
+                st.session_state['_defect_action_sync_actor'] = st.session_state['authenticated_user']
+                st.session_state['_defect_action_sync_kind'] = 'move'
+                st.rerun()
+            except (ValueError, PermissionError, RuntimeError) as exc:
+                st.error(str(exc))
 
 
 @st.dialog('Action details', width='large')
@@ -40,6 +64,7 @@ def details(store, record=None, initial_status='Open', legacy_source=None, reque
                         except ActionSyncError as exc:
                             st.session_state['_defect_action_unsynced'] = str(exc)
                             st.session_state['_defect_action_sync_actor'] = st.session_state['authenticated_user']
+                            st.session_state['_defect_action_sync_kind'] = 'delete'
                             st.rerun()
                         except (ValueError, PermissionError, RuntimeError) as exc:
                             st.error(str(exc))
@@ -86,7 +111,7 @@ def details(store, record=None, initial_status='Open', legacy_source=None, reque
             except (ValueError, PermissionError, RuntimeError) as exc:
                 st.error(str(exc))
     if not editable:
-        st.caption('An administrator can edit action cards.' if deletable else 'Read-only access. An administrator can create and update action cards.')
+        st.caption('You can move cards between statuses in Kanban. An administrator can create actions and edit other card fields.')
     if record.get('id'):
         with st.expander('Change history'):
             events = store.history(record['id'])
@@ -219,10 +244,12 @@ def render(store):
         if can_retry and st.button('Retry cloud synchronization', key='defect_retry_sync'):
             try:
                 if editable: require_admin_access(st.session_state)
+                elif st.session_state.get('_defect_action_sync_kind') == 'move': store.prepare_move()
                 else: store.prepare_delete()
                 store.persist()
                 del st.session_state['_defect_action_unsynced']
                 st.session_state.pop('_defect_action_sync_actor', None)
+                st.session_state.pop('_defect_action_sync_kind', None)
                 st.rerun(scope='fragment')
             except Exception: st.error('Cloud synchronization is still unavailable. Please try again.')
     with st.container(key='defect_action_head'):
@@ -283,13 +310,14 @@ def render(store):
         if statistics.open: _statistics(filtered, today)
     with previous:
         if previous.open: _previous(store)
-    st.caption('All indicators follow the selected filters. ' + ('Only administrators can create or update actions.' if not editable else 'Drag a card to another column or use Move to. Closure requires a countermeasure and effectiveness verification.'))
+    st.caption('All indicators follow the selected filters. All signed-in users can drag cards between columns or use Move to. Closure requires a countermeasure and effectiveness verification. Only administrators can create actions and edit other card fields.')
     request = st.session_state.pop('_defect_kanban_dialog', None)
     if request:
         if request.get('id'):
             record = store.get(request['id'])
             if record:
-                details(store, record, requested_status=request.get('requested_status'))
+                if request.get('requested_status') == 'Closed': close_action(store, record)
+                else: details(store, record)
             else:
                 st.error('This action no longer exists. Refresh the board.')
         else:

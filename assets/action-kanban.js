@@ -2,6 +2,7 @@ export default function(component) {
   const {data, parentElement, setTriggerValue} = component;
   const root = parentElement.querySelector('.kanban-root');
   root.replaceChildren();
+  root.classList.remove('busy');
   let dragging = null;
   let busy = false;
   const zones = [];
@@ -24,7 +25,7 @@ export default function(component) {
     setTriggerValue('event', {...event, token: crypto.randomUUID()});
   };
   const move = (card, status) => {
-    if(!data.editable || card.status === status) return;
+    if(!data.movable || card.status === status) return;
     send({kind:'move', id:card.id, revision:card.revision, status});
   };
   const themes = [['#2563EB','#E3EDFF'],['#7752D9','#ECE6FF'],['#B77909','#FFF3D7'],['#07854B','#DCF5E8']];
@@ -40,7 +41,7 @@ export default function(component) {
     zone.append(header);
     zones.push(zone);
     zone.addEventListener('dragover', event => {
-      if(!data.editable || !dragging || busy) return;
+      if(!data.movable || !dragging || busy) return;
       event.preventDefault();
       event.dataTransfer.dropEffect = 'move';
       zone.classList.add('drop-target');
@@ -56,10 +57,10 @@ export default function(component) {
     cards.forEach(card => {
       const article = make('article','action-card');
       article.dataset.actionId = card.id;
-      article.draggable = !!data.editable;
+      article.draggable = !!data.movable;
       article.setAttribute('aria-label',card.title);
       article.addEventListener('dragstart',event => {
-        if(!data.editable || busy){event.preventDefault();return;}
+        if(!data.movable || busy){event.preventDefault();return;}
         dragging = card;
         event.dataTransfer.effectAllowed = 'move';
         event.dataTransfer.setData('text/plain',card.id);
@@ -72,7 +73,7 @@ export default function(component) {
       });
       const tags = make('div','action-tags');
       tags.append(make('span','action-tag',card.area),make('span','priority '+card.priority.toLowerCase(),card.priority+' priority'));
-      if(data.editable){
+      if(data.movable){
         const grip = make('span','drag-grip','⠿');
         grip.title = 'Drag this card to another status';
         tags.append(grip);
@@ -84,7 +85,7 @@ export default function(component) {
       open.addEventListener('click',() => send({kind:'open', id:card.id}));
       article.append(tags,make('div','action-title',card.title),make('div','action-model',(card.model || 'All models')+' · '+card.id),
                      owner,make('div','action-due '+card.due_kind,card.due_label),open);
-      if(data.editable){
+      if(data.movable){
         const select = make('select','move-action');
         select.setAttribute('aria-label','Move '+card.title+' to status');
         const placeholder = make('option','','Move to…');

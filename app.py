@@ -56,7 +56,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.6.37"
+APP_VERSION = "v0.6.38"
 
 
 @st.cache_resource(show_spinner=False)
@@ -141,6 +141,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.6.38", "Allow all signed-in users to move action cards between statuses and record verified closure, with restricted card editing and unchanged deletion rules."),
     ("v0.6.37", "Load report, action and development tabs on demand; reuse notification reads and source-aware alerts; coalesce chart copy scans."),
     ("v0.6.36", "Drag action cards between Kanban statuses with automatic saving, revision protection and verified closure."),
     ("v0.6.35", "Remove the action ID and the closing owner follow-up request from copied action summaries."),
@@ -6356,12 +6357,22 @@ def prepare_action_deletion_storage() -> None:
         raise RuntimeError('Persistent storage is not ready. Ask an administrator to complete the cloud data migration before deleting actions.')
 
 
+def prepare_action_status_storage() -> None:
+    """Check durable storage for an authenticated status change."""
+    from tools.defect_actions import can_move_action
+    if not can_move_action(st.session_state):
+        raise PermissionError('Sign in before moving an action.')
+    status = cloud_store_status()
+    if bool(status['configured']) and not bool(status['active']):
+        raise RuntimeError('Persistent storage is not ready. Ask an administrator to complete the cloud data migration before moving actions.')
+
+
 def defect_action_report_page() -> None:
     try:
         init_quality_store()
         store_class, render = _defect_action_renderer(APP_VERSION)
         store = store_class(QUALITY_DB_PATH, require_persistent_store_for_writes, sync_quality_database_to_cloud,
-                            prepare_delete=prepare_action_deletion_storage)
+                            prepare_delete=prepare_action_deletion_storage, prepare_move=prepare_action_status_storage)
         render(store)
     except (RuntimeError, sqlite3.Error) as exc:
         st.error(f"Action board could not be loaded: {exc}")

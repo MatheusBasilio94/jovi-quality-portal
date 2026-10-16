@@ -151,7 +151,7 @@ class ActionTests(unittest.TestCase):
 
     def test_move_permissions_noop_and_closure_guard(self):
         record = self.store.save(ADMIN, payload())
-        for actor in [VIEWER, {**VIEWER,'auth_role':'manager'}, {**ADMIN,'authenticated':False}]:
+        for actor in [{**VIEWER,'authenticated':False}, {**ADMIN,'authenticated':False}, {**VIEWER,'authenticated_user':''}, {**VIEWER,'authenticated_user':None}]:
             with self.assertRaises(PermissionError):
                 self.store.move(actor, record['id'], 'In progress', record['revision'])
         self.persist.reset_mock()
@@ -168,6 +168,42 @@ class ActionTests(unittest.TestCase):
         self.assertFalse(reopened['verified'])
         self.assertIsNone(reopened['closed_at'])
         self.assertEqual(reopened['evidence'],'Validated')
+
+    def test_all_authenticated_roles_can_move_but_not_edit_or_delete_others_cards(self):
+        record = self.store.save(ADMIN, payload())
+        self.store.prepare_write = Mock(side_effect=PermissionError('Administrator required'))
+        self.store.prepare_move = Mock()
+        for role in ['viewer','employee','manager','admin']:
+            actor = {**VIEWER,'auth_role':role,'authenticated_user':role+'-actor'}
+            target = 'In progress' if record['status']=='Open' else 'Open'
+            record = self.store.move(actor, record['id'], target, record['revision'])
+            self.assertEqual(record['updated_by'], actor['authenticated_user'])
+            self.assertEqual(self.store.history(record['id'])[0]['actor'], actor['authenticated_user'])
+            self.assertEqual(record['owner'], 'Felipe')
+            self.assertEqual(record['created_by'], 'admin')
+        self.assertEqual(self.store.prepare_move.call_count, 4)
+        self.store.prepare_write.assert_not_called()
+        with self.assertRaises(PermissionError): self.store.save(VIEWER, record, record['id'], record['revision'])
+        with self.assertRaises(PermissionError): self.store.delete(VIEWER, record['id'], record['revision'], confirmed=True)
+
+    def test_viewer_can_record_verified_closure_and_reopen_with_audit(self):
+        record = self.store.save(ADMIN, payload())
+        for kwargs in [{}, {'countermeasure':'Adjusted','evidence':'Passed','verified':False}]:
+            with self.assertRaises(ActionVerificationRequired):
+                self.store.move(VIEWER, record['id'], 'Closed', record['revision'], **kwargs)
+        closed = self.store.move(VIEWER,record['id'],'Closed',record['revision'],
+                                 countermeasure='Adjusted', evidence='Passed 100 boards', verified=True)
+        self.assertTrue(closed['verified'])
+        self.assertTrue(closed['closed_at'])
+        self.assertEqual(closed['updated_by'], 'jovi')
+        reopened = self.store.move(VIEWER,closed['id'],'Open',closed['revision'])
+        self.assertFalse(reopened['verified'])
+        self.assertIsNone(reopened['closed_at'])
+        self.assertEqual(reopened['evidence'], 'Passed 100 boards')
+        self.persist.side_effect = RuntimeError('Cloud unavailable')
+        with self.assertRaises(ActionSyncError):
+            self.store.move(VIEWER,reopened['id'],'In progress',reopened['revision'])
+        self.assertEqual(self.store.get(record['id'])['status'], 'In progress')
 
     def test_ui_filters_and_viewer_read_only_access(self):
         from streamlit.testing.v1 import AppTest

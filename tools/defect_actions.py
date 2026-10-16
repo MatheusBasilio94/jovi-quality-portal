@@ -18,6 +18,11 @@ FIELDS = ['title', 'area', 'model', 'defect', 'owner', 'priority', 'due_date', '
 _LOCK = RLock()
 
 
+def can_move_action(session):
+    actor = session.get('authenticated_user')
+    return session.get('authenticated') is True and isinstance(actor, str) and bool(actor.strip())
+
+
 def can_delete_action(session, record):
     actor = str(session.get('authenticated_user', '')).strip()
     return bool(session.get('authenticated') is True and actor and record.get('id')
@@ -74,11 +79,12 @@ class ActionVerificationRequired(ValueError):
 
 
 class ActionStore:
-    def __init__(self, database, prepare_write=lambda: None, persist=lambda: None, prepare_delete=None):
+    def __init__(self, database, prepare_write=lambda: None, persist=lambda: None, prepare_delete=None, prepare_move=None):
         self.database = Path(database)
         self.prepare_write = prepare_write
         self.persist = persist
         self.prepare_delete = prepare_delete or prepare_write
+        self.prepare_move = prepare_move or prepare_write
         self.database.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as conn:
             conn.execute('''CREATE TABLE IF NOT EXISTS defect_action_cards (
@@ -182,8 +188,9 @@ class ActionStore:
             raise ActionSyncError('The action was saved locally, but cloud synchronization was not confirmed. Retry synchronization before leaving this page.') from exc
         return record
 
-    def move(self, session, action_id, status, expected_revision):
-        require_admin_access(session)
+    def move(self, session, action_id, status, expected_revision, *, countermeasure=None, evidence=None, verified=False):
+        if not can_move_action(session):
+            raise PermissionError('Sign in before moving an action.')
         if status not in STATUSES:
             raise ValueError('Select a valid action status.')
         current = self.get(action_id)
@@ -193,10 +200,40 @@ class ActionStore:
             raise ValueError('Another update was saved after this card was opened. Refresh the board and try again.')
         if current['status'] == status:
             return current
-        if status == 'Closed' and not (current.get('verified') and current.get('countermeasure') and current.get('evidence')):
-            raise ActionVerificationRequired('Complete the countermeasure and effectiveness verification before closing the action.')
-        # Reuse the normal validation, revision check, audit trail and durable upload.
-        return self.save(session, {**current, 'status': status}, action_id, expected_revision)
+        self.prepare_move()
+        with _LOCK, self.connect() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            row = conn.execute('SELECT payload FROM defect_action_cards WHERE id=?', (action_id,)).fetchone()
+            current = json.loads(row[0]) if row else {}
+            if not current or current.get('deleted_at'):
+                raise ValueError('This action no longer exists. Refresh the board.')
+            if current['revision'] != expected_revision:
+                raise ValueError('Another update was saved after this card was opened. Refresh the board and try again.')
+            changes = {'status': status, 'verified': False, 'closed_at': None}
+            if status == 'Closed':
+                measure = str(current.get('countermeasure', '') if countermeasure is None else countermeasure).strip()
+                proof = str(current.get('evidence', '') if evidence is None else evidence).strip()
+                if not (verified is True and measure and proof):
+                    raise ActionVerificationRequired('Complete the countermeasure and effectiveness verification before closing the action.')
+                if max(len(measure), len(proof)) > 10000:
+                    raise ValueError('Use a shorter countermeasure or evidence description.')
+                changes.update(countermeasure=measure, evidence=proof, verified=True)
+            actor = str(session['authenticated_user']).strip()
+            now = datetime.now(timezone.utc).isoformat(timespec='microseconds')
+            if status == 'Closed': changes['closed_at'] = now
+            record = {**current, **changes, 'revision': uuid4().hex, 'updated_at': now, 'updated_by': actor}
+            conn.execute('UPDATE defect_action_cards SET revision=?, payload=? WHERE id=?',
+                         (record['revision'], json.dumps(record, ensure_ascii=False), action_id))
+            event = {'revision': record['revision'], 'actor': actor, 'changed_at': now, 'event': 'Updated',
+                     'changes': {key: {'before': current.get(key), 'after': record[key]}
+                                 for key in FIELDS if current.get(key) != record[key]}}
+            conn.execute('INSERT INTO defect_action_history VALUES (?,?,?,?,?)',
+                         (record['revision'], action_id, actor, now, json.dumps(event, ensure_ascii=False)))
+        try:
+            self.persist()
+        except Exception as exc:
+            raise ActionSyncError('The status was saved locally, but cloud synchronization was not confirmed. Retry synchronization before leaving this page.') from exc
+        return record
 
     def delete(self, session, action_id, expected_revision, *, confirmed=False):
         # Re-read the persisted creator; the browser's copy cannot grant permission.
