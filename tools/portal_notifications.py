@@ -56,7 +56,7 @@ def collect(actor, role, users, store):
     return sorted(notices,key=lambda item:item['date'],reverse=True)
 
 
-@st.cache_data(ttl=30,show_spinner=False)
+@st.cache_data(ttl=60,max_entries=128,show_spinner=False)
 def _events(actor, role, users_json, cloud, root):
     return collect(actor,role,json.loads(users_json),AssessmentStore(root,cloud=cloud))
 
@@ -73,6 +73,9 @@ class ReadState:
         return f'notifications/{sha256(actor.casefold().encode()).hexdigest()}/read.json'
 
     def read(self, actor):
+        return _read_state(actor, self.store.cloud, str(self.store.local_root))
+
+    def _read_current(self, actor):
         path = self.path(actor)
         if self.store.cloud:
             from tools.supabase_store import download_bytes
@@ -84,7 +87,9 @@ class ReadState:
 
     def mark(self, actor, ids):
         with _LOCK:
-            read = self.read(actor) | set(ids)
+            # Always merge the latest durable state before writing; display caching
+            # must never discard marks made by another session.
+            read = self._read_current(actor) | set(ids)
             raw = json.dumps({'read':sorted(read)}).encode()
             path = self.path(actor)
             if self.store.cloud:
@@ -96,8 +101,15 @@ class ReadState:
                 temp = file.with_name(file.name+'.'+uuid4().hex+'.tmp')
                 temp.write_bytes(raw)
                 temp.replace(file)
+            _read_state.clear(actor, self.store.cloud, str(self.store.local_root))
 
 
+@st.cache_data(ttl=60,max_entries=256,show_spinner=False)
+def _read_state(actor, cloud, root):
+    return ReadState(AssessmentStore(root, cloud=cloud))._read_current(actor)
+
+
+@st.fragment
 def render(navigate, quality_source=None):
     actor = str(st.session_state.get('authenticated_user',''))
     role = str(st.session_state.get('auth_role',''))
@@ -151,7 +163,7 @@ def render(navigate, quality_source=None):
             if st.button('Mark all as read',disabled=not unread,key='notifications_read_all',width='stretch'):
                 try:
                     state.mark(actor,[item['id'] for item in notices])
-                    st.rerun()
+                    st.rerun(scope='fragment')
                 except Exception: st.error('Read status could not be saved. Try again.')
             for item in sorted(visible,key=lambda n:(n['id'] in read, notices.index(n)))[:limit]:
                 with st.container(border=True):
@@ -175,6 +187,7 @@ def render(navigate, quality_source=None):
                         except Exception: st.error('The notification could not be opened. Try again.')
         if st.button('Refresh notifications',key='notifications_refresh',width='stretch'):
             invalidate()
+            _read_state.clear(actor, store.cloud, str(store.local_root))
             if quality_source is not None:
                 quality_source(refresh=True)
-            st.rerun()
+            st.rerun(scope='fragment')

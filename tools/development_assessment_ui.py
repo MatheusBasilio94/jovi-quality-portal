@@ -194,6 +194,11 @@ def _procedures(store, actor, subject, records, scope):
     st.caption('Read and Understood are personal declarations. Four source documents have no document link.')
 
 
+def _remember_panel():
+    st.session_state['_development_tab_default'] = st.session_state['development_panel']
+
+
+@st.fragment
 def render(records):
     if not development_access(st.session_state):
         st.error('An approved individual account is required for Development Hub.')
@@ -215,6 +220,7 @@ def render(records):
             st.session_state['development_year'] = int(year_value)
             st.session_state['development_month_choice'] = int(month_value)
         st.session_state['_development_tab_default'] = target['tab']
+        st.session_state['development_panel'] = target['tab']
         if target.get('account') and is_admin_session(st.session_state):
             st.session_state['manage_development_user'] = target['account']
     st.markdown("<div class='smart-report-title'>Development Hub</div><div class='smart-report-subtitle'>Self assessment, manager feedback and your development plan.</div>", unsafe_allow_html=True)
@@ -236,43 +242,52 @@ def render(records):
     month = today.replace(year=year, month=selected_month, day=1)
     cycle = f'{year:04d}-{selected_month:02d}_{scope}'
     st.caption('✅ Self assessment submitted · ✅✅ Manager assessment completed · No check: no submitted assessment. Status applies to the selected employee, role and year.')
-    try:
-        own = store.load(subject, cycle, 'self')
-        review = store.load(subject, cycle, 'manager')
-    except (ValueError, RuntimeError) as exc:
-        st.error(f'The development records could not be loaded: {exc}')
-        return
     manager = users.get(subject.casefold(), {}).get('manager', '')
     st.caption(f"Profile: {users.get(subject.casefold(), {}).get('display_name', subject)} · Manager: {manager or 'Not assigned'} · {month:%B %Y}")
     if st.session_state.pop('development_notice', None): st.success('Saved successfully.')
     names = ['Assessment Comparison','Self Assessment','Manager Assessment','Procedures','Achievements','Development Plan']
     if is_admin_session(st.session_state): names.append('User Administration')
     default_tab = st.session_state.get('_development_tab_default')
-    tabs = dict(zip(names, st.tabs(names, default=default_tab if default_tab in names else names[0])))
-    with tabs['Assessment Comparison']: _comparison(own, review)
-    with tabs['Self Assessment']: _assessment_form(store, actor, subject, cycle, 'self', own, review, manager)
-    with tabs['Manager Assessment']: _assessment_form(store, actor, subject, cycle, 'manager', own, review, manager)
-    with tabs['Procedures']: _procedures(store, actor, subject, records, scope)
+    tabs = dict(zip(names, st.tabs(names, default=default_tab if default_tab in names else names[0],
+        key='development_panel', on_change=_remember_panel)))
+    if any(tabs[name].open for name in names[:3]):
+        try:
+            own = store.load(subject, cycle, 'self')
+            review = store.load(subject, cycle, 'manager')
+        except (ValueError, RuntimeError) as exc:
+            st.error(f'The development records could not be loaded: {exc}')
+            return
+    with tabs['Assessment Comparison']:
+        if tabs['Assessment Comparison'].open: _comparison(own, review)
+    with tabs['Self Assessment']:
+        if tabs['Self Assessment'].open: _assessment_form(store, actor, subject, cycle, 'self', own, review, manager)
+    with tabs['Manager Assessment']:
+        if tabs['Manager Assessment'].open: _assessment_form(store, actor, subject, cycle, 'manager', own, review, manager)
+    with tabs['Procedures']:
+        if tabs['Procedures'].open: _procedures(store, actor, subject, records, scope)
     with tabs['Achievements']:
-        record = store.load(subject, cycle, 'achievements')
-        entries = record.get('entries', [])
-        st.caption('Record completed achievements and supporting evidence. These records do not automatically change your ratings.')
-        if entries: st.dataframe(br_frame(entries), hide_index=True, width='stretch')
-        with st.form(f'add_development_achievement_{subject}_{cycle}'):
-            title = st.text_input('Achievement title')
-            axis = st.selectbox('Development area', [label for _,label,_ in AXES])
-            date = st.date_input('Completion date', value=today, format='DD/MM/YYYY')
-            evidence = st.text_area('Result and evidence')
-            add = st.form_submit_button('Add achievement', disabled=actor != subject)
-        if add:
-            if not title.strip() or not evidence.strip(): st.error('Enter a title and result / evidence.')
-            else: _save(store, actor, subject, cycle, 'achievements', {'entries':entries+[{'Title':title.strip(),'Development area':axis,'Date':date.isoformat(),'Result / Evidence':evidence.strip(),'Status':'Self reported'}]}, record)
+        if tabs['Achievements'].open:
+            record = store.load(subject, cycle, 'achievements')
+            entries = record.get('entries', [])
+            st.caption('Record completed achievements and supporting evidence. These records do not automatically change your ratings.')
+            if entries: st.dataframe(br_frame(entries), hide_index=True, width='stretch')
+            with st.form(f'add_development_achievement_{subject}_{cycle}'):
+                title = st.text_input('Achievement title')
+                axis = st.selectbox('Development area', [label for _,label,_ in AXES])
+                date = st.date_input('Completion date', value=today, format='DD/MM/YYYY')
+                evidence = st.text_area('Result and evidence')
+                add = st.form_submit_button('Add achievement', disabled=actor != subject)
+            if add:
+                if not title.strip() or not evidence.strip(): st.error('Enter a title and result / evidence.')
+                else: _save(store, actor, subject, cycle, 'achievements', {'entries':entries+[{'Title':title.strip(),'Development area':axis,'Date':date.isoformat(),'Result / Evidence':evidence.strip(),'Status':'Self reported'}]}, record)
     with tabs['Development Plan']:
-        record = store.load(subject, cycle, 'plan')
-        st.caption('After discussing differences, record the actions agreed with your manager.')
-        with st.form(f'development_plan_{subject}_{cycle}_{revision(record)}'):
-            plan = st.text_area('Agreed actions, goals, deadlines and discussion notes', value=record.get('notes',''), height=200, disabled=actor != subject)
-            save = st.form_submit_button('Save development plan', disabled=actor != subject)
-        if save: _save(store, actor, subject, cycle, 'plan', {'notes':plan}, record)
+        if tabs['Development Plan'].open:
+            record = store.load(subject, cycle, 'plan')
+            st.caption('After discussing differences, record the actions agreed with your manager.')
+            with st.form(f'development_plan_{subject}_{cycle}_{revision(record)}'):
+                plan = st.text_area('Agreed actions, goals, deadlines and discussion notes', value=record.get('notes',''), height=200, disabled=actor != subject)
+                save = st.form_submit_button('Save development plan', disabled=actor != subject)
+            if save: _save(store, actor, subject, cycle, 'plan', {'notes':plan}, record)
     if 'User Administration' in tabs:
-        with tabs['User Administration']: administration(configured_accounts())
+        with tabs['User Administration']:
+            if tabs['User Administration'].open: administration(configured_accounts())

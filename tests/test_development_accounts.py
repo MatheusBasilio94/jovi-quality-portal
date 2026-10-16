@@ -136,6 +136,7 @@ from tools.development_assessment_ui import render
 st.session_state.setdefault('authenticated', True)
 st.session_state.setdefault('authenticated_user', 'boss')
 st.session_state.setdefault('auth_role', 'manager')
+st.session_state.setdefault('_development_tab_default', 'Manager Assessment')
 render(documents())
 '''
         with patch('tools.development_assessment_ui.AssessmentStore', return_value=store):

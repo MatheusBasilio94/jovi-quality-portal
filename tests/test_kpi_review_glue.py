@@ -62,7 +62,7 @@ class ReviewGlueTests(unittest.TestCase):
             {"smt_process": {days[0]: 0, days[1]: 0}}, days, {}, {}, "weekly_test",
         )
         self.assertEqual(len(captured), 2)
-        self.assertEqual(captured[0]["frame"]["Period"].tolist(), ["WK40", "WK41", "01-Sep", "02-Sep"])
+        self.assertEqual(captured[0]["frame"]["Period"].tolist(), ["WK40", "WK41", "01/09", "02/09"])
         self.assertEqual(captured[1]["frame"]["Value"].tolist(), [0, 500, 0, 0])
         captured.clear()
         original.append(("Oct", {"smt_process": 3000}, {}))

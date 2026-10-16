@@ -56,7 +56,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.6.36"
+APP_VERSION = "v0.6.37"
 
 
 @st.cache_resource(show_spinner=False)
@@ -141,6 +141,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.6.37", "Load report, action and development tabs on demand; reuse notification reads and source-aware alerts; coalesce chart copy scans."),
     ("v0.6.36", "Drag action cards between Kanban statuses with automatic saving, revision protection and verified closure."),
     ("v0.6.35", "Remove the action ID and the closing owner follow-up request from copied action summaries."),
     ("v0.6.34", "Add confirmed action deletion for the action creator, managers and administrators, with retained deletion history and stale-edit protection."),
@@ -2316,9 +2317,9 @@ def set_navigation(module: str, tab: str = "") -> None:
     st.query_params.from_dict(query_values)
 
 
-@st.cache_data(ttl=120, show_spinner=False)
-def quality_notification_events(through_text: str, release: str):
-    """Share source calculations across sessions; refresh at most every two minutes."""
+@st.cache_data(ttl=600, max_entries=16, show_spinner=False)
+def quality_notification_events(through_text: str, release: str, data_revision):
+    """Reuse alerts until source data changes, with a bounded fallback expiry."""
     from datetime import timedelta
     from tools import smt_quality_dashboard
     from tools.quality_notifications import build_points, collect_kpi_signals
@@ -2360,7 +2361,14 @@ def load_quality_notifications(refresh=False):
     if refresh:
         quality_notification_events.clear()
     through = datetime.now(ZoneInfo('America/Manaus')).date() - timedelta(days=1)
-    return quality_notification_events(through.isoformat(), APP_VERSION)
+    if cloud_store_is_active():
+        data_revision = ensure_cloud_data_version()
+    else:
+        # Local uploads and manual inspections also invalidate alert results.
+        data_revision = tuple(sorted((str(path.relative_to(DATA_STORE_DIR)), path.stat().st_size, path.stat().st_mtime_ns)
+                                    for path in DATA_STORE_DIR.rglob('*')
+                                    if path.is_file() and path.suffix.lower() in {'.db', '.xlsx', '.xls', '.csv'}))
+    return quality_notification_events(through.isoformat(), APP_VERSION, data_revision)
 
 
 def top_navigation() -> None:
@@ -4802,6 +4810,7 @@ def install_chart_copy_controls() -> None:
         (() => {
             const parentWindow = window.parent;
             const parentDocument = parentWindow.document;
+            parentWindow.__joviChartCopyCleanup?.();
             const buttonClass = "jovi-copy-chart-button";
             const svgButtonClass = "jovi-download-svg-button";
             const groupButtonClass = "jovi-copy-chart-group-button";
@@ -5201,10 +5210,34 @@ def install_chart_copy_controls() -> None:
                 parentDocument.querySelectorAll('[data-testid="stPlotlyChart"]').forEach(addCopyButton);
                 parentDocument.querySelectorAll('[data-jovi-chart-group]').forEach(addGroupCopyButton);
             };
-            const observer = new parentWindow.MutationObserver(scan);
+            let pendingScan = null;
+            const scheduleScan = () => {
+                if (pendingScan !== null) return;
+                pendingScan = parentWindow.requestAnimationFrame(() => {
+                    pendingScan = null;
+                    scan();
+                });
+            };
+            const relevantSelector = '[data-testid="stPlotlyChart"], [data-jovi-chart-group], .modebar';
+            const observer = new parentWindow.MutationObserver((mutations) => {
+                if (mutations.some((mutation) =>
+                    mutation.addedNodes.length && (
+                        mutation.target.closest?.(relevantSelector) ||
+                        Array.from(mutation.addedNodes).some((node) =>
+                            node.nodeType === 1 && (node.matches(relevantSelector) || node.querySelector(relevantSelector))
+                        )
+                    )
+                )) scheduleScan();
+            });
             observer.observe(parentDocument.body, {childList: true, subtree: true});
             scan();
-            window.addEventListener("unload", () => observer.disconnect(), {once: true});
+            const cleanup = () => {
+                observer.disconnect();
+                if (pendingScan !== null) parentWindow.cancelAnimationFrame(pendingScan);
+                if (parentWindow.__joviChartCopyCleanup === cleanup) delete parentWindow.__joviChartCopyCleanup;
+            };
+            parentWindow.__joviChartCopyCleanup = cleanup;
+            window.addEventListener("unload", cleanup, {once: true});
         })();
         </script>
         """,
@@ -6905,43 +6938,44 @@ def weekly_kpi_review_page() -> None:
     previous_label = f"WK{previous_end.isocalendar().week:02d}"
     current_label = f"WK{week_end.isocalendar().week:02d}"
     for area in ("SMT", "Assembly"):
-        with st.expander(f"{area} KPI Graphs · PowerPoint", expanded=False):
-            st.caption(
-                "Cada gráfico usa os mesmos acumulados WK e os mesmos dias visíveis da tabela acima. "
-                "Use PPT para baixar o SVG vetorial já dimensionado para 16,17 cm × 8,17 cm no PowerPoint; "
-                "use ⧉ para copiar um PNG compacto em alta resolução."
-            )
-            panels = weekly_kpi_slide_panels(
-                area,
-                directory,
-                previous_label,
-                current_label,
-                previous_totals,
-                totals,
-                daily,
-                visible_days,
-                previous_total_exceptions,
-                total_exceptions,
-                daily_exceptions,
-            )
-            st.markdown(f'<div data-jovi-chart-group="weekly_{area.lower()}"></div>', unsafe_allow_html=True)
-            chart_tabs = st.tabs([panel["title"] for panel in panels])
-            for panel_index, (chart_tab, panel) in enumerate(zip(chart_tabs, panels)):
-                with chart_tab:
-                    chart_name = re.sub(r"[^a-z0-9]+", "_", panel["title"].lower()).strip("_")
-                    figure = build_kpi_panel_chart(panel)
-                    figure.update_layout(meta={
-                        "jovi_report_export": "kpi_review",
-                        "jovi_review_group": f"weekly_{area.lower()}",
-                        "jovi_panel_index": panel_index,
-                    })
-                    show_chart(
-                        figure,
-                        image_filename=(
-                            f"quality_{area.lower()}_{chart_name}_"
-                            f"{previous_start.strftime('%Y%m%d')}_{week_end.strftime('%Y%m%d')}"
-                        ),
-                    )
+        with st.expander(f"{area} KPI Graphs · PowerPoint", expanded=False, key=f"weekly_{area.lower()}_graphs", on_change="rerun") as charts:
+            if charts.open:
+                st.caption(
+                    "Cada gráfico usa os mesmos acumulados WK e os mesmos dias visíveis da tabela acima. "
+                    "Use PPT para baixar o SVG vetorial já dimensionado para 16,17 cm × 8,17 cm no PowerPoint; "
+                    "use ⧉ para copiar um PNG compacto em alta resolução."
+                )
+                panels = weekly_kpi_slide_panels(
+                    area,
+                    directory,
+                    previous_label,
+                    current_label,
+                    previous_totals,
+                    totals,
+                    daily,
+                    visible_days,
+                    previous_total_exceptions,
+                    total_exceptions,
+                    daily_exceptions,
+                )
+                st.markdown(f'<div data-jovi-chart-group="weekly_{area.lower()}"></div>', unsafe_allow_html=True)
+                chart_tabs = st.tabs([panel["title"] for panel in panels])
+                for panel_index, (chart_tab, panel) in enumerate(zip(chart_tabs, panels)):
+                    with chart_tab:
+                        chart_name = re.sub(r"[^a-z0-9]+", "_", panel["title"].lower()).strip("_")
+                        figure = build_kpi_panel_chart(panel)
+                        figure.update_layout(meta={
+                            "jovi_report_export": "kpi_review",
+                            "jovi_review_group": f"weekly_{area.lower()}",
+                            "jovi_panel_index": panel_index,
+                        })
+                        show_chart(
+                            figure,
+                            image_filename=(
+                                f"quality_{area.lower()}_{chart_name}_"
+                                f"{previous_start.strftime('%Y%m%d')}_{week_end.strftime('%Y%m%d')}"
+                            ),
+                        )
     if glue_mode == "Compare scenarios":
         excluded = weekly_kpi_review_data(start_date, week_end, glue_rules=glue_rules)
         excluded_previous = weekly_kpi_review_data(previous_start, previous_end, glue_rules=glue_rules)
@@ -7025,31 +7059,32 @@ def monthly_kpi_review_page() -> None:
         (start_date.strftime("%b"), totals, total_exceptions),
     ]
     kpi_review_table(directory, month_columns, {}, [])
-    with st.expander(f"{area} KPI Graphs · PowerPoint", expanded=False):
-        st.caption(
-            "Each chart uses the same three monthly values and target as the table above. "
-            "Use ⧉ to copy a compact, high-resolution PNG or PPT to download a vector SVG "
-            "sized 16.17 cm × 8.17 cm."
-        )
-        panels = monthly_kpi_slide_panels(directory, month_columns)
-        st.markdown(f'<div data-jovi-chart-group="monthly_{area.lower()}"></div>', unsafe_allow_html=True)
-        chart_tabs = st.tabs([panel["title"] for panel in panels])
-        for panel_index, (chart_tab, panel) in enumerate(zip(chart_tabs, panels)):
-            with chart_tab:
-                chart_name = re.sub(r"[^a-z0-9]+", "_", panel["title"].lower()).strip("_")
-                figure = build_kpi_panel_chart(panel)
-                figure.update_layout(meta={
-                    "jovi_report_export": "kpi_review",
-                    "jovi_review_group": f"monthly_{area.lower()}",
-                    "jovi_panel_index": panel_index,
-                })
-                show_chart(
-                    figure,
-                    image_filename=(
-                        f"quality_monthly_{area.lower()}_{chart_name}_"
-                        f"{two_months_ago_start.strftime('%Y%m')}_{start_date.strftime('%Y%m')}"
-                    ),
-                )
+    with st.expander(f"{area} KPI Graphs · PowerPoint", expanded=False, key=f"monthly_{area.lower()}_graphs", on_change="rerun") as charts:
+        if charts.open:
+            st.caption(
+                "Each chart uses the same three monthly values and target as the table above. "
+                "Use ⧉ to copy a compact, high-resolution PNG or PPT to download a vector SVG "
+                "sized 16.17 cm × 8.17 cm."
+            )
+            panels = monthly_kpi_slide_panels(directory, month_columns)
+            st.markdown(f'<div data-jovi-chart-group="monthly_{area.lower()}"></div>', unsafe_allow_html=True)
+            chart_tabs = st.tabs([panel["title"] for panel in panels])
+            for panel_index, (chart_tab, panel) in enumerate(zip(chart_tabs, panels)):
+                with chart_tab:
+                    chart_name = re.sub(r"[^a-z0-9]+", "_", panel["title"].lower()).strip("_")
+                    figure = build_kpi_panel_chart(panel)
+                    figure.update_layout(meta={
+                        "jovi_report_export": "kpi_review",
+                        "jovi_review_group": f"monthly_{area.lower()}",
+                        "jovi_panel_index": panel_index,
+                    })
+                    show_chart(
+                        figure,
+                        image_filename=(
+                            f"quality_monthly_{area.lower()}_{chart_name}_"
+                            f"{two_months_ago_start.strftime('%Y%m')}_{start_date.strftime('%Y%m')}"
+                        ),
+                    )
     if glue_mode == "Compare scenarios":
         excluded_columns = []
         for (label, _, _), (period_start, period_end) in zip(month_columns, [
@@ -7113,17 +7148,26 @@ def _production_preparation_renderer(release):
     return importlib.reload(production_preparation_ui).render
 
 
+def remember_smart_report_section() -> None:
+    st.session_state['_smart_report_section'] = st.session_state['smart_report_section']
+
+
+@st.fragment
 def smart_report_page() -> None:
-    weekly_tab, monthly_tab, defect_tab, production_tab = st.tabs(["Weekly KPI Review", "Monthly KPI Review", "Defect Action Report", "Production Preparation"])
+    names = ["Weekly KPI Review", "Monthly KPI Review", "Defect Action Report", "Production Preparation"]
+    weekly_tab, monthly_tab, defect_tab, production_tab = st.tabs(names,
+        default=st.session_state.get('_smart_report_section', names[0]), key='smart_report_section',
+        on_change=remember_smart_report_section)
     with weekly_tab:
-        weekly_kpi_review_page()
+        if weekly_tab.open: weekly_kpi_review_page()
     with monthly_tab:
-        monthly_kpi_review_page()
+        if monthly_tab.open: monthly_kpi_review_page()
     with defect_tab:
-        defect_action_report_page()
+        if defect_tab.open: defect_action_report_page()
     with production_tab:
-        render = _production_preparation_renderer(APP_VERSION)
-        render(production_preparation_sources, configured_kpi_directory())
+        if production_tab.open:
+            render = _production_preparation_renderer(APP_VERSION)
+            render(production_preparation_sources, configured_kpi_directory())
 
 
 @st.cache_data(show_spinner=False)
@@ -9491,12 +9535,16 @@ def render_assembly_defect_dimension_cards(confirmed):
     return _smt_breakdown_scope(source, selections)
 
 
+@st.fragment
 def render_breakdown_chart_builder(confirmed, area: str) -> None:
     from tools.breakdown_chart import build_breakdown_chart, category_counts
 
     prefix = area.lower()
     dimensions = SMT_DEFECT_DIMENSIONS if area == "SMT" else ASSEMBLY_DEFECT_DIMENSIONS
-    with st.expander("Breakdown chart · Copy / Export", expanded=False):
+    panel = st.expander("Breakdown chart · Copy / Export", expanded=False, key=f'{prefix}_breakdown_chart_panel', on_change='rerun')
+    with panel:
+        if not panel.open:
+            return
         source = confirmed.copy()
         for _, column, _, _ in dimensions:
             if column not in source:

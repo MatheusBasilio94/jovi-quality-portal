@@ -235,19 +235,19 @@ def render(store):
                 details(store)
     with st.container(key='defect_action_filters'):
         f1, f2, f3, f4, f5 = st.columns([1, 1.15, 1, 1.2, 2])
-        area = f1.selectbox('Area', ['All areas', *AREAS], key='defect_filter_area')
-        owner = f2.selectbox('Owner', ['All owners', *sorted({a['owner'] for a in actions})], key='defect_filter_owner')
-        priority = f3.selectbox('Priority', ['All priorities', *PRIORITIES], key='defect_filter_priority')
-        deadline = f4.selectbox('Deadline', ['Any deadline', 'Overdue', 'Next 7 days'], key='defect_filter_due')
-        search = f5.text_input('Search action, defect or model', placeholder='Type to search...', key='defect_filter_search')
+        area = f1.selectbox('Area', ['All areas', *AREAS], key='defect_filter_area', persist_state='session')
+        owner = f2.selectbox('Owner', ['All owners', *sorted({a['owner'] for a in actions})], key='defect_filter_owner', persist_state='session')
+        priority = f3.selectbox('Priority', ['All priorities', *PRIORITIES], key='defect_filter_priority', persist_state='session')
+        deadline = f4.selectbox('Deadline', ['Any deadline', 'Overdue', 'Next 7 days'], key='defect_filter_due', persist_state='session')
+        search = f5.text_input('Search action, defect or model', placeholder='Type to search...', key='defect_filter_search', persist_state='session')
     with st.expander('More filters · Model, status and creation period'):
         c1, c2 = st.columns(2)
-        models = c1.multiselect('Model', sorted({a['model'] for a in actions if a['model']}), key='defect_filter_models')
-        statuses = c2.multiselect('Status', STATUSES, default=STATUSES, key='defect_filter_statuses')
-        creation_filter = st.checkbox('Filter by creation period', key='defect_filter_creation_enabled')
+        models = c1.multiselect('Model', sorted({a['model'] for a in actions if a['model']}), key='defect_filter_models', persist_state='session')
+        statuses = c2.multiselect('Status', STATUSES, default=STATUSES, key='defect_filter_statuses', persist_state='session')
+        creation_filter = st.checkbox('Filter by creation period', key='defect_filter_creation_enabled', persist_state='session')
         created_range = None
         if creation_filter:
-            bounds = st.date_input('Created between', (today-timedelta(days=60), today), key='defect_filter_created', format='DD/MM/YYYY')
+            bounds = st.date_input('Created between', (today-timedelta(days=60), today), key='defect_filter_created', format='DD/MM/YYYY', persist_state='session')
             if len(bounds) == 2: created_range = bounds
             else: st.caption('Select both dates to apply the creation period filter.')
     filtered = filter_actions(actions, today, area, owner, priority, deadline, search, models, statuses, created_range)
@@ -259,27 +259,30 @@ def render(store):
                ('CLOSED', stats['closed'], 'Completed and verified', '#07854B')]
     for column, (label, value, note, tone) in zip(st.columns(5), metrics):
         column.markdown(f'<div class="action-metric" style="--tone:{tone}"><div class="action-metric-label">{label}</div><div class="action-metric-value">{value}</div><div class="action-metric-note">{note}</div></div>', unsafe_allow_html=True)
-    board, statistics, previous = st.tabs(['Action Board', 'Statistics', 'Previous report actions'])
+    board, statistics, previous = st.tabs(['Action Board', 'Statistics', 'Previous report actions'], key='defect_action_panel', on_change='rerun')
     with board:
-        left, right = st.columns([4, 1])
-        left.caption(f'{len(filtered)} actions · Sorted by due date within each status')
-        view = right.segmented_control('View', ['Kanban', 'Table'], default='Kanban', key='defect_action_view', label_visibility='collapsed')
-        if not actions:
-            st.info('Create your first action card, or convert an existing record in Previous report actions.')
-        elif not filtered:
-            st.info('No actions match the selected filters.')
-        if view == 'Table':
-            st.dataframe(br_frame(_table(filtered)), hide_index=True, width='stretch')
-            if filtered:
-                chosen = st.selectbox('Action details', [r['id'] for r in filtered], format_func=lambda value: next(r['title'] for r in filtered if r['id']==value), key='defect_table_choice')
-                if st.button('Open selected action', key='defect_table_open'):
-                    details(store, store.get(chosen))
-        else:
-            render_board(store, filtered, today)
-        export = br_frame(_table(filtered)).to_csv(index=False).encode('utf-8-sig')
-        st.download_button('Export filtered actions · CSV', export, file_name='defect-actions.csv', mime='text/csv', key='defect_export', disabled=not filtered, on_click='ignore')
-    with statistics: _statistics(filtered, today)
-    with previous: _previous(store)
+        if board.open:
+            left, right = st.columns([4, 1])
+            left.caption(f'{len(filtered)} actions · Sorted by due date within each status')
+            view = right.segmented_control('View', ['Kanban', 'Table'], default='Kanban', key='defect_action_view', label_visibility='collapsed', persist_state='session')
+            if not actions:
+                st.info('Create your first action card, or convert an existing record in Previous report actions.')
+            elif not filtered:
+                st.info('No actions match the selected filters.')
+            if view == 'Table':
+                st.dataframe(br_frame(_table(filtered)), hide_index=True, width='stretch')
+                if filtered:
+                    chosen = st.selectbox('Action details', [r['id'] for r in filtered], format_func=lambda value: next(r['title'] for r in filtered if r['id']==value), key='defect_table_choice')
+                    if st.button('Open selected action', key='defect_table_open'):
+                        details(store, store.get(chosen))
+            else:
+                render_board(store, filtered, today)
+            export = br_frame(_table(filtered)).to_csv(index=False).encode('utf-8-sig')
+            st.download_button('Export filtered actions · CSV', export, file_name='defect-actions.csv', mime='text/csv', key='defect_export', disabled=not filtered, on_click='ignore')
+    with statistics:
+        if statistics.open: _statistics(filtered, today)
+    with previous:
+        if previous.open: _previous(store)
     st.caption('All indicators follow the selected filters. ' + ('Only administrators can create or update actions.' if not editable else 'Drag a card to another column or use Move to. Closure requires a countermeasure and effectiveness verification.'))
     request = st.session_state.pop('_defect_kanban_dialog', None)
     if request:
