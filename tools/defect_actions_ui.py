@@ -10,6 +10,7 @@ import streamlit as st
 
 from tools.access_control import is_admin_session, require_admin_access
 from tools.action_summary import copy_summary_html
+from tools.action_kanban import render_board
 from tools.defect_actions import AREAS, PRIORITIES, STATUSES, ActionSyncError, can_delete_action, filter_actions, local_today, overdue, summary
 
 
@@ -18,7 +19,7 @@ def _timestamp(value):
 
 
 @st.dialog('Action details', width='large')
-def details(store, record=None, initial_status='Open', legacy_source=None):
+def details(store, record=None, initial_status='Open', legacy_source=None, requested_status=None):
     record = record or {}
     editable = is_admin_session(st.session_state)
     deletable = can_delete_action(st.session_state, record)
@@ -52,6 +53,8 @@ def details(store, record=None, initial_status='Open', legacy_source=None):
     import streamlit.components.v1 as components
     script = (Path(__file__).resolve().parents[1]/'assets'/'action-summary-copy.js').read_text(encoding='utf-8')
     components.html('<script>' + script + '</script>', height=0, scrolling=False)
+    if requested_status == 'Closed':
+        st.info('Complete the countermeasure and effectiveness verification, then save to close this action.')
     with st.form('defect_action_form'):
         title = st.text_input('Action title *', record.get('title', ''), max_chars=160, disabled=not editable)
         left, right = st.columns(2)
@@ -62,7 +65,7 @@ def details(store, record=None, initial_status='Open', legacy_source=None):
         with right:
             model = st.text_input('Model', record.get('model', ''), placeholder='All models or a specific model', disabled=not editable)
             priority = st.selectbox('Priority', PRIORITIES, index=PRIORITIES.index(record.get('priority', 'Medium')), disabled=not editable)
-            status = st.selectbox('Status', STATUSES, index=STATUSES.index(record.get('status', initial_status)), disabled=not editable)
+            status = st.selectbox('Status', STATUSES, index=STATUSES.index(requested_status or record.get('status', initial_status)), disabled=not editable)
         defect = st.text_input('Related defect / issue', record.get('defect', ''), disabled=not editable)
         root_cause = st.text_area('Problem / root cause', record.get('root_cause', ''), disabled=not editable)
         containment = st.text_area('Containment', record.get('containment', ''), disabled=not editable)
@@ -207,6 +210,9 @@ def render(store):
     flash = st.session_state.pop('_defect_action_flash', None)
     if flash:
         st.success(flash)
+    notice = st.session_state.pop('_defect_kanban_notice', None)
+    if notice:
+        getattr(st, notice[0])(notice[1])
     if st.session_state.get('_defect_action_unsynced'):
         st.warning(st.session_state['_defect_action_unsynced'])
         can_retry = editable or (st.session_state.get('authenticated') is True and st.session_state.get('_defect_action_sync_actor') == st.session_state.get('authenticated_user'))
@@ -269,18 +275,19 @@ def render(store):
                 if st.button('Open selected action', key='defect_table_open'):
                     details(store, store.get(chosen))
         else:
-            states = [('Open', '#2563EB', '#E3EDFF'), ('In progress', '#7752D9', '#ECE6FF'),
-                      ('Pending verification', '#B77909', '#FFF3D7'), ('Closed', '#07854B', '#DCF5E8')]
-            for idx, (column, (status, tone, wash)) in enumerate(zip(st.columns(4, gap='medium'), states)):
-                with column, st.container(key=f'kanban_lane_{idx}'):
-                    selected = [a for a in filtered if a['status']==status]
-                    st.markdown(f'<div class="kanban-head" style="--tone:{tone};--wash:{wash}">{status}<span class="kanban-count">{len(selected)}</span></div>', unsafe_allow_html=True)
-                    for action in selected: _card(store, action, today)
-                    if not selected: st.caption('No actions in this status.')
-                    if st.button('＋ Add action', key='defect_add_'+str(idx), disabled=not editable, width='stretch'):
-                        details(store, initial_status=status)
+            render_board(store, filtered, today)
         export = br_frame(_table(filtered)).to_csv(index=False).encode('utf-8-sig')
         st.download_button('Export filtered actions · CSV', export, file_name='defect-actions.csv', mime='text/csv', key='defect_export', disabled=not filtered, on_click='ignore')
     with statistics: _statistics(filtered, today)
     with previous: _previous(store)
-    st.caption('All indicators follow the selected filters. Status changes are made inside each card. ' + ('Only administrators can create or update actions.' if not editable else 'Closure requires a countermeasure and effectiveness verification.'))
+    st.caption('All indicators follow the selected filters. ' + ('Only administrators can create or update actions.' if not editable else 'Drag a card to another column or use Move to. Closure requires a countermeasure and effectiveness verification.'))
+    request = st.session_state.pop('_defect_kanban_dialog', None)
+    if request:
+        if request.get('id'):
+            record = store.get(request['id'])
+            if record:
+                details(store, record, requested_status=request.get('requested_status'))
+            else:
+                st.error('This action no longer exists. Refresh the board.')
+        else:
+            details(store, initial_status=request['status'])

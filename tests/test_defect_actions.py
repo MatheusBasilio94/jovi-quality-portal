@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from tools.defect_actions import ActionStore, ActionSyncError, can_delete_action, filter_actions, summary
+from tools.defect_actions import ActionStore, ActionSyncError, ActionVerificationRequired, can_delete_action, filter_actions, summary
 
 ADMIN = {'authenticated': True, 'auth_role': 'admin', 'authenticated_user': 'admin'}
 VIEWER = {'authenticated': True, 'auth_role': 'viewer', 'authenticated_user': 'jovi'}
@@ -137,6 +137,38 @@ class ActionTests(unittest.TestCase):
         self.assertEqual(self.store.all(), [])
         self.assertEqual(self.store.history(record['id'])[0]['event'], 'Deleted')
 
+    def test_move_persists_status_audit_and_rejects_stale_or_deleted_cards(self):
+        record = self.store.save(ADMIN, payload())
+        moved = self.store.move(ADMIN, record['id'], 'In progress', record['revision'])
+        self.assertEqual(ActionStore(self.path).get(record['id'])['status'], 'In progress')
+        self.assertEqual(self.store.history(record['id'])[0]['changes']['status'], {'before':'Open','after':'In progress'})
+        self.assertEqual(moved['created_at'], record['created_at'])
+        with self.assertRaisesRegex(ValueError, 'Another update'):
+            self.store.move(ADMIN, record['id'], 'Pending verification', record['revision'])
+        self.store.delete(ADMIN, moved['id'], moved['revision'], confirmed=True)
+        with self.assertRaisesRegex(ValueError, 'no longer exists'):
+            self.store.move(ADMIN, moved['id'], 'Open', moved['revision'])
+
+    def test_move_permissions_noop_and_closure_guard(self):
+        record = self.store.save(ADMIN, payload())
+        for actor in [VIEWER, {**VIEWER,'auth_role':'manager'}, {**ADMIN,'authenticated':False}]:
+            with self.assertRaises(PermissionError):
+                self.store.move(actor, record['id'], 'In progress', record['revision'])
+        self.persist.reset_mock()
+        self.assertEqual(self.store.move(ADMIN,record['id'],'Open',record['revision']),record)
+        self.persist.assert_not_called()
+        self.assertEqual(len(self.store.history(record['id'])), 1)
+        with self.assertRaises(ActionVerificationRequired):
+            self.store.move(ADMIN,record['id'],'Closed',record['revision'])
+        self.assertEqual(self.store.get(record['id'])['status'], 'Open')
+        with self.assertRaises(ValueError):
+            self.store.move(ADMIN,record['id'],'Unknown',record['revision'])
+        closed = self.store.save(ADMIN,{**record,'status':'Closed','verified':True,'countermeasure':'Adjusted','evidence':'Validated'},record['id'],record['revision'])
+        reopened = self.store.move(ADMIN,closed['id'],'Pending verification',closed['revision'])
+        self.assertFalse(reopened['verified'])
+        self.assertIsNone(reopened['closed_at'])
+        self.assertEqual(reopened['evidence'],'Validated')
+
     def test_ui_filters_and_viewer_read_only_access(self):
         from streamlit.testing.v1 import AppTest
         record = self.store.save(ADMIN, payload())
@@ -149,6 +181,7 @@ render(store)
 """
         app = AppTest.from_string(script)
         app.session_state['database'] = str(self.path)
+        app.session_state['defect_action_view'] = 'Table'
         for key,value in VIEWER.items(): app.session_state[key] = value
         with patch('tools.defect_actions_ui.local_today', return_value=date(2026,10,15)):
             app.run(timeout=20)
@@ -158,7 +191,7 @@ render(store)
             self.assertFalse(app.exception)
             self.assertTrue(any('No actions match' in x.value for x in app.info))
             app.selectbox(key='defect_filter_area').select('All areas').run(timeout=20)
-            app.button(key='defect_open_'+record['id']).click().run(timeout=20)
+            app.button(key='defect_table_open').click().run(timeout=20)
             self.assertFalse(app.exception)
             self.assertTrue(next(x for x in app.button if x.label=='Save action').disabled)
 

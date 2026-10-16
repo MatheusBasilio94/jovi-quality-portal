@@ -56,7 +56,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.6.35"
+APP_VERSION = "v0.6.36"
 
 
 @st.cache_resource(show_spinner=False)
@@ -141,6 +141,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.6.36", "Drag action cards between Kanban statuses with automatic saving, revision protection and verified closure."),
     ("v0.6.35", "Remove the action ID and the closing owner follow-up request from copied action summaries."),
     ("v0.6.34", "Add confirmed action deletion for the action creator, managers and administrators, with retained deletion history and stale-edit protection."),
     ("v0.6.33", "Add Copy Summary to action card details: copy a WhatsApp-ready saved summary with owner, deadline, countermeasure and verification, without reloading the page."),
@@ -6306,9 +6307,10 @@ def smart_report_kpi_cards(selected_by_area: dict[str, list[dict]], inputs: dict
 def _defect_action_renderer(release):
     """Load the action board modules once per published version."""
     import importlib
-    from tools import defect_actions, action_summary, defect_actions_ui
+    from tools import defect_actions, action_summary, action_kanban, defect_actions_ui
     importlib.reload(defect_actions)
     importlib.reload(action_summary)
+    importlib.reload(action_kanban)
     return defect_actions.ActionStore, importlib.reload(defect_actions_ui).render
 
 

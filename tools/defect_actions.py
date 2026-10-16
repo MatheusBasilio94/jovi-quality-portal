@@ -69,6 +69,10 @@ class ActionSyncError(RuntimeError):
     """The database committed locally but its upload did not complete."""
 
 
+class ActionVerificationRequired(ValueError):
+    """Closing an active card requires recorded effectiveness verification."""
+
+
 class ActionStore:
     def __init__(self, database, prepare_write=lambda: None, persist=lambda: None, prepare_delete=None):
         self.database = Path(database)
@@ -177,6 +181,22 @@ class ActionStore:
         except Exception as exc:
             raise ActionSyncError('The action was saved locally, but cloud synchronization was not confirmed. Retry synchronization before leaving this page.') from exc
         return record
+
+    def move(self, session, action_id, status, expected_revision):
+        require_admin_access(session)
+        if status not in STATUSES:
+            raise ValueError('Select a valid action status.')
+        current = self.get(action_id)
+        if not current:
+            raise ValueError('This action no longer exists. Refresh the board.')
+        if not expected_revision or current['revision'] != expected_revision:
+            raise ValueError('Another update was saved after this card was opened. Refresh the board and try again.')
+        if current['status'] == status:
+            return current
+        if status == 'Closed' and not (current.get('verified') and current.get('countermeasure') and current.get('evidence')):
+            raise ActionVerificationRequired('Complete the countermeasure and effectiveness verification before closing the action.')
+        # Reuse the normal validation, revision check, audit trail and durable upload.
+        return self.save(session, {**current, 'status': status}, action_id, expected_revision)
 
     def delete(self, session, action_id, expected_revision, *, confirmed=False):
         # Re-read the persisted creator; the browser's copy cannot grant permission.
