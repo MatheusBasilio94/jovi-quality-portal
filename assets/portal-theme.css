@@ -51,8 +51,11 @@ div[class*="st-key-period_shortcuts_"] [data-testid="stVerticalBlock"] { gap:0 !
 .home-trend-heading strong { font-size:18px; }
 .home-trend-heading small { font-size:12px; }
 div[class*="st-key-home_trends_smt"],div[class*="st-key-home_trends_assembly"] { background:white; border-color:#E3E8EF !important; border-radius:10px !important; padding:16px !important; }
-[data-testid="stPlotlyChart"] { border:1px solid #E3E8EF !important; border-radius:10px !important; box-shadow:none !important; padding:8px 10px !important; }
-div[class*="st-key-home_trends_"] [data-testid="stPlotlyChart"] { border:0 !important; padding:0 !important; }
+/* Keep Streamlit's measured chart height. Plotly supplies its own margins;
+   external padding/borders would overflow the fixed-height chart viewport. */
+div[data-testid="stElementContainer"]:has([data-testid="stPlotlyChart"]) { overflow:visible !important; }
+div[data-testid="stPlotlyChart"] { border:0 !important; outline:1px solid #E3E8EF; outline-offset:-1px; border-radius:10px !important; box-shadow:none !important; padding:0 !important; overflow:hidden !important; }
+div[class*="st-key-home_trends_"] [data-testid="stPlotlyChart"] { border:0 !important; outline:none; padding:0 !important; }
 /* Every category remains accessible through its scrollable list. */
 div[class*="st-key-smt_dimension_"],div[class*="st-key-assembly_dimension_"] { min-height:0 !important; box-shadow:none !important; border-radius:10px !important; }
 div[class*="st-key-smt_dimension_list_"],div[class*="st-key-assembly_dimension_list_"] { padding:0 !important; border:0 !important; }
