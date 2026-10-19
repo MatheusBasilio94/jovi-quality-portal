@@ -104,13 +104,14 @@ class ReviewGlueTests(unittest.TestCase):
         from streamlit.testing.v1 import AppTest
         tree = ast.parse(APP.read_text(encoding="utf-8-sig"))
         control = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "kpi_review_glue_controls")
-        script = "import streamlit as st\nfrom datetime import date\nfrom tools import smt_quality_dashboard\nsmt_quality_dashboard.stored_smt_sources = lambda: ([], [])\n" + ast.unparse(control)
+        defaults = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "smt_glue_default_rules")
+        script = "import streamlit as st\nfrom datetime import date\nfrom tools import smt_quality_dashboard\nsmt_quality_dashboard.stored_smt_sources = lambda: ([], [])\n" + ast.unparse(defaults) + "\n" + ast.unparse(control)
         script += "\nmode, rules = kpi_review_glue_controls(date(2026, 9, 1), date(2026, 9, 30), 'test_review')\nst.json(rules)"
         app = AppTest.from_string(script).run()
         for mode in ["Exclude glue defects", "Compare scenarios", "Include glue defects"]:
             app.segmented_control(key="test_review_glue_mode").set_value(mode).run()
             self.assertFalse(app.exception)
-            self.assertEqual(app.multiselect(key="test_review_glue_rule_Phenomenon").value, ["Disperse glue"])
+            self.assertEqual(app.multiselect(key="test_review_glue_rule_Phenomenon").value, ["Disperse glue", "Less Glue", "Random Spray"])
 
 
 if __name__ == "__main__":

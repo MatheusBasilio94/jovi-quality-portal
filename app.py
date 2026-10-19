@@ -56,7 +56,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.6.45"
+APP_VERSION = "v0.6.46"
 
 
 @st.cache_resource(show_spinner=False)
@@ -141,6 +141,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.6.46", "Include Less Glue and Random Spray with Disperse glue in default glue exclusions across SMT dashboards and KPI reviews."),
     ("v0.6.45", "Add model selection to SMT and Assembly KPI Tracks, applying the same model to input, defects, inspections, trends and source details."),
     ("v0.6.44", "Fix empty SMT dashboard selections with Arrow-backed strings, including Hide glue issues and multiple-model scopes."),
     ("v0.6.43", "Add Hide glue issues to the SMT Quality Dashboard using the existing glue definition, with consistent cards, breakdowns and exports."),
@@ -6794,6 +6795,25 @@ def kpi_review_email(
     return "\n".join(lines)
 
 
+def smt_glue_default_rules():
+    defaults = {
+        "Operation": ["SMT-Visual-Inspection"],
+        "Phenomenon": ["Disperse glue", "Less Glue", "Random Spray"],
+    }
+    # Upgrade the previous default once for sessions already open during deployment.
+    if not st.session_state.get("smt_glue_defaults_expanded_v1"):
+        for key in list(st.session_state):
+            if not key.endswith("_glue_rule_Phenomenon"):
+                continue
+            selected = st.session_state[key]
+            if isinstance(selected, (list, tuple)) and {
+                " ".join(str(value).split()).casefold() for value in selected
+            } == {"disperse glue"}:
+                st.session_state[key] = defaults["Phenomenon"].copy()
+        st.session_state["smt_glue_defaults_expanded_v1"] = True
+    return defaults
+
+
 def kpi_review_glue_controls(start_date, end_date, key_prefix):
     """Use the KPI Track glue definition with report-specific widget state."""
     import pandas as pd
@@ -6805,7 +6825,7 @@ def kpi_review_glue_controls(start_date, end_date, key_prefix):
         "Glue scenario", modes, default=modes[0], key=f"{key_prefix}_glue_mode",
         format_func=lambda value: {modes[0]: "Original data", modes[1]: "Exclude glue", modes[2]: "Compare scenarios"}[value],
     ) or modes[0]
-    defaults = {"Operation": ["SMT-Visual-Inspection"], "Phenomenon": ["Disperse glue"]}
+    defaults = smt_glue_default_rules()
     records = pd.DataFrame()
     if mode != modes[0]:
         try:
@@ -6829,7 +6849,7 @@ def kpi_review_glue_controls(start_date, end_date, key_prefix):
                              | set(initial) | set(st.session_state.get(key, [])))
             options = [value for value in options if value and value.lower() != "nan"]
             with columns[index % 2]:
-                rules[field] = st.multiselect(label, options, default=initial, key=key)
+                rules[field] = st.multiselect(label, options, default=None if key in st.session_state else initial, key=key)
     if mode != modes[0]:
         st.caption("Simulation for SMT Process NG Rate only, applied to every displayed period. Input stays unchanged; mixed-defect PCBs remain NG. Uploaded data and other KPIs are unchanged.")
         if not any(rules.values()):
@@ -8327,7 +8347,7 @@ def smt_glue_scenario_controls(analysis):
         "Glue scenario", options, default=options[0], key="smt_glue_scenario_mode",
         format_func=lambda value: {"Include glue defects": "Original data", "Exclude glue defects": "Exclude glue", "Compare scenarios": "Compare scenarios"}[value],
     ) or options[0]
-    defaults = {"Operation": ["SMT-Visual-Inspection"], "Phenomenon": ["Disperse glue"]}
+    defaults = smt_glue_default_rules()
     rules = {field: st.session_state.get(f"smt_glue_rule_{field}", defaults.get(field, []))
              for field in ("Operation", "Phenomenon", "FaultReason", "RepairRemark")}
     return mode, None if mode == options[0] else build_glue_scenarios(analysis, rules)
@@ -8336,7 +8356,7 @@ def smt_glue_scenario_controls(analysis):
 def smt_glue_scenario_details(analysis, mode, scenario):
     import pandas as pd
 
-    defaults = {"Operation": ["SMT-Visual-Inspection"], "Phenomenon": ["Disperse glue"]}
+    defaults = smt_glue_default_rules()
     rules = {}
     with st.expander("Glue defect definition / Review records", expanded=False):
         st.caption("A glue record must match every populated field below. Multiple values within a field are alternatives; an empty field adds no restriction.")
@@ -8351,7 +8371,7 @@ def smt_glue_scenario_details(analysis, mode, scenario):
                              | set(defaults.get(field, [])) | set(st.session_state.get(key, [])))
             options = [value for value in options if value and value.lower() != "nan"]
             with columns[index % 2]:
-                rules[field] = st.multiselect(label, options, default=defaults.get(field, []), key=key)
+                rules[field] = st.multiselect(label, options, default=None if key in st.session_state else defaults.get(field, []), key=key)
         st.caption("Input stays unchanged. Only glue-only PCBs are removed from Process NG; PCBs with other classified defects remain NG. Counts are evaluated within each displayed period.")
     if scenario is None:
         return
@@ -10086,7 +10106,7 @@ def smt_dashboard_glue_controls(analysis):
     )
     if not hide:
         return None
-    defaults = {"Operation": ["SMT-Visual-Inspection"], "Phenomenon": ["Disperse glue"]}
+    defaults = smt_glue_default_rules()
     rules = {}
     with st.expander("Glue defect definition / Review rules", expanded=False):
         st.caption("Same rule as SMT KPI Track: every populated field must match. Multiple values in one field are alternatives.")
@@ -10099,7 +10119,7 @@ def smt_dashboard_glue_controls(analysis):
             options = [value for value in options if value and value.lower() != "nan"]
             with columns[index % 2]:
                 rules[field] = st.multiselect(
-                    label, options, default=initial, key=key, persist_state="session",
+                    label, options, default=None if key in st.session_state else initial, key=key, persist_state="session",
                     on_change=_clear_smt_breakdown_selections,
                 )
     if not any(rules.values()):

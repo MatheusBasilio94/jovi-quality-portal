@@ -59,7 +59,7 @@ class GlueScenarioTests(unittest.TestCase):
         app_path = Path(__file__).resolve().parents[1] / "app.py"
         tree = ast.parse(app_path.read_text(encoding="utf-8-sig"))
         functions = [next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == name)
-                     for name in ("smt_glue_scenario_controls", "smt_glue_scenario_details")]
+                     for name in ("smt_glue_default_rules", "smt_glue_scenario_controls", "smt_glue_scenario_details")]
         script = '''
 import streamlit as st
 import pandas as pd
@@ -71,10 +71,10 @@ def styled_table(frame):
 analysis = {
     "totals": {"Produced": 10},
     "covered_raw": pd.DataFrame({
-        "PCB": ["A", "B"], "Operation": ["SMT-Visual-Inspection"] * 2,
-        "Phenomenon": ["Disperse glue", "Solder"],
-        "IsRejudgeOK": [False, False], "FailureType": ["Appearance Failure"] * 2,
-        "KPIDate": pd.to_datetime(["2026-09-01"] * 2),
+        "PCB": ["A", "B", "C", "D"], "Operation": ["SMT-Visual-Inspection"] * 4,
+        "Phenomenon": ["Disperse glue", "Less Glue", "Random Spray", "Solder"],
+        "IsRejudgeOK": [False] * 4, "FailureType": ["Appearance Failure"] * 4,
+        "KPIDate": pd.to_datetime(["2026-09-01"] * 4),
     }),
     "trend": pd.DataFrame({
         "Period": ["01/09"], "Input": [10],
@@ -84,14 +84,19 @@ analysis = {
 }
 '''
         app = AppTest.from_string(script + '\n'.join(ast.unparse(function) for function in functions)
-                                  + "\nmode, scenario = smt_glue_scenario_controls(analysis)\nsmt_glue_scenario_details(analysis, mode, scenario)\n").run()
+                                  + "\nmode, scenario = smt_glue_scenario_controls(analysis)\nsmt_glue_scenario_details(analysis, mode, scenario)\n")
+        app.session_state["smt_glue_rule_Phenomenon"] = ["Disperse glue"]
+        app.run()
         self.assertEqual(len(app.exception), 0)
+        self.assertEqual(app.multiselect(key="smt_glue_rule_Phenomenon").value, ["Disperse glue", "Less Glue", "Random Spray"])
         for mode in ("Exclude glue defects", "Compare scenarios", "Include glue defects"):
             app.segmented_control(key="smt_glue_scenario_mode").set_value(mode).run()
             self.assertEqual(len(app.exception), 0)
             if mode != "Include glue defects":
                 summary = app.dataframe[0].value
-                self.assertEqual(summary["Process NG PCB"].tolist(), [2, 1])
+                self.assertEqual(summary["Process NG PCB"].tolist(), [4, 1])
+        app.multiselect(key="smt_glue_rule_Phenomenon").set_value(["Disperse glue"]).run()
+        self.assertEqual(app.multiselect(key="smt_glue_rule_Phenomenon").value, ["Disperse glue"])
 
 
 if __name__ == "__main__":

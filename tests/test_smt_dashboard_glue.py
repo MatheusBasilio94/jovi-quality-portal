@@ -103,7 +103,7 @@ from numbers import Number
 from tests.test_smt_dashboard_glue import dashboard_analysis
 SMT_DEFECT_DIMENSIONS = [("Phenomenon", "Phenomenon", "", "")]
 """ + functions("_dashboard_defect_key", "_dashboard_priority", "_build_smt_dashboard_view",
-                 "_clear_smt_breakdown_selections", "smt_dashboard_glue_controls") + """
+                 "_clear_smt_breakdown_selections", "smt_glue_default_rules", "smt_dashboard_glue_controls") + """
 analysis = dashboard_analysis()
 rules = smt_dashboard_glue_controls(analysis)
 view = _build_smt_dashboard_view(analysis, "All", "All", "All", glue_rules=rules)
