@@ -30,10 +30,19 @@ class ActionSummaryTests(unittest.TestCase):
         self.assertNotIn('Overdue', text)
         self.assertNotIn('please update', text)
 
-    def test_blank_optional_fields_are_omitted_and_due_today_is_not_overdue(self):
-        text = build_action_summary(self.record(model='', defect='', root_cause='', containment='', countermeasure=''), date(2026,10,15))
-        for omitted in ['*Model:*', '*Related defect*', '*Problem / root cause*', '*Containment*', '*Countermeasure*', 'Overdue']:
-            self.assertNotIn(omitted, text)
+    def test_blank_optional_fields_are_pending_and_due_today_is_not_overdue(self):
+        text = build_action_summary(self.record(model='', defect=None, root_cause='  ', containment='', countermeasure='\n', evidence=None), date(2026,10,15))
+        for expected in ['*Model:* Pending', '*Related defect*\nPending', '*Problem / root cause*\nPending',
+                         '*Containment*\nPending', '*Countermeasure*\nPending', '*Evidence:* Pending']:
+            self.assertIn(expected, text)
+        self.assertIn('*Due date:* 15/10/26', text)
+        self.assertNotIn('Overdue', text)
+
+    def test_missing_fields_and_due_date_are_pending(self):
+        text = build_action_summary({'id': 'ACT-ABC123'}, date(2026,10,16))
+        for label in ['Action', 'Area', 'Model', 'Owner', 'Priority', 'Status', 'Due date', 'Evidence']:
+            self.assertIn(f'*{label}:* Pending', text)
+        self.assertNotIn('Overdue', text)
 
     def test_payload_preserves_unicode_but_cannot_inject_html(self):
         record = self.record(title='Cola — conexão </script><img src=x onerror=alert(1)>')

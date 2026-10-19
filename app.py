@@ -56,7 +56,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.6.41"
+APP_VERSION = "v0.6.42"
 
 
 @st.cache_resource(show_spinner=False)
@@ -141,6 +141,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.6.42", "Show Pending for unfilled action fields in Copy Summary, including evidence and missing due dates."),
     ("v0.6.41", "Remove internal vertical chart scrollbars by matching Plotly viewport dimensions, preserving labels, page scrolling and horizontal date controls."),
     ("v0.6.40", "Standardize action statistics charts, status colors, integer scales, data labels and Brazilian date axes with compact chart copying."),
     ("v0.6.39", "Assign readable area-based monthly action codes, preserve existing cards and history, and include the code in copied summaries."),

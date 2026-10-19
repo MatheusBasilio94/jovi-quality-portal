@@ -10,26 +10,25 @@ def build_action_summary(record, today=None):
     today = today or local_today()
     text = lambda key: str(record.get(key) or '').strip()
     lines = ['📋 *QUALITY ACTION*', '']
-    if action_code(record): lines.append(f'*Code:* {action_code(record)}')
+    lines.append(f"*Code:* {action_code(record) or 'Pending'}")
     for key, label in [('title','Action'), ('area','Area'), ('model','Model'), ('owner','Owner'),
                        ('priority','Priority'), ('status','Status')]:
-        if text(key): lines.append(f'*{label}:* {text(key)}')
+        lines.append(f"*{label}:* {text(key) or 'Pending'}")
+    lines.append(f"*Due date:* {br_date(text('due_date')) if text('due_date') else 'Pending'}")
     if text('due_date'):
-        lines.append(f"*Due date:* {br_date(record['due_date'])}")
-        due = date.fromisoformat(record['due_date'])
+        due = date.fromisoformat(text('due_date'))
         late = (today-due).days
         if late > 0 and text('status') != 'Closed':
             lines.append(f"🔴 *Overdue:* {late} {'day' if late==1 else 'days'}")
     for key, heading in [('defect','🔎 *Related defect*'), ('root_cause','*Problem / root cause*'),
                          ('containment','🛡️ *Containment*'), ('countermeasure','🔧 *Countermeasure*')]:
-        if text(key): lines.extend(['', heading, text(key)])
+        lines.extend(['', heading, text(key) or 'Pending'])
     lines.extend(['', '✅ *Effectiveness verification*'])
     if record.get('verified'):
         lines.append('Verified' + (f" — closed on {br_date(record['closed_at'])}." if record.get('closed_at') else '.'))
-        if text('evidence'): lines.append(text('evidence'))
     else:
         lines.append('Pending — record the validation results before closing the action.')
-        if text('evidence'): lines.append(text('evidence'))
+    lines.append(f"*Evidence:* {text('evidence') or 'Pending'}")
     return '\n'.join(lines)
 
 
