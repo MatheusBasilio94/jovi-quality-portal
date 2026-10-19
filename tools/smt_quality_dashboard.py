@@ -771,18 +771,19 @@ def analyze_smt_quality_paths(
     end_text: str,
     failure_rule_version: str = SMT_FAILURE_RULE_VERSION,
     trend_policy_version: int = SMT_TREND_POLICY_VERSION,
+    model: str | None = None,
 ) -> dict:
     model_parts = []
     org_parts = []
     input_audits = []
     for signature in input_signatures:
-        model, org, audit = read_input_path_cached(*signature)
+        model_part, org, audit = read_input_path_cached(*signature)
         modified_ns = signature[2]
-        model = model.copy()
+        model_part = model_part.copy()
         org = org.copy()
-        model["SourceModified"] = modified_ns
+        model_part["SourceModified"] = modified_ns
         org["SourceModified"] = modified_ns
-        model_parts.append(model)
+        model_parts.append(model_part)
         org_parts.append(org)
         input_audits.append(audit)
     input_model = pd.concat(model_parts, ignore_index=True)
@@ -791,20 +792,26 @@ def analyze_smt_quality_paths(
     input_model = input_model.sort_values("SourceModified")
     exact_duplicate_rows = int(input_model.duplicated(exact_keys, keep="last").sum())
     input_model = input_model.drop_duplicates(exact_keys, keep="last").reset_index(drop=True)
+    if model is not None:
+        from tools.kpi_model_filter import filter_model_records
+        input_model = filter_model_records(input_model, model)
+        input_org = filter_model_records(input_org, model)
 
     overlap_conflicts = []
-    for model, group in input_model.groupby("Model"):
+    for input_model_name, group in input_model.groupby("Model"):
         rows = group.sort_values("BeginDate")
         values = list(rows[["BeginDate", "EndDateExclusive", "SourceFile"]].itertuples(index=False, name=None))
         for index, left in enumerate(values):
             for right in values[index + 1 :]:
                 if left[0] < right[1] and right[0] < left[1]:
-                    overlap_conflicts.append({"Model": model, "LeftFile": left[2], "RightFile": right[2]})
+                    overlap_conflicts.append({"Model": input_model_name, "LeftFile": left[2], "RightFile": right[2]})
 
     defects, defect_audit = consolidate_defect_sources(defect_signatures, failure_rule_version)
     defects = defects.copy()
     defects["FailureType"] = defects["Operation"].map(classify_smt_failure_type)
     defects = defects[defects["ValidDefect"]].copy()
+    if model is not None:
+        defects = filter_model_records(defects, model)
     source_defect_dates = pd.to_datetime(defects["KPIDate"], errors="coerce").dropna()
     source_defect_start = source_defect_dates.min().normalize() if not source_defect_dates.empty else pd.NaT
     source_defect_end = source_defect_dates.max().normalize() if not source_defect_dates.empty else pd.NaT

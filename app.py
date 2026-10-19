@@ -56,7 +56,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.6.44"
+APP_VERSION = "v0.6.45"
 
 
 @st.cache_resource(show_spinner=False)
@@ -141,6 +141,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.6.45", "Add model selection to SMT and Assembly KPI Tracks, applying the same model to input, defects, inspections, trends and source details."),
     ("v0.6.44", "Fix empty SMT dashboard selections with Arrow-backed strings, including Hide glue issues and multiple-model scopes."),
     ("v0.6.43", "Add Hide glue issues to the SMT Quality Dashboard using the existing glue definition, with consistent cards, breakdowns and exports."),
     ("v0.6.42", "Show Pending for unfilled action fields in Copy Summary, including evidence and missing due dates."),
@@ -8162,8 +8163,8 @@ def build_smt_oqc_trend(oqc_records, start_date: date, end_date: date):
     return oqc_trend.sort_values("PeriodDate"), settings
 
 
-def calculate_assembly_smt_duty_kpi(start_date: date, end_date: date) -> dict:
-    metrics = calculate_assembly_kpi_metrics(start_date, end_date)
+def calculate_assembly_smt_duty_kpi(start_date: date, end_date: date, *, model=None) -> dict:
+    metrics = calculate_assembly_kpi_metrics(start_date, end_date, model=model)
     duty_rows = metrics["defects"][metrics["defects"]["IsSMTDuty"]].copy()
     trend = metrics["trend"][["PeriodDate", "Period", "Produced", "SMTDutyPCBs", "SMTDutyPPM", "SMTDutyStatus"]].copy()
     trend = trend.rename(columns={"SMTDutyPCBs": "DutyDefects", "SMTDutyPPM": "DutyPPM"})
@@ -8208,7 +8209,7 @@ def assembly_input_bounds_cached(
     return min(starts).date(), max(starts).date()
 
 
-def calculate_assembly_kpi_metrics(start_date: date, end_date: date) -> dict:
+def calculate_assembly_kpi_metrics(start_date: date, end_date: date, *, model=None) -> dict:
     sources = stored_assembly_sources_v2()
     if not sources["input"] or not sources["defects"] or not sources["repair"]:
         raise RuntimeError("Carregue inputs diários, defeitos gerais cumulativos e reparo cumulativo de Assembly.")
@@ -8223,6 +8224,7 @@ def calculate_assembly_kpi_metrics(start_date: date, end_date: date) -> dict:
         start_date.isoformat(),
         end_date.isoformat(),
         assembly_kpi_v2.ASSEMBLY_KPI_RULE_VERSION,
+        model=model,
     )
 
 
@@ -8249,6 +8251,7 @@ def calculate_assembly_kpi_metrics_cached(
     start_text: str,
     end_text: str,
     rule_version: str,
+    model=None,
 ) -> dict:
     """Read Assembly source workbooks once per source revision and period."""
     _ = rule_version  # Cache key: rules may change without changing a source file.
@@ -8257,6 +8260,10 @@ def calculate_assembly_kpi_metrics_cached(
     inputs, defects = prepare_assembly_kpi_sources_cached(
         input_signatures, defect_signatures, repair_signatures, rule_version
     )
+    if model is not None:
+        from tools.kpi_model_filter import filter_model_records
+        inputs = filter_model_records(inputs, model)
+        defects = filter_model_records(defects, model)
     result = assembly_kpi_v2.calculate_from_prepared(
         inputs,
         defects,
@@ -8374,9 +8381,23 @@ def smt_glue_scenario_details(analysis, mode, scenario):
         details["Glue definition"] = rule_text
         st.download_button("Download PCB / SN audit", br_frame(details).to_csv(index=False).encode("utf-8-sig"), file_name="smt_glue_pcb_audit.csv", mime="text/csv", key="smt_glue_audit_csv")
 
+def kpi_track_model_control(inputs, key):
+    from tools.kpi_model_filter import model_options
+
+    options = ["All models", *model_options(inputs)]
+    if st.session_state.get(key, options[0]) not in options:
+        st.session_state[key] = options[0]
+    selected = st.selectbox(
+        "Model", options, key=key, persist_state="session",
+        help="Models with input in the selected period. Applies to all KPIs, charts and source details.",
+    )
+    return None if selected == "All models" else selected
+
+
 def smt_kpi_track_page(color: str) -> None:
     import pandas as pd
     from tools import smt_quality_dashboard
+    from tools.kpi_model_filter import filter_model_records
 
     if (
         getattr(smt_quality_dashboard, "SMT_TREND_POLICY_VERSION", None) != 2
@@ -8392,9 +8413,10 @@ def smt_kpi_track_page(color: str) -> None:
         st.info("Abra a aba Data Upload e carregue pelo menos o Input FPY e os Defeitos FPY para iniciar os cálculos de SMT.")
         return
     input_signatures = tuple(smt_quality_dashboard.path_signature(path) for path in input_paths)
+    defect_signatures = tuple(smt_quality_dashboard.path_signature(path) for path in defect_paths)
     minimum_date, maximum_date = smt_quality_dashboard.input_bounds(input_signatures)
     with st.container(key="kpi_track_filters"):
-        period_column, scenario_column = st.columns([1.1, 3.3])
+        period_column, model_column, scenario_column = st.columns([1.1, 1.2, 2.1])
     with period_column:
         start_date, end_date = analysis_period_control(
             "smt_kpi_period",
@@ -8409,12 +8431,20 @@ def smt_kpi_track_page(color: str) -> None:
 
     smt_analysis = smt_quality_dashboard.analyze_smt_quality_paths(
         input_signatures,
-        tuple(smt_quality_dashboard.path_signature(path) for path in defect_paths),
+        defect_signatures,
         start_date.isoformat(),
         end_date.isoformat(),
         smt_quality_dashboard.SMT_FAILURE_RULE_VERSION,
         smt_quality_dashboard.SMT_TREND_POLICY_VERSION,
     )
+    with model_column:
+        selected_model = kpi_track_model_control(smt_analysis["selected_input"], "smt_kpi_model")
+    if selected_model is not None:
+        smt_analysis = smt_quality_dashboard.analyze_smt_quality_paths(
+            input_signatures, defect_signatures, start_date.isoformat(), end_date.isoformat(),
+            smt_quality_dashboard.SMT_FAILURE_RULE_VERSION,
+            smt_quality_dashboard.SMT_TREND_POLICY_VERSION, model=selected_model,
+        )
     with scenario_column:
         glue_mode, glue_scenario = smt_glue_scenario_controls(smt_analysis)
     exclude_glue = glue_mode == "Exclude glue defects"
@@ -8428,12 +8458,12 @@ def smt_kpi_track_page(color: str) -> None:
     function_pass_valid = smt_totals.get("FunctionPassStatus") == "Valid"
     process_ng_valid = smt_totals.get("SMTProcessStatus") == "Valid"
     try:
-        assembly_kpi = calculate_assembly_smt_duty_kpi(start_date, end_date)
+        assembly_kpi = calculate_assembly_smt_duty_kpi(start_date, end_date, model=selected_model)
         assembly_error = ""
     except Exception as exc:
         assembly_kpi = None
         assembly_error = str(exc)
-    oqc_records = load_smt_oqc_inspections(start_date, end_date)
+    oqc_records = filter_model_records(load_smt_oqc_inspections(start_date, end_date), selected_model)
     oqc_inspected = int(oqc_records["Inspected"].sum()) if not oqc_records.empty else 0
     oqc_ok = int(oqc_records["OK"].sum()) if not oqc_records.empty else 0
     oqc_ng = int(oqc_records["NG"].sum()) if not oqc_records.empty else 0
@@ -8721,6 +8751,7 @@ def smt_kpi_track_page(color: str) -> None:
 
 def assembly_kpi_track_page(color: str) -> None:
     import pandas as pd
+    from tools.kpi_model_filter import filter_model_records
 
     st.markdown("<div><h1 class='section-title'>Assembly KPI Track</h1><div class='page-subtitle'>Monitor KPI achievement and daily trends.</div></div>", unsafe_allow_html=True)
     sources = stored_assembly_sources_v2()
@@ -8735,6 +8766,8 @@ def assembly_kpi_track_page(color: str) -> None:
         return
 
     with st.container(key="kpi_track_filters"):
+        period_column, model_column = st.columns([1.1, 3.3])
+    with period_column:
         start_date, end_date = analysis_period_control(
             "assembly_kpi_period",
             minimum_date,
@@ -8747,6 +8780,10 @@ def assembly_kpi_track_page(color: str) -> None:
         return
     try:
         metrics = calculate_assembly_kpi_metrics(start_date, end_date)
+        with model_column:
+            selected_model = kpi_track_model_control(metrics["inputs"], "assembly_kpi_model")
+        if selected_model is not None:
+            metrics = calculate_assembly_kpi_metrics(start_date, end_date, model=selected_model)
         calculation_error = ""
     except Exception as exc:
         metrics = None
@@ -8762,7 +8799,7 @@ def assembly_kpi_track_page(color: str) -> None:
         "Regras MES validadas: PCB único no período; defeitos separados por TestOperation; "
         "responsabilidade final atualizada pelo reparo cumulativo."
     )
-    oqc_fqc_records = load_assembly_oqc_fqc_inspections(start_date, end_date)
+    oqc_fqc_records = filter_model_records(load_assembly_oqc_fqc_inspections(start_date, end_date), selected_model)
     oqc_inspected = int(oqc_fqc_records["OQCInspected"].sum()) if not oqc_fqc_records.empty else 0
     oqc_ok = int(oqc_fqc_records["OQCOK"].sum()) if not oqc_fqc_records.empty else 0
     fqc_inspected = int(oqc_fqc_records["FQCInspected"].sum()) if not oqc_fqc_records.empty else 0
