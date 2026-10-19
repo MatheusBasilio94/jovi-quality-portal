@@ -56,7 +56,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.6.42"
+APP_VERSION = "v0.6.43"
 
 
 @st.cache_resource(show_spinner=False)
@@ -141,6 +141,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.6.43", "Add Hide glue issues to the SMT Quality Dashboard using the existing glue definition, with consistent cards, breakdowns and exports."),
     ("v0.6.42", "Show Pending for unfilled action fields in Copy Summary, including evidence and missing due dates."),
     ("v0.6.41", "Remove internal vertical chart scrollbars by matching Plotly viewport dimensions, preserving labels, page scrolling and horizontal date controls."),
     ("v0.6.40", "Standardize action statistics charts, status colors, integer scales, data labels and Brazilian date axes with compact chart copying."),
@@ -9013,7 +9014,7 @@ def _dashboard_priority(value: float, target: float | None = None) -> str:
     return "Monitor"
 
 
-def _build_smt_dashboard_view(analysis: dict, model: str | list[str], station: str, failure_type: str, duty_type: str = "All") -> dict:
+def _build_smt_dashboard_view(analysis: dict, model: str | list[str], station: str, failure_type: str, duty_type: str = "All", *, glue_rules=None) -> dict:
     import pandas as pd
     from tools import smt_quality_dashboard
 
@@ -9037,6 +9038,9 @@ def _build_smt_dashboard_view(analysis: dict, model: str | list[str], station: s
             view = view[view["FailureType"].eq(failure_type)]
         if duty_type != "All":
             view = view[view["DutyType"].eq(duty_type)]
+        if glue_rules is not None:
+            from tools.smt_glue_scenario import glue_mask
+            view = view.loc[~glue_mask(view, glue_rules)]
         return view
 
     covered = apply_filters(covered)
@@ -10032,6 +10036,39 @@ def smt_model_comparison_page(color: str) -> None:
     )
 
 
+def smt_dashboard_glue_controls(analysis):
+    import pandas as pd
+    from tools.smt_glue_scenario import RULE_FIELDS
+
+    hide = st.checkbox(
+        "Hide glue issues", key="smt_quality_v2_hide_glue", persist_state="session",
+        on_change=_clear_smt_breakdown_selections,
+        help="Hide matching glue records from cards, breakdowns, charts and exports. Input stays unchanged; boards with other defects remain NG.",
+    )
+    if not hide:
+        return None
+    defaults = {"Operation": ["SMT-Visual-Inspection"], "Phenomenon": ["Disperse glue"]}
+    rules = {}
+    with st.expander("Glue defect definition / Review rules", expanded=False):
+        st.caption("Same rule as SMT KPI Track: every populated field must match. Multiple values in one field are alternatives.")
+        columns = st.columns(2)
+        for index, (field, label) in enumerate(zip(RULE_FIELDS, ["TestOperation", "Fault Phenomenon", "Fault reason", "RepaireRemark"])):
+            key = f"smt_quality_v2_glue_rule_{field}"
+            initial = st.session_state.get(f"smt_glue_rule_{field}", defaults.get(field, []))
+            values = analysis["covered_raw"].get(field, pd.Series(dtype="object"))
+            options = sorted(set(values.dropna().astype(str).str.strip()) | set(initial) | set(st.session_state.get(key, [])))
+            options = [value for value in options if value and value.lower() != "nan"]
+            with columns[index % 2]:
+                rules[field] = st.multiselect(
+                    label, options, default=initial, key=key, persist_state="session",
+                    on_change=_clear_smt_breakdown_selections,
+                )
+    if not any(rules.values()):
+        st.warning("Choose at least one glue classification value. With no rule, no records are hidden.")
+    st.caption("Glue issues hidden · Input stays unchanged. Boards with other defects remain in the analysis.")
+    return rules
+
+
 def smt_quality_dashboard_v2(color: str) -> None:
     from tools import smt_quality_dashboard
 
@@ -10100,9 +10137,10 @@ def smt_quality_dashboard_v2(color: str) -> None:
             duty_type = st.selectbox("DutyType", duty_options, key="smt_quality_v2_duty_type", persist_state="session")
         with station_column:
             station = st.selectbox("Process / Station", station_options, key="smt_quality_v2_station", persist_state="session")
+        glue_rules = smt_dashboard_glue_controls(analysis)
 
     model_filter = selected_models or "All"
-    view = _build_smt_dashboard_view(analysis, model_filter, station, failure_type, duty_type)
+    view = _build_smt_dashboard_view(analysis, model_filter, station, failure_type, duty_type, glue_rules=glue_rules)
     issue_pareto = smt_dashboard_issue_pareto(view["confirmed"])
     top_issue = issue_pareto.iloc[0] if not issue_pareto.empty else None
 

@@ -63,6 +63,7 @@ class GlueScenarioTests(unittest.TestCase):
         script = '''
 import streamlit as st
 import pandas as pd
+from tools.br_datetime import br_frame
 def fmt_ppm(value):
     return f"{value:,.0f}"
 def styled_table(frame):
