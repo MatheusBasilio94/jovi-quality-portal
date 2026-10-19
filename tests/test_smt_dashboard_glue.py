@@ -75,6 +75,26 @@ class DashboardGlueTests(unittest.TestCase):
         no_rules = self.build(analysis, "All", "All", "All", glue_rules={})
         self.assertEqual(no_rules["confirmed_pcbs"], 5)
 
+    def test_empty_arrow_string_scopes_with_all_or_multiple_models(self):
+        for model in ["All", ["M1", "M2"]]:
+            for scope in ["all_glue", "no_covered_records", "no_records"]:
+                with self.subTest(model=model, scope=scope):
+                    analysis = dashboard_analysis()
+                    for name in ["raw", "covered_raw"]:
+                        frame = analysis[name]
+                        frame["Model"] = frame["Model"].astype("string[pyarrow]")
+                        frame["PCB"] = frame["PCB"].astype("string[pyarrow]")
+                        frame["Operation"] = "SMT-Visual-Inspection"
+                        frame["Phenomenon"] = "Disperse glue"
+                        if scope == "no_records" or (scope == "no_covered_records" and name == "covered_raw"):
+                            analysis[name] = frame.iloc[:0].copy()
+                    view = self.build(analysis, model, "All", "All",
+                                      glue_rules=self.rules if scope == "all_glue" else None)
+                    self.assertEqual(view["produced"], 120)
+                    self.assertTrue(view["confirmed"].empty)
+                    self.assertEqual(view["confirmed_pcbs"], 0)
+                    self.assertEqual(view["overall_ppm"], 0)
+
     def test_control_toggles_scenario_and_preserves_custom_definition(self):
         from streamlit.testing.v1 import AppTest
         script = """

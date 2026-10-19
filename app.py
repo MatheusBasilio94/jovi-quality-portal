@@ -56,7 +56,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.6.43"
+APP_VERSION = "v0.6.44"
 
 
 @st.cache_resource(show_spinner=False)
@@ -141,6 +141,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.6.44", "Fix empty SMT dashboard selections with Arrow-backed strings, including Hide glue issues and multiple-model scopes."),
     ("v0.6.43", "Add Hide glue issues to the SMT Quality Dashboard using the existing glue definition, with consistent cards, breakdowns and exports."),
     ("v0.6.42", "Show Pending for unfilled action fields in Copy Summary, including evidence and missing due dates."),
     ("v0.6.41", "Remove internal vertical chart scrollbars by matching Plotly viewport dimensions, preserving labels, page scrolling and horizontal date controls."),
@@ -9051,8 +9052,9 @@ def _build_smt_dashboard_view(analysis: dict, model: str | list[str], station: s
     covered["_DefectKey"] = _dashboard_defect_key(covered)
     calendar["_DefectKey"] = _dashboard_defect_key(calendar)
     if use_model_scoped_board_keys:
-        covered["_DefectKey"] = covered["Model"].fillna("").astype(str) + "::" + covered["_DefectKey"]
-        calendar["_DefectKey"] = calendar["Model"].fillna("").astype(str) + "::" + calendar["_DefectKey"]
+        # Explicit string types also support empty Arrow-backed selections.
+        covered["_DefectKey"] = covered["Model"].fillna("").astype("string").str.cat(covered["_DefectKey"].astype("string"), sep="::")
+        calendar["_DefectKey"] = calendar["Model"].fillna("").astype("string").str.cat(calendar["_DefectKey"].astype("string"), sep="::")
     confirmed = covered[~covered["IsRejudgeOK"].fillna(False).astype(bool)].copy()
     rejudge = covered[covered["IsRejudgeOK"].fillna(False).astype(bool)].copy()
     classified = confirmed[
