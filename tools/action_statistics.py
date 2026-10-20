@@ -13,7 +13,7 @@ BLUE = '#2563EB'
 PURPLE = '#7752D9'
 GREEN = '#07854B'
 NAVY = '#0B1F3A'
-STATUS_COLORS = [BLUE, PURPLE, '#B77909', GREEN]
+STATUS_COLORS = [BLUE, PURPLE, '#B77909', GREEN, '#087F8C']
 AREA_COLORS = {'SMT': BLUE, 'Assembly': PURPLE, 'IQC': '#087F8C', 'Lab': '#9462CB', 'Other': '#64748B'}
 CHART_CONFIG = dict(displayModeBar=True, displaylogo=False, responsive=True,
     modeBarButtonsToRemove=['zoom2d','pan2d','select2d','lasso2d','zoomIn2d','zoomOut2d','autoScale2d','resetScale2d','toggleSpikelines'],
@@ -39,7 +39,7 @@ def _layout(figure, title, labels, maximum, *, height=360, x_title=''):
         ticktext=[labels[i] for i in tick_indices], tickangle=-35 if count>12 else 0,
         range=[-0.65,max(count-1,0)+0.65], showgrid=False, zeroline=False,
         showline=True,linecolor='#C8D3E3',automargin=True,fixedrange=True)
-    figure.update_yaxes(title_text='Actions', tickmode='linear', tick0=0,dtick=step,tickformat=',.0f',
+    figure.update_yaxes(title_text='Records', tickmode='linear', tick0=0,dtick=step,tickformat=',.0f',
         range=[0,top], gridcolor='#DDE5F0',zeroline=False,automargin=True,fixedrange=True)
     return figure
 
@@ -47,17 +47,17 @@ def _layout(figure, title, labels, maximum, *, height=360, x_title=''):
 def count_chart(records, dimension):
     counts = Counter(record[dimension] for record in records)
     if dimension=='status':
-        categories, colors, title = STATUSES, STATUS_COLORS, 'Actions by status'
+        categories, colors, title = STATUSES, STATUS_COLORS, 'Records by status'
     elif dimension=='area':
         categories = [area for area in AREAS if counts[area]]
-        colors, title = [AREA_COLORS[area] for area in categories], 'Actions by area'
+        colors, title = [AREA_COLORS[area] for area in categories], 'Records by area'
     else:
         raise ValueError('Select status or area for action counts.')
     values = [counts[category] for category in categories]
     figure = go.Figure(go.Bar(x=list(range(len(categories))),y=values,width=0.42,
         marker_color=colors,text=values,textposition='outside',cliponaxis=False,
         textfont=dict(size=14,color=NAVY),customdata=categories,
-        hovertemplate='%{customdata}<br>Actions: %{y:,.0f}<extra></extra>'))
+        hovertemplate='%{customdata}<br>Records: %{y:,.0f}<extra></extra>'))
     figure.update_layout(showlegend=False)
     labels = [category.replace('Pending verification','Pending<br>verification') for category in categories]
     return _layout(figure,title,labels,max(values,default=0))
@@ -70,16 +70,18 @@ def _local_day(value):
 
 
 def action_timeline(records):
-    created, closed = Counter(), Counter()
+    created, closed, notifications = Counter(), Counter(), Counter()
     for record in records:
-        created[_local_day(record['created_at'])] += 1
+        target = notifications if record['status'] == 'Notification' else created
+        target[_local_day(record['created_at'])] += 1
         if record['status']=='Closed' and record.get('closed_at'):
             closed[_local_day(record['closed_at'])] += 1
-    if not created:
-        return pd.DataFrame(columns=['Period','Created','Closed']), 'Daily'
-    days = pd.date_range(min([*created,*closed]),max([*created,*closed]))
+    if not created and not notifications:
+        return pd.DataFrame(columns=['Period','Created','Closed','Notifications']), 'Daily'
+    days = pd.date_range(min([*created,*closed,*notifications]),max([*created,*closed,*notifications]))
     frame = pd.DataFrame({'Created':[created[day.date()] for day in days],
-                          'Closed':[closed[day.date()] for day in days]},index=days)
+                          'Closed':[closed[day.date()] for day in days],
+                          'Notifications':[notifications[day.date()] for day in days]},index=days)
     grain = 'Daily'
     if len(days)>180:
         frame = frame.resample('MS').sum()
@@ -96,15 +98,17 @@ def action_timeline(records):
 def timeline_chart(records):
     frame, grain = action_timeline(records)
     figure = go.Figure()
-    for name,color in [('Created',BLUE),('Closed',GREEN)]:
+    series = [('Created',BLUE),('Closed',GREEN)]
+    if frame['Notifications'].sum(): series.append(('Notifications','#087F8C'))
+    for name,color in series:
         values = frame[name].tolist()
         figure.add_trace(go.Bar(name=name,x=list(range(len(frame))),y=values,width=0.28,
             offsetgroup=name,marker_color=color,text=[str(value) if value else '' for value in values],
             textposition='outside',cliponaxis=False,textfont=dict(size=13,color=NAVY),
             customdata=frame['Period'].tolist(),
             hovertemplate=f'%{{customdata}}<br>{name}: %{{y:,.0f}}<extra></extra>'))
-    maximum = max([*frame['Created'],*frame['Closed']],default=0)
-    _layout(figure,f'Actions created and closed · {grain}',frame['Period'].tolist(),maximum,
+    maximum = max([*frame['Created'],*frame['Closed'],*frame['Notifications']],default=0)
+    _layout(figure,f'Actions and occurrence notifications · {grain}',frame['Period'].tolist(),maximum,
             height=400,x_title={'Daily':'Date','Weekly':'Week starting','Monthly':'Month'}[grain])
     figure.update_layout(barmode='group',showlegend=True,height=460,
         margin=dict(l=55,r=25,t=65,b=150),

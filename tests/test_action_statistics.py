@@ -12,8 +12,8 @@ class StatisticsTests(unittest.TestCase):
     def test_counts_follow_selected_actions_and_preserve_zero_statuses(self):
         rows=[action(),action(status='In progress',area='Assembly'),action(status='Closed',closed='2026-10-02T10:00:00+00:00')]
         status=count_chart(rows,'status')
-        self.assertEqual(list(status.data[0].y),[1,1,0,1])
-        self.assertEqual(list(status.data[0].customdata),['Open','In progress','Pending verification','Closed'])
+        self.assertEqual(list(status.data[0].y),[1,1,0,1,0])
+        self.assertEqual(list(status.data[0].customdata),['Open','In progress','Pending verification','Closed','Notification'])
         area=count_chart(rows,'area')
         self.assertEqual(list(area.data[0].y),[2,1])
         self.assertEqual(list(area.data[0].customdata),['SMT','Assembly'])
@@ -52,6 +52,16 @@ class StatisticsTests(unittest.TestCase):
         self.assertTrue(frame.empty)
         self.assertEqual(grain,'Daily')
         self.assertEqual(list(timeline_chart([]).data[0].y),[])
+
+    def test_notifications_have_separate_period_counts_and_status_color(self):
+        rows = [action(), action(status='Notification'), action('2026-11-02T10:00:00+00:00', status='Notification')]
+        frame, grain = action_timeline(rows)
+        self.assertEqual((frame['Created'].sum(), frame['Notifications'].sum()), (1, 2))
+        chart = timeline_chart(rows)
+        self.assertEqual([(trace.name, sum(trace.y)) for trace in chart.data], [('Created', 1), ('Closed', 0), ('Notifications', 2)])
+        status = count_chart(rows, 'status')
+        self.assertEqual(status.data[0].y[-1], 2)
+        self.assertEqual(len(status.data[0].marker.color), 5)
 
 
 if __name__=='__main__': unittest.main()

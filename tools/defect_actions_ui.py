@@ -83,13 +83,14 @@ def details(store, record=None, initial_status='Open', legacy_source=None, reque
     components.html('<script>' + script + '</script>', height=0, scrolling=False)
     if requested_status == 'Closed':
         st.info('Complete the countermeasure and effectiveness verification, then save to close this action.')
+    st.caption('Use Notification to record an occurrence for monitoring. Owner and due date are optional for notifications; other statuses require both.')
     with st.form('defect_action_form'):
         title = st.text_input('Action title *', record.get('title', ''), max_chars=160, disabled=not editable)
         left, right = st.columns(2)
         with left:
             area = st.selectbox('Area', AREAS, index=AREAS.index(record.get('area', 'SMT')), disabled=not editable)
-            owner = st.text_input('Owner *', record.get('owner', ''), max_chars=100, disabled=not editable)
-            due_date = st.date_input('Due date *', date.fromisoformat(record['due_date']) if record.get('due_date') else local_today(), format='DD/MM/YYYY', disabled=not editable)
+            owner = st.text_input('Owner', record.get('owner', ''), max_chars=100, disabled=not editable, help='Optional for Notification; required for action statuses.')
+            due_date = st.date_input('Due date', date.fromisoformat(record['due_date']) if record.get('due_date') else None, format='DD/MM/YYYY', disabled=not editable, help='Optional for Notification; required for action statuses.')
         with right:
             model = st.text_input('Model', record.get('model', ''), placeholder='All models or a specific model', disabled=not editable)
             priority = st.selectbox('Priority', PRIORITIES, index=PRIORITIES.index(record.get('priority', 'Medium')), disabled=not editable)
@@ -102,7 +103,7 @@ def details(store, record=None, initial_status='Open', legacy_source=None, reque
         verified = st.checkbox('Effectiveness verified — required to close the action', value=record.get('verified', False), disabled=not editable)
         if st.form_submit_button('Save action', type='primary', disabled=not editable, width='stretch'):
             try:
-                store.save(st.session_state, dict(title=title, area=area, owner=owner, due_date=due_date.isoformat(),
+                store.save(st.session_state, dict(title=title, area=area, owner=owner, due_date=due_date.isoformat() if due_date else '',
                     model=model, priority=priority, status=status, defect=defect, root_cause=root_cause,
                     containment=containment, countermeasure=countermeasure, evidence=evidence, verified=verified),
                     action_id=record.get('id'), expected_revision=record.get('revision', ''), legacy_source=legacy_source)
@@ -128,14 +129,17 @@ def details(store, record=None, initial_status='Open', legacy_source=None, reque
 def _card(store, action, today):
     with st.container(key='action_card_'+action['id']):
         pcolor, pbg = {'High': ('#B91C1C', '#FEE7E7'), 'Medium': ('#93600B', '#FFF2D8'), 'Low': ('#496A8D', '#EDF3F9')}[action['priority']]
-        st.markdown(f'<div class="action-tags"><span class="action-tag">{escape(action["area"])}</span><span class="action-tag" style="color:{pcolor};background:{pbg}">{escape(action["priority"])} priority</span></div><div class="action-title">{escape(action["title"])}</div><div class="action-model">{escape(action["model"] or "All models")} · {escape(action_code(action))}</div><div class="action-owner"><span class="owner-circle">{escape(action["owner"][0].upper())}</span>{escape(action["owner"])}</div>', unsafe_allow_html=True)
-        due = date.fromisoformat(action['due_date'])
-        if action['status'] == 'Closed':
+        owner = action['owner'] or 'No owner'
+        st.markdown(f'<div class="action-tags"><span class="action-tag">{escape(action["area"])}</span><span class="action-tag" style="color:{pcolor};background:{pbg}">{escape(action["priority"])} priority</span></div><div class="action-title">{escape(action["title"])}</div><div class="action-model">{escape(action["model"] or "All models")} · {escape(action_code(action))}</div><div class="action-owner"><span class="owner-circle">{escape(owner[0].upper())}</span>{escape(owner)}</div>', unsafe_allow_html=True)
+        due = date.fromisoformat(action['due_date']) if action.get('due_date') else None
+        if action['status'] == 'Notification':
+            text, color, bg = 'Recorded '+br_date(action['created_at']), '#087F8C', '#E1F5F5'
+        elif action['status'] == 'Closed':
             text, color, bg = '✓ Closed · effectiveness verified', '#07854B', '#E1F6EB'
         elif overdue(action, today):
             text, color, bg = f'◷ {due:%d/%m} · {(today-due).days}d overdue', '#B91C1C', '#FEE7E7'
         else:
-            text, color, bg = f'◷ Due {due:%d/%m/%y}', '#496A8D', '#EFF4FA'
+            text, color, bg = ('◷ Due '+br_date(due)) if due else 'Due date pending', '#496A8D', '#EFF4FA'
         st.markdown(f'<div class="action-due" style="color:{color};background:{bg}">{text}</div>', unsafe_allow_html=True)
         if st.button('Open action ↗', key='defect_open_'+action['id'], width='stretch'):
             details(store, store.get(action['id']))
@@ -153,12 +157,12 @@ def _statistics(records, today):
         st.info('No actions match the selected filters.')
         return
     stats = summary(records, today)
-    rate_cards = [('CLOSURE RATE',f"{stats['closure_rate']:.0%}",'Closed actions / actions created','#2563EB'),
+    rate_cards = [('CLOSURE RATE',f"{stats['closure_rate']:.0%}" if stats['closure_rate'] is not None else '—','Closed actions / actions created','#2563EB'),
                   ('CLOSED ON TIME',f"{stats['on_time_rate']:.0%}" if stats['on_time_rate'] is not None else '—',
                    'Closed by their current due date','#07854B')]
     for column,(label,value,note,tone) in zip(st.columns(2),rate_cards):
         column.markdown(f'<div class="action-metric" style="--tone:{tone}"><div class="action-metric-label">{label}</div><div class="action-metric-value">{value}</div><div class="action-metric-note">{note}</div></div>',unsafe_allow_html=True)
-    st.caption('Statistics follow the current filters. Closed on time compares the latest closure date to the current due date. Reopened actions are counted as active.')
+    st.caption('Statistics follow the current filters. Notifications are tracked separately and excluded from action completion rates and overdue counts. Closed on time compares the latest closure date to the current due date.')
     by_status, by_area = st.columns(2)
     with by_status:
         st.plotly_chart(count_chart(records,'status'),width='stretch',theme=None,
@@ -167,12 +171,12 @@ def _statistics(records, today):
         st.plotly_chart(count_chart(records,'area'),width='stretch',theme=None,
                         config=CHART_CONFIG,key='defect_stats_area')
     owners = []
-    for owner in sorted({r['owner'] for r in records}):
-        scoped = [r for r in records if r['owner']==owner]
+    for owner in sorted({r['owner'] for r in records if r['status'] != 'Notification'}):
+        scoped = [r for r in records if r['owner']==owner and r['status'] != 'Notification']
         result = summary(scoped, today)
         owners.append({'Owner': owner, 'Created': result['created'], 'Active': result['active'], 'Overdue': result['overdue'], 'Closed': result['closed']})
     st.markdown('**Actions by owner**')
-    st.dataframe(br_frame(pd.DataFrame(owners)), hide_index=True, width='stretch',
+    st.dataframe(br_frame(pd.DataFrame(owners, columns=['Owner','Created','Active','Overdue','Closed'])), hide_index=True, width='stretch',
                  column_config={name:st.column_config.NumberColumn(alignment='center',format='%d')
                                 for name in ['Created','Active','Overdue','Closed']})
     st.plotly_chart(timeline_chart(records),width='stretch',theme=None,
@@ -262,14 +266,18 @@ def render(store):
     with st.container(key='defect_action_filters'):
         f1, f2, f3, f4, f5 = st.columns([1, 1.15, 1, 1.2, 2])
         area = f1.selectbox('Area', ['All areas', *AREAS], key='defect_filter_area', persist_state='session')
-        owner = f2.selectbox('Owner', ['All owners', *sorted({a['owner'] for a in actions})], key='defect_filter_owner', persist_state='session')
+        owner = f2.selectbox('Owner', ['All owners', *sorted({a['owner'] for a in actions if a['owner']})], key='defect_filter_owner', persist_state='session')
         priority = f3.selectbox('Priority', ['All priorities', *PRIORITIES], key='defect_filter_priority', persist_state='session')
         deadline = f4.selectbox('Deadline', ['Any deadline', 'Overdue', 'Next 7 days'], key='defect_filter_due', persist_state='session')
         search = f5.text_input('Search action, defect or model', placeholder='Type to search...', key='defect_filter_search', persist_state='session')
     with st.expander('More filters · Model, status and creation period'):
         c1, c2 = st.columns(2)
         models = c1.multiselect('Model', sorted({a['model'] for a in actions if a['model']}), key='defect_filter_models', persist_state='session')
-        statuses = c2.multiselect('Status', STATUSES, default=STATUSES, key='defect_filter_statuses', persist_state='session')
+        if not st.session_state.get('_defect_notification_status_default'):
+            if set(st.session_state.get('defect_filter_statuses', [])) == set(STATUSES) - {'Notification'}:
+                st.session_state['defect_filter_statuses'] = STATUSES.copy()
+            st.session_state['_defect_notification_status_default'] = True
+        statuses = c2.multiselect('Status', STATUSES, default=None if 'defect_filter_statuses' in st.session_state else STATUSES, key='defect_filter_statuses', persist_state='session')
         creation_filter = st.checkbox('Filter by creation period', key='defect_filter_creation_enabled', persist_state='session')
         created_range = None
         if creation_filter:
@@ -282,8 +290,9 @@ def render(store):
                ('ACTIVE ACTIONS', stats['active'], 'Open + in progress + verification', '#2563EB'),
                ('OVERDUE', stats['overdue'], 'Deadline passed · action still active', '#DC2626'),
                ('AWAITING VERIFICATION', stats['verification'], 'Countermeasure effectiveness', '#B77909'),
-               ('CLOSED', stats['closed'], 'Completed and verified', '#07854B')]
-    for column, (label, value, note, tone) in zip(st.columns(5), metrics):
+               ('CLOSED', stats['closed'], 'Completed and verified', '#07854B'),
+               ('NOTIFICATIONS', stats['notifications'], 'Occurrences recorded for monitoring', '#087F8C')]
+    for column, (label, value, note, tone) in zip(st.columns(6), metrics):
         column.markdown(f'<div class="action-metric" style="--tone:{tone}"><div class="action-metric-label">{label}</div><div class="action-metric-value">{value}</div><div class="action-metric-note">{note}</div></div>', unsafe_allow_html=True)
     board, statistics, previous = st.tabs(['Action Board', 'Statistics', 'Previous report actions'], key='defect_action_panel', on_change='rerun')
     with board:

@@ -16,6 +16,7 @@ export default function(component) {
   feedback.setAttribute('role', 'status');
   feedback.setAttribute('aria-live', 'polite');
   const grid = make('div', 'kanban-grid');
+  grid.style.gridTemplateColumns = `repeat(${data.statuses.length}, minmax(210px, 1fr))`;
   root.append(feedback, grid);
   const send = event => {
     if(busy) return;
@@ -28,7 +29,7 @@ export default function(component) {
     if(!data.movable || card.status === status) return;
     send({kind:'move', id:card.id, revision:card.revision, status});
   };
-  const themes = [['#2563EB','#E3EDFF'],['#7752D9','#ECE6FF'],['#B77909','#FFF3D7'],['#07854B','#DCF5E8']];
+  const themes = [['#2563EB','#E3EDFF'],['#7752D9','#ECE6FF'],['#B77909','#FFF3D7'],['#07854B','#DCF5E8'],['#087F8C','#E1F5F5']];
   data.statuses.forEach((status, index) => {
     const zone = make('section','kanban-lane');
     zone.dataset.status = status;
@@ -79,7 +80,7 @@ export default function(component) {
         tags.append(grip);
       }
       const owner = make('div','action-owner');
-      owner.append(make('span','owner-circle',(card.owner || '?').slice(0,1).toUpperCase()),make('span','',card.owner));
+      owner.append(make('span','owner-circle',(card.owner || '—').slice(0,1).toUpperCase()),make('span','',card.owner || 'No owner'));
       const open = make('button','open-action','Open action ↗');
       open.type = 'button';
       open.addEventListener('click',() => send({kind:'open', id:card.id}));
@@ -102,8 +103,8 @@ export default function(component) {
       }
       zone.append(article);
     });
-    if(!cards.length) zone.append(make('p','empty-lane','No actions in this status.'));
-    const add = make('button','add-action','＋ Add action');
+    if(!cards.length) zone.append(make('p','empty-lane',status === 'Notification' ? 'No occurrences recorded.' : 'No actions in this status.'));
+    const add = make('button','add-action',status === 'Notification' ? '＋ Add notification' : '＋ Add action');
     add.type = 'button';
     add.disabled = !data.editable;
     add.addEventListener('click',() => send({kind:'new',status}));

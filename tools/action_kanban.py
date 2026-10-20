@@ -56,7 +56,9 @@ def render_board(store, records, today):
     for record in records:
         card = {key: record.get(key, '') for key in ['id','code','revision','title','area','model','owner','priority','status']}
         due = br_date(record['due_date'])
-        if record['status'] == 'Closed':
+        if record['status'] == 'Notification':
+            card.update(due_label='Recorded '+br_date(record['created_at']), due_kind='notification')
+        elif record['status'] == 'Closed':
             card.update(due_label='✓ Closed · effectiveness verified', due_kind='closed')
         elif overdue(record, today):
             from datetime import date

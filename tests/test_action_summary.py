@@ -44,6 +44,14 @@ class ActionSummaryTests(unittest.TestCase):
             self.assertIn(f'*{label}:* Pending', text)
         self.assertNotIn('Overdue', text)
 
+    def test_notification_summary_is_monitoring_not_an_overdue_action(self):
+        text = build_action_summary(self.record(status='Notification', owner='', due_date='2026-10-01'), date(2026, 10, 20))
+        self.assertIn('*QUALITY NOTIFICATION*', text)
+        self.assertIn('occurrence recorded for monitoring', text)
+        self.assertIn('*Owner:* Pending', text)
+        self.assertNotIn('Overdue', text)
+        self.assertNotIn('before closing', text)
+
     def test_payload_preserves_unicode_but_cannot_inject_html(self):
         record = self.record(title='Cola — conexão </script><img src=x onerror=alert(1)>')
         html = copy_summary_html(record, date(2026,10,16))

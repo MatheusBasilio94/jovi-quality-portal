@@ -9,7 +9,8 @@ from tools.defect_actions import action_code, local_today
 def build_action_summary(record, today=None):
     today = today or local_today()
     text = lambda key: str(record.get(key) or '').strip()
-    lines = ['📋 *QUALITY ACTION*', '']
+    notification = text('status') == 'Notification'
+    lines = ['📋 *QUALITY NOTIFICATION*' if notification else '📋 *QUALITY ACTION*', '']
     lines.append(f"*Code:* {action_code(record) or 'Pending'}")
     for key, label in [('title','Action'), ('area','Area'), ('model','Model'), ('owner','Owner'),
                        ('priority','Priority'), ('status','Status')]:
@@ -18,13 +19,15 @@ def build_action_summary(record, today=None):
     if text('due_date'):
         due = date.fromisoformat(text('due_date'))
         late = (today-due).days
-        if late > 0 and text('status') != 'Closed':
+        if late > 0 and text('status') not in {'Closed', 'Notification'}:
             lines.append(f"🔴 *Overdue:* {late} {'day' if late==1 else 'days'}")
     for key, heading in [('defect','🔎 *Related defect*'), ('root_cause','*Problem / root cause*'),
                          ('containment','🛡️ *Containment*'), ('countermeasure','🔧 *Countermeasure*')]:
         lines.extend(['', heading, text(key) or 'Pending'])
     lines.extend(['', '✅ *Effectiveness verification*'])
-    if record.get('verified'):
+    if notification:
+        lines.append('Not applicable — occurrence recorded for monitoring.')
+    elif record.get('verified'):
         lines.append('Verified' + (f" — closed on {br_date(record['closed_at'])}." if record.get('closed_at') else '.'))
     else:
         lines.append('Pending — record the validation results before closing the action.')

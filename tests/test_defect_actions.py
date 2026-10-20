@@ -51,6 +51,67 @@ class ActionTests(unittest.TestCase):
         stats = summary([reopened], date(2026,10,15))
         self.assertEqual((stats['active'], stats['closed'], stats['overdue']), (1, 0, 1))
 
+    def test_notification_requires_no_owner_or_due_date_and_can_be_activated(self):
+        record = self.store.save(ADMIN, {**payload(), 'status': 'Notification', 'owner': '', 'due_date': ''})
+        self.assertEqual(ActionStore(self.path).get(record['id']), record)
+        for target in ['Open', 'In progress', 'Pending verification', 'Closed']:
+            with self.assertRaisesRegex(ValueError, 'owner and due date'):
+                self.store.move(VIEWER, record['id'], target, record['revision'])
+        self.assertEqual(self.store.get(record['id']), record)
+        active = self.store.save(ADMIN, {**record, 'status': 'Open', 'owner': 'Felipe', 'due_date': '2026-11-01'}, record['id'], record['revision'])
+        self.assertEqual((active['id'], active['code'], active['created_at']), (record['id'], record['code'], record['created_at']))
+        moved = self.store.move(VIEWER, active['id'], 'In progress', active['revision'])
+        self.assertEqual(moved['status'], 'In progress')
+        with self.assertRaises(ValueError):
+            self.store.save(ADMIN, {**record, 'due_date': 'invalid'})
+        with self.assertRaises(PermissionError):
+            self.store.save(VIEWER, {**record, 'title': 'Another occurrence'})
+
+    def test_notifications_do_not_count_as_active_overdue_or_closure_denominator(self):
+        today = date(2026, 10, 20)
+        active = self.store.save(ADMIN, payload())
+        closed = self.store.save(ADMIN, {**payload(), 'status': 'Closed', 'verified': True, 'evidence': 'Validated', 'countermeasure': 'Adjusted'})
+        blank = self.store.save(ADMIN, {**payload(), 'status': 'Notification', 'owner': '', 'due_date': ''})
+        dated = self.store.save(ADMIN, {**payload(), 'status': 'Notification', 'owner': '', 'due_date': '2026-10-21'})
+        records = [active, closed, blank, dated]
+        stats = summary(records, today)
+        self.assertEqual((stats['created'], stats['active'], stats['closed'], stats['notifications'], stats['overdue']), (2, 1, 1, 2, 1))
+        self.assertEqual(stats['closure_rate'], .5)
+        self.assertIsNone(summary([blank, dated], today)['closure_rate'])
+        self.assertEqual(filter_actions(records, today, deadline='Overdue'), [active])
+        self.assertEqual(filter_actions(records, today, deadline='Next 7 days'), [])
+        self.assertEqual({row['id'] for row in filter_actions(records, today, statuses=['Notification'])}, {blank['id'], dated['id']})
+
+    def test_notification_form_saves_blank_assignment_and_statistics_render(self):
+        from streamlit.testing.v1 import AppTest
+        script = """
+import streamlit as st
+from tools.defect_actions import ActionStore, local_today
+from tools.defect_actions_ui import render, details, _statistics
+store = ActionStore(st.session_state['database'])
+render(store)
+if not store.all():
+    details(store)
+else:
+    _statistics(store.all(), local_today())
+"""
+        app = AppTest.from_string(script)
+        app.session_state['database'] = str(self.path)
+        app.session_state['defect_action_view'] = 'Table'
+        app.session_state['defect_filter_statuses'] = ['Open', 'In progress', 'Pending verification', 'Closed']
+        for key, value in ADMIN.items(): app.session_state[key] = value
+        app.run(timeout=20)
+        self.assertIn('Notification', app.multiselect(key='defect_filter_statuses').value)
+        self.assertFalse(app.exception)
+        next(widget for widget in app.text_input if widget.label == 'Action title *').input('Delayed activity')
+        next(widget for widget in app.selectbox if widget.label == 'Status').select('Notification')
+        self.assertIsNone(next(widget for widget in app.date_input if widget.label == 'Due date').value)
+        next(widget for widget in app.button if widget.label == 'Save action').click().run(timeout=20)
+        self.assertFalse(app.exception)
+        self.assertFalse(app.error, [message.value for message in app.error])
+        record = self.store.all()[0]
+        self.assertEqual((record['status'], record['owner'], record['due_date']), ('Notification', '', ''))
+
     def test_filters_and_counts_do_not_treat_closed_as_overdue(self):
         a = self.store.save(ADMIN, payload())
         b = self.store.save(ADMIN, {**payload(), 'owner':'Key', 'area':'Assembly', 'due_date':'2026-10-20'})

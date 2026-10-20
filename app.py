@@ -56,7 +56,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.6.46"
+APP_VERSION = "v0.6.47"
 
 
 @st.cache_resource(show_spinner=False)
@@ -141,6 +141,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.6.47", "Add Notification occurrence cards with optional owner and due date, a dedicated Kanban column and separate statistics from active actions."),
     ("v0.6.46", "Include Less Glue and Random Spray with Disperse glue in default glue exclusions across SMT dashboards and KPI reviews."),
     ("v0.6.45", "Add model selection to SMT and Assembly KPI Tracks, applying the same model to input, defects, inspections, trends and source details."),
     ("v0.6.44", "Fix empty SMT dashboard selections with Arrow-backed strings, including Hide glue issues and multiple-model scopes."),

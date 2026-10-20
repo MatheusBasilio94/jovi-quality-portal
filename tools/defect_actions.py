@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 
 from tools.access_control import require_admin_access
 
-STATUSES = ['Open', 'In progress', 'Pending verification', 'Closed']
+STATUSES = ['Open', 'In progress', 'Pending verification', 'Closed', 'Notification']
 AREAS = ['SMT', 'Assembly', 'IQC', 'Lab', 'Other']
 AREA_CODES = {'SMT': 'SMT', 'Assembly': 'ASSY', 'IQC': 'IQC', 'Lab': 'LAB', 'Other': 'OTH'}
 PRIORITIES = ['High', 'Medium', 'Low']
@@ -46,7 +46,8 @@ def local_today():
 
 
 def overdue(record, today):
-    return record['status'] != 'Closed' and date.fromisoformat(record['due_date']) < today
+    return bool(record['status'] not in {'Closed', 'Notification'} and record.get('due_date')
+                and date.fromisoformat(record['due_date']) < today)
 
 
 def filter_actions(records, today, area='All areas', owner='All owners', priority='All priorities',
@@ -59,25 +60,27 @@ def filter_actions(records, today, area='All areas', owner='All owners', priorit
         if models and item['model'] not in models: continue
         if statuses is not None and item['status'] not in statuses: continue
         if search.strip().casefold() not in ' '.join(str(item.get(key, '')) for key in ['code', 'id', 'title', 'model', 'defect', 'owner', 'root_cause', 'countermeasure']).casefold(): continue
-        delta = (date.fromisoformat(item['due_date']) - today).days
+        delta = (date.fromisoformat(item['due_date']) - today).days if item.get('due_date') else None
         if deadline == 'Overdue' and not overdue(item, today): continue
-        if deadline == 'Next 7 days' and (item['status'] == 'Closed' or not 0 <= delta <= 7): continue
+        if deadline == 'Next 7 days' and (item['status'] in {'Closed', 'Notification'} or delta is None or not 0 <= delta <= 7): continue
         if created_range:
             created = datetime.fromisoformat(item['created_at']).astimezone(ZoneInfo('America/Manaus')).date()
             if not created_range[0] <= created <= created_range[1]: continue
         result.append(item)
-    return sorted(result, key=lambda item: (item['due_date'], item['created_at']))
+    return sorted(result, key=lambda item: (item.get('due_date') or '9999-12-31', item['created_at']))
 
 
 def summary(records, today):
-    closed = [r for r in records if r['status'] == 'Closed']
+    actions = [r for r in records if r['status'] != 'Notification']
+    closed = [r for r in actions if r['status'] == 'Closed']
     on_time = sum(datetime.fromisoformat(r['closed_at']).astimezone(ZoneInfo('America/Manaus')).date()
                   <= date.fromisoformat(r['due_date']) for r in closed)
-    return {'created': len(records), 'active': len(records) - len(closed), 'closed': len(closed),
+    return {'created': len(actions), 'active': len(actions) - len(closed), 'closed': len(closed),
+            'notifications': len(records) - len(actions),
             'overdue': sum(overdue(r, today) for r in records),
             'verification': sum(r['status'] == 'Pending verification' for r in records),
             'on_time_rate': on_time / len(closed) if closed else None,
-            'closure_rate': len(closed) / len(records) if records else None}
+            'closure_rate': len(closed) / len(actions) if actions else None}
 
 
 class ActionSyncError(RuntimeError):
@@ -180,11 +183,15 @@ class ActionStore:
         if not actor: raise PermissionError('Sign in before saving an action.')
         clean = {key: str(values.get(key, '') or '').strip() for key in FIELDS if key != 'verified'}
         clean['verified'] = values.get('verified') is True
-        for key, label in [('title', 'Action title'), ('owner', 'Owner'), ('due_date', 'Due date')]:
+        required = [('title', 'Action title')]
+        if clean['status'] != 'Notification':
+            required += [('owner', 'Owner'), ('due_date', 'Due date')]
+        for key, label in required:
             if not clean[key]: raise ValueError(f'{label} is required.')
         if clean['area'] not in AREAS or clean['status'] not in STATUSES or clean['priority'] not in PRIORITIES:
             raise ValueError('Select a valid area, status and priority.')
-        try: date.fromisoformat(clean['due_date'])
+        try:
+            if clean['due_date']: date.fromisoformat(clean['due_date'])
         except ValueError: raise ValueError('Select a valid due date.') from None
         if len(clean['title']) > 160 or len(clean['owner']) > 100 or any(len(v) > 10000 for v in clean.values() if isinstance(v, str)):
             raise ValueError('Use a shorter title, owner or description.')
@@ -239,6 +246,8 @@ class ActionStore:
             raise ValueError('Another update was saved after this card was opened. Refresh the board and try again.')
         if current['status'] == status:
             return current
+        if status != 'Notification' and (not current.get('owner') or not current.get('due_date')):
+            raise ValueError('An administrator must set an owner and due date in the card before changing it to an action status.')
         self.prepare_move()
         with _LOCK, self.connect() as conn:
             conn.execute('BEGIN IMMEDIATE')
