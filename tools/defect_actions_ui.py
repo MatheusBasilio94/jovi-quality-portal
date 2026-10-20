@@ -286,14 +286,14 @@ def render(store):
             else: st.caption('Select both dates to apply the creation period filter.')
     filtered = filter_actions(actions, today, area, owner, priority, deadline, search, models, statuses, created_range)
     stats = summary(filtered, today)
-    metrics = [('ACTIONS CREATED', stats['created'], 'In the selected scope', '#2563EB'),
-               ('ACTIVE ACTIONS', stats['active'], 'Open + in progress + verification', '#2563EB'),
-               ('OVERDUE', stats['overdue'], 'Deadline passed · action still active', '#DC2626'),
-               ('AWAITING VERIFICATION', stats['verification'], 'Countermeasure effectiveness', '#B77909'),
-               ('CLOSED', stats['closed'], 'Completed and verified', '#07854B'),
-               ('NOTIFICATIONS', stats['notifications'], 'Occurrences recorded for monitoring', '#087F8C')]
+    metrics = [('ACTIONS CREATED', stats['created'], 'Selected scope', '#2563EB'),
+               ('ACTIVE ACTIONS', stats['active'], 'Not yet closed', '#2563EB'),
+               ('OVERDUE', stats['overdue'], 'Past due date', '#DC2626'),
+               ('VERIFICATION', stats['verification'], 'Effectiveness check', '#B77909'),
+               ('CLOSED', stats['closed'], 'Verified actions', '#07854B'),
+               ('NOTIFICATIONS', stats['notifications'], 'Occurrences logged', '#087F8C')]
     for column, (label, value, note, tone) in zip(st.columns(6), metrics):
-        column.markdown(f'<div class="action-metric" style="--tone:{tone}"><div class="action-metric-label">{label}</div><div class="action-metric-value">{value}</div><div class="action-metric-note">{note}</div></div>', unsafe_allow_html=True)
+        column.markdown(f'<div class="action-metric action-metric-compact" style="--tone:{tone}"><div class="action-metric-label">{label}</div><div class="action-metric-value">{value}</div><div class="action-metric-note">{note}</div></div>', unsafe_allow_html=True)
     board, statistics, previous = st.tabs(['Action Board', 'Statistics', 'Previous report actions'], key='defect_action_panel', on_change='rerun')
     with board:
         if board.open:

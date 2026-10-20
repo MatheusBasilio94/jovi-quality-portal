@@ -9,6 +9,9 @@
 .action-metric-label {font-size:12px;font-weight:650;letter-spacing:.35px;color:#58708F;}
 .action-metric-value {font-size:28px;font-weight:750;line-height:1.35;color:var(--tone);}
 .action-metric-note {font-size:12px;color:#7187A3;}
+.action-metric-compact {height:104px;min-height:104px;}
+.action-metric-compact .action-metric-label {line-height:16px;}
+.action-metric-compact .action-metric-note {line-height:18px;}
 .kanban-head {padding:11px 12px;border-radius:9px;border-top:3px solid var(--tone);background:var(--wash);display:flex;align-items:center;justify-content:space-between;color:#17365D;font-weight:700;font-size:15px;}
 .kanban-count {border-radius:6px;background:white;min-width:26px;text-align:center;color:var(--tone);padding:1px 6px;font-size:13px;}
 div[class*="st-key-kanban_lane_"] {background:#EAF0F8;border:1px solid #D5E0EF;border-radius:10px;padding:10px;}
