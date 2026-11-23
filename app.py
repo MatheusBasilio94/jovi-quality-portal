@@ -56,7 +56,7 @@ from tools.inspection_store import (
 )
 
 
-APP_VERSION = "v0.6.48"
+APP_VERSION = "v0.6.49"
 
 
 @st.cache_resource(show_spinner=False)
@@ -141,6 +141,7 @@ MODULES = {
 }
 
 VERSION_HISTORY = [
+    ("v0.6.49", "Select Weekly KPI Review by ISO year and labeled Monday–Sunday week, aligning saved selections, daily columns and weekly comparisons."),
     ("v0.6.48", "Standardize action summary cards at the compact height and shorten their labels and descriptions."),
     ("v0.6.47", "Add Notification occurrence cards with optional owner and due date, a dedicated Kanban column and separate statistics from active actions."),
     ("v0.6.46", "Include Less Glue and Random Spray with Disperse glue in default glue exclusions across SMT dashboards and KPI reviews."),
@@ -6893,15 +6894,42 @@ def kpi_review_glue_comparison(directory, original_columns, excluded_columns, or
                 show_chart(build_kpi_panel_chart(panel), image_filename=f"{key_prefix}_glue_comparison_{index}")
 
 
+def weekly_kpi_week_label(week_end: date) -> str:
+    """Identify an ISO week by its number and full Monday–Sunday date range."""
+    week_start = week_end - timedelta(days=6)
+    return f"WK{week_end.isocalendar().week:02d} ({week_start.strftime('%d-%b')} ~ {week_end.strftime('%d-%b')})"
+
+
 def weekly_kpi_review_page() -> None:
     import pandas as pd
 
     st.markdown("<div class='smart-report-title'>Weekly KPI Review</div><div class='smart-report-subtitle'>Major KPI achievement status and action follow-up, generated from the same validated portal calculations.</div>", unsafe_allow_html=True)
-    default_week_end = date.today() - timedelta(days=date.today().weekday() + 1)
+    today = datetime.now(ZoneInfo("America/Manaus")).date()
+    default_week_end = today - timedelta(days=today.weekday() + 1)
+    selected_week_end = st.session_state.get("weekly_kpi_week_end") or default_week_end
+    selected_week_end += timedelta(days=6 - selected_week_end.weekday())
+    selected_year, selected_week, _ = selected_week_end.isocalendar()
     with st.container(key="weekly_report_filters"):
-        controls, visibility_column, action_column = st.columns([1.1, 1.55, 0.75])
+        controls, visibility_column, action_column = st.columns([1.55, 1.55, 0.75])
     with controls:
-        week_end = st.date_input("Week ending", value=default_week_end, key="weekly_kpi_week_end", persist_state="session", width=180, help="Select the Sunday that closes the report week.", format='DD/MM/YYYY')
+        year_control, week_control = st.columns([0.8, 2.2], gap="small")
+        years = list(range(min(today.year - 10, selected_year), max(today.year + 10, selected_year) + 1))
+        with year_control:
+            report_year = st.selectbox(
+                "Year", years, index=years.index(selected_year),
+                key="weekly_kpi_year", persist_state="session",
+                help="ISO week year. A week can include days from the adjacent calendar year.",
+            )
+        week_count = date(report_year, 12, 28).isocalendar().week
+        week_ends = [date.fromisocalendar(report_year, week, 7) for week in range(1, week_count + 1)]
+        with week_control:
+            week_end = st.selectbox(
+                "Week", week_ends, index=min(selected_week, week_count) - 1,
+                format_func=weekly_kpi_week_label,
+                key=f"weekly_kpi_week_{report_year}", persist_state="session",
+                help="Each week starts on Monday and ends on Sunday.",
+            )
+    st.session_state["weekly_kpi_week_end"] = week_end
     start_date = week_end - timedelta(days=6)
     days = [start_date + timedelta(days=offset) for offset in range(7)]
     week_label = f"WK{week_end.isocalendar().week:02d} · {start_date.strftime('%d/%m')} – {week_end.strftime('%d/%m/%y')}"
